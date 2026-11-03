@@ -1,0 +1,186 @@
+{
+  "base": "circuitrhythm-firmware-5706 (DR1.1.5143.5706)",
+  "marker": "A0006",
+  "image_size": "0x5bf7c",
+  "free_to_0x70000": "0x14084",
+  "grown_by": 6668,
+  "stock_bytes_changed": 99,
+  "image_sha256": "a29fb86fb021cc54a4a2e56c4708fae44959a77baaf3d34793e70486899b5aa0",
+  "syx_sha256": "849699f419e4f6212de96990e651a41199110b5f223bc272b18257bd3f75a48c",
+  "crc32": "0xd4a382c6",
+  "provenance": "not checked (no Tracks image here)",
+  "report": {
+    "rhstate": {
+      "block": "0x2004f6e4",
+      "size": 124,
+      "off": {
+        "magic": 0,
+        "tmenu": 92,
+        "clkci": 40,
+        "playfix": 24,
+        "countin": 16,
+        "vismet": 12,
+        "srcount": 4
+      },
+      "labels": {
+        "c_rst": "0x806a570"
+      },
+      "base": "0x806a570"
+    },
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a5d0"
+      },
+      "base": "0x806a5d0"
+    },
+    "playfix": {
+      "state": "0x2004f6fc",
+      "labels": {
+        "c_fxgate": "0x806a620"
+      },
+      "base": "0x806a620"
+    },
+    "countin": {
+      "btn_entry": "0x803d8b8",
+      "led_calls": [
+        "0x803e0b6",
+        "0x803e7d0"
+      ],
+      "prev": {
+        "btn": null,
+        "ledtask": "0x803e80c"
+      },
+      "labels": {
+        "c_cibtn_stock": "0x806a6a0",
+        "c_ciok": "0x806a6a8",
+        "c_cinew": "0x806a6dc",
+        "c_cisetsh": "0x806a6e6",
+        "c_cishift": "0x806a706",
+        "c_cistate": "0x806a71c",
+        "c_cibtn": "0x806a740",
+        "c_ciledtask": "0x806a7f8"
+      },
+      "base": "0x806a6a0"
+    },
+    "vismet": {
+      "slot": "0x2004f6f0",
+      "count_click": "0x806a876",
+      "prev_led": "0x806a7f8",
+      "labels": {
+        "c_vmbeat_stock": "0x806a910",
+        "c_vmbeat": "0x806a918",
+        "c_vmclick": "0x806a98c",
+        "c_vmled": "0x806a9d8"
+      },
+      "base": "0x806a910"
+    },
+    "clkci": {
+      "slot": "0x2004f70c",
+      "prev_btn": "0x806a740",
+      "prev_led": "0x806a9d8",
+      "labels": {
+        "c_ckblk": "0x806aa60",
+        "c_ckready": "0x806aa8a",
+        "c_ckmark": "0x806aab8",
+        "c_ckclick": "0x806aae8",
+        "c_ckplay": "0x806aafe",
+        "c_ckbegin": "0x806ab40",
+        "c_ckcancel": "0x806abc0",
+        "c_ckabort": "0x806abd8",
+        "c_ckrelease": "0x806ac12",
+        "c_cktick": "0x806ac70",
+        "c_ckpulse": "0x806ad0a",
+        "c_ckbeat": "0x806adae",
+        "c_ckmstart": "0x806ae38",
+        "c_ckmstart_x": "0x806ae4c",
+        "c_ckmcont": "0x806ae54",
+        "c_ckmcont_x": "0x806ae6a",
+        "c_ckmstop": "0x806ae72",
+        "c_ckmstop_x": "0x806ae88",
+        "c_ckmspp": "0x806ae90",
+        "c_ckmspp_x": "0x806aeae",
+        "c_cksetmode": "0x806aeb6",
+        "c_ckheld": "0x806aef2",
+        "c_ckrec": "0x806af0a",
+        "c_ckplp0": "0x806af24",
+        "c_ckpled": "0x806af40",
+        "c_ckbtn": "0x806af5e",
+        "c_ckled": "0x806aff8"
+      },
+      "base": "0x806aa60"
+    },
+    "srcount": {
+      "slot": "0x2004f6e8",
+      "prev_btn": "0x806af5e",
+      "prev_led": "0x806aff8",
+      "labels": {
+        "c_srok": "0x806b070",
+        "c_srpad": "0x806b098",
+        "c_srbtn": "0x806b0d2",
+        "c_srled": "0x806b140"
+      },
+      "base": "0x806b070"
+    },
+    "stepload": {
+      "labels": {
+        "c_stload": "0x806b190"
+      },
+      "base": "0x806b190"
+    },
+    "tmenu": {
+      "slot": "0x2004f740",
+      "prev_btn": "0x806b0d2",
+      "prev_led": "0x806b140",
+      "prev_out": "0x803e8e6",
+      "labels": {
+        "c_tmview": "0x806b2e0",
+        "c_tmfill": "0x806b31a",
+        "c_tmscl": "0x806b334",
+        "c_tmbtn": "0x806b35e",
+        "c_tmpad": "0x806b3f0",
+        "c_tmrel": "0x806b474",
+        "c_tmheld": "0x806b4a4",
+        "c_tmlane": "0x806b4d2",
+        "c_tmknob": "0x806b52e",
+        "c_tmown": "0x806b55e",
+        "c_tmkred": "0x806b572",
+        "c_tmrec": "0x806b5ac",
+        "c_tmrpad": "0x806b60a",
+        "c_tmled": "0x806b68c",
+        "c_tmout": "0x806ba4e"
+      },
+      "base": "0x806b2e0"
+    },
+    "rdiag": {
+      "hook": "0x8026de8",
+      "router_ptr": "0x20006f04",
+      "version": "0x5201",
+      "dsp": false,
+      "labels": {
+        "c_rdin": "0x806bc90",
+        "c_g32": "0x806bcd0",
+        "c_p32": "0x806bce8",
+        "c_pbytes": "0x806bcf8",
+        "c_gbytes": "0x806bd16",
+        "c_rdcmd": "0x806bd38"
+      },
+      "base": "0x806bc90"
+    },
+    "errled": {
+      "prev": "0x806b68c",
+      "checks": [
+        "call",
+        "call",
+        "vt"
+      ],
+      "labels": {
+        "c_erled": "0x806bf30"
+      },
+      "base": "0x806bf30"
+    }
+  }
+}

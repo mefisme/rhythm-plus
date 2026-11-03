@@ -1,0 +1,24 @@
+{
+  "base": "circuitrhythm-firmware-5706 (DR1.1.5143.5706)",
+  "marker": "STFRS",
+  "image_size": "0x5a5bc",
+  "free_to_0x70000": "0x15a44",
+  "grown_by": 76,
+  "stock_bytes_changed": 12,
+  "image_sha256": "7cec11dffc6f268d5ee9ac2285ed6e0979f4af0c65f237978dde6270ae87322e",
+  "syx_sha256": "b5843f3b2a615956604a31e22cbc6e169d35c4c80874b4abf623ce8d5242e545",
+  "crc32": "0x68fedaf3",
+  "provenance": "not checked (no Tracks image here)",
+  "report": {
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a570"
+      },
+      "base": "0x806a570"
+    }
+  }
+}

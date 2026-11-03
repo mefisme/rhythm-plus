@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Built firmware contains Novation's firmware: rebuilt by builds/build_*.py, checked by the manifest's SHA-256
+firmware/*/*.bin
+firmware/*/*.syx
+
+# Generated locally
+buildtmp/
+tools/uploader.html
+tools/rm_uploader.html
+
+# Local notes and session files, never published
+notes/
+.claude/
+
+# The Python environment
+.venv/

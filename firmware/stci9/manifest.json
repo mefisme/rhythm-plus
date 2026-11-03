@@ -1,0 +1,196 @@
+{
+  "base": "circuitrhythm-firmware-5706 (DR1.1.5143.5706)",
+  "marker": "STCI9",
+  "image_size": "0x5b8cc",
+  "free_to_0x70000": "0x14734",
+  "grown_by": 4956,
+  "stock_bytes_changed": 127,
+  "image_sha256": "a58771cd14ac94c700d54a33266452aab884bcf34c7d412572bd5fd334ab0ed7",
+  "syx_sha256": "12cf0d20dd4e8f75e555eec822430033fcae8754ac3172597f359e0cabc11918",
+  "crc32": "0xc5198ddb",
+  "provenance": "not checked (no Tracks image here)",
+  "report": {
+    "rhstate": {
+      "block": "0x2004ec6c",
+      "size": 2804,
+      "off": {
+        "magic": 0,
+        "plog": 132,
+        "tmenu": 100,
+        "clkci": 48,
+        "playfix": 32,
+        "countin": 24,
+        "vismet": 20,
+        "srcount": 12,
+        "srprobe": 4
+      },
+      "labels": {
+        "c_rst": "0x806a570"
+      },
+      "base": "0x806a570"
+    },
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a5d0"
+      },
+      "base": "0x806a5d0"
+    },
+    "playfix": {
+      "state": "0x2004ec8c",
+      "labels": {
+        "c_fxgate": "0x806a620"
+      },
+      "base": "0x806a620"
+    },
+    "countin": {
+      "btn_entry": "0x803d8b8",
+      "led_calls": [
+        "0x803e0b6",
+        "0x803e7d0"
+      ],
+      "prev": {
+        "btn": null,
+        "ledtask": "0x803e80c"
+      },
+      "labels": {
+        "c_cibtn_stock": "0x806a6a0",
+        "c_ciok": "0x806a6a8",
+        "c_cinew": "0x806a6dc",
+        "c_cisetsh": "0x806a6e6",
+        "c_cishift": "0x806a706",
+        "c_cistate": "0x806a71c",
+        "c_cibtn": "0x806a740",
+        "c_ciledtask": "0x806a7f8"
+      },
+      "base": "0x806a6a0"
+    },
+    "vismet": {
+      "slot": "0x2004ec80",
+      "count_click": "0x806a876",
+      "prev_led": "0x806a7f8",
+      "labels": {
+        "c_vmbeat_stock": "0x806a910",
+        "c_vmbeat": "0x806a918",
+        "c_vmclick": "0x806a98c",
+        "c_vmled": "0x806a9d8"
+      },
+      "base": "0x806a910"
+    },
+    "clkci": {
+      "slot": "0x2004ec9c",
+      "prev_btn": "0x806a740",
+      "prev_led": "0x806a9d8",
+      "labels": {
+        "c_ckblk": "0x806aa60",
+        "c_ckready": "0x806aa8a",
+        "c_ckmark": "0x806aab8",
+        "c_ckclick": "0x806aae8",
+        "c_ckplay": "0x806aafe",
+        "c_ckbegin": "0x806ab40",
+        "c_ckcancel": "0x806abc0",
+        "c_ckabort": "0x806abd8",
+        "c_ckrelease": "0x806ac12",
+        "c_cktick": "0x806ac70",
+        "c_ckpulse": "0x806ad0a",
+        "c_ckbeat": "0x806adae",
+        "c_ckmstart": "0x806ae38",
+        "c_ckmstart_x": "0x806ae4c",
+        "c_ckmcont": "0x806ae54",
+        "c_ckmcont_x": "0x806ae6a",
+        "c_ckmstop": "0x806ae72",
+        "c_ckmstop_x": "0x806ae88",
+        "c_ckmspp": "0x806ae90",
+        "c_ckmspp_x": "0x806aeae",
+        "c_cksetmode": "0x806aeb6",
+        "c_ckheld": "0x806aef2",
+        "c_ckrec": "0x806af0a",
+        "c_ckplp0": "0x806af24",
+        "c_ckpled": "0x806af40",
+        "c_ckbtn": "0x806af5e",
+        "c_ckled": "0x806aff8"
+      },
+      "base": "0x806aa60"
+    },
+    "srcount": {
+      "slot": "0x2004ec78",
+      "prev_btn": "0x806af5e",
+      "prev_led": "0x806aff8",
+      "labels": {
+        "c_srok": "0x806b070",
+        "c_srpad": "0x806b098",
+        "c_srbtn": "0x806b0d2",
+        "c_srled": "0x806b140"
+      },
+      "base": "0x806b070"
+    },
+    "srprobe": {
+      "slot": "0x2004ec70",
+      "calls": [],
+      "labels": {
+        "c_sprec": "0x806b190",
+        "c_sprec_go": "0x806b1ca",
+        "c_sp3": "0x806b1d2",
+        "c_sp3_go": "0x806b20c"
+      },
+      "base": "0x806b190"
+    },
+    "playprobe": {
+      "log": "0x2004ecf0",
+      "magic": "0x36504c50",
+      "labels": {
+        "c_pplog": "0x806b220",
+        "c_ppplay": "0x806b32c",
+        "c_ppret": "0x806b360",
+        "c_ppt0": "0x806b378",
+        "c_pptick": "0x806b3a0",
+        "c_ppstart": "0x806b3d2",
+        "c_ppwait": "0x806b3e8",
+        "c_ppw1": "0x806b424",
+        "c_ppw3": "0x806b442",
+        "c_ppw5": "0x806b460",
+        "c_ppw7": "0x806b47e",
+        "c_pplcall": "0x806b49c"
+      },
+      "base": "0x806b220"
+    },
+    "commitprobe": {
+      "clog": "0x2004f350",
+      "labels": {
+        "c_cmt": "0x806b500",
+        "c_cmtorig": "0x806b5d4"
+      },
+      "base": "0x806b500"
+    },
+    "rdiag": {
+      "hook": "0x8026de8",
+      "router_ptr": "0x20006f04",
+      "version": "0x5201",
+      "dsp": false,
+      "labels": {
+        "c_rdin": "0x806b5e0",
+        "c_g32": "0x806b620",
+        "c_p32": "0x806b638",
+        "c_pbytes": "0x806b648",
+        "c_gbytes": "0x806b666",
+        "c_rdcmd": "0x806b688"
+      },
+      "base": "0x806b5e0"
+    },
+    "errled": {
+      "prev": "0x806b140",
+      "checks": [
+        "call",
+        "call",
+        "vt"
+      ],
+      "labels": {
+        "c_erled": "0x806b880"
+      },
+      "base": "0x806b880"
+    }
+  }
+}

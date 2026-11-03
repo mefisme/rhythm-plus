@@ -1,0 +1,113 @@
+{
+  "base": "circuitrhythm-firmware-5706 (DR1.1.5143.5706)",
+  "marker": "STCI2",
+  "image_size": "0x5adac",
+  "free_to_0x70000": "0x15254",
+  "grown_by": 2108,
+  "stock_bytes_changed": 34,
+  "image_sha256": "35556c20706d21846b6b6a72e057238d5308fb1dcbca660208abd2aa64481281",
+  "syx_sha256": "b5466ea59fed212e1b62e808df1434733259147c46ef05747318b739d8ae127d",
+  "crc32": "0xd329d15e",
+  "provenance": "not checked (no Tracks image here)",
+  "report": {
+    "rhstate": {
+      "block": "0x2004f740",
+      "size": 32,
+      "off": {
+        "magic": 0,
+        "playfix": 16,
+        "countin": 8,
+        "vismet": 4
+      },
+      "labels": {
+        "c_rst": "0x806a570"
+      },
+      "base": "0x806a570"
+    },
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a5d0"
+      },
+      "base": "0x806a5d0"
+    },
+    "playfix": {
+      "state": "0x2004f750",
+      "labels": {
+        "c_fxgate": "0x806a620"
+      },
+      "base": "0x806a620"
+    },
+    "countin": {
+      "btn_entry": "0x803d8b8",
+      "led_calls": [
+        "0x803e0b6",
+        "0x803e7d0"
+      ],
+      "prev": {
+        "btn": null,
+        "ledtask": "0x803e80c"
+      },
+      "labels": {
+        "c_cibtn_stock": "0x806a6a0",
+        "c_ciok": "0x806a6a8",
+        "c_cinew": "0x806a6dc",
+        "c_cisetsh": "0x806a6e6",
+        "c_cishift": "0x806a706",
+        "c_cistate": "0x806a71c",
+        "c_cibtn": "0x806a740",
+        "c_ciledtask": "0x806a7f8"
+      },
+      "base": "0x806a6a0"
+    },
+    "cibpm": {
+      "site": "0x806a834",
+      "labels": {
+        "c_cibpm": "0x806a910"
+      },
+      "base": "0x806a910"
+    },
+    "vismet": {
+      "slot": "0x2004f744",
+      "count_click": "0x806a876",
+      "prev_led": "0x806a7f8",
+      "labels": {
+        "c_vmbeat_stock": "0x806a970",
+        "c_vmbeat": "0x806a978",
+        "c_vmclick": "0x806a9e6",
+        "c_vmled": "0x806aa32"
+      },
+      "base": "0x806a970"
+    },
+    "rdiag": {
+      "hook": "0x8026de8",
+      "router_ptr": "0x20006f04",
+      "version": "0x5201",
+      "dsp": false,
+      "labels": {
+        "c_rdin": "0x806aac0",
+        "c_g32": "0x806ab00",
+        "c_p32": "0x806ab18",
+        "c_pbytes": "0x806ab28",
+        "c_gbytes": "0x806ab46",
+        "c_rdcmd": "0x806ab68"
+      },
+      "base": "0x806aac0"
+    },
+    "errled": {
+      "prev": "0x806aa32",
+      "checks": [
+        "call",
+        "call",
+        "vt"
+      ],
+      "labels": {
+        "c_erled": "0x806ad60"
+      },
+      "base": "0x806ad60"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "base": "circuitrhythm-firmware-5706 (DR1.1.5143.5706)",
+  "marker": "STPD5",
+  "image_size": "0x5ab94",
+  "free_to_0x70000": "0x1546c",
+  "grown_by": 1572,
+  "stock_bytes_changed": 67,
+  "image_sha256": "74800c43a53d057f70d38af7459ab3852cbe5e81aa4e42d08c1e86690d4b6553",
+  "syx_sha256": "273aed1e9bf89a3924098bb92e67873826e69c552dd55e8c1d282c487e97cac2",
+  "crc32": "0x9e81c734",
+  "provenance": "not checked (no Tracks image here)",
+  "report": {
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a570"
+      },
+      "base": "0x806a570"
+    },
+    "playfix": {
+      "state": "0x2004f250",
+      "labels": {
+        "c_fxgate": "0x806a5c0"
+      },
+      "base": "0x806a5c0"
+    },
+    "rdiag": {
+      "hook": "0x8026de8",
+      "router_ptr": "0x20006f04",
+      "version": "0x5201",
+      "dsp": false,
+      "labels": {
+        "c_rdin": "0x806a630",
+        "c_g32": "0x806a670",
+        "c_p32": "0x806a688",
+        "c_pbytes": "0x806a698",
+        "c_gbytes": "0x806a6b6",
+        "c_rdcmd": "0x806a6d8"
+      },
+      "base": "0x806a630"
+    },
+    "playprobe": {
+      "log": "0x2004f260",
+      "magic": "0x36504c50",
+      "labels": {
+        "c_pplog": "0x806a8d0",
+        "c_ppplay": "0x806a9c6",
+        "c_ppret": "0x806a9fa",
+        "c_ppt0": "0x806aa12",
+        "c_pptick": "0x806aa3a",
+        "c_ppstart": "0x806aa6c",
+        "c_ppwait": "0x806aa82",
+        "c_ppw1": "0x806aabe",
+        "c_ppw3": "0x806aadc",
+        "c_ppw5": "0x806aafa",
+        "c_ppw7": "0x806ab18",
+        "c_pplcall": "0x806ab36"
+      },
+      "base": "0x806a8d0"
+    }
+  }
+}
