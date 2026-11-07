@@ -44,6 +44,7 @@ VOL_Y, NG = 0x1E80, len(GATE_NAMES)
 assert VOL_Y + NG * STRIDE <= 0x2000
 FILT = None                                              # (fshape.strip()) (RR's filter half, TRIG's[, code after RR]) item lists
 LABELS = {}                                              # RR's labels in core 1, as pitchmod placed them
+LATE_PITCH = [False]                                     # (fshape nfollow) PADD keeps voicefilt's pitch, not RR's entry
 PADD = None                                              # (fshape.strip(px=True)) RR's items after the pitch's sum, before the clamp
 PLFO = None                                              # (fshape.strip(fade=True)) RR's items on b = L x LFO, before the envelope joins it
 
@@ -171,12 +172,22 @@ def shape_index(v, n):
 
 
 # ---------------------------------------------------------------- core 1
+def lk_items():
+    """lk: a1 = the position 0 .. $7FFFFF, r0 = the shape's table in Y -> a = its value; changes b, x0, x1, y1, r0"""
+    return [("label", "lk"),
+            "move a1,b", "lsr #18,b", "move y:(r0)+,x0", "move r0,x1", "add x1,b", "move b1,r0",
+            "move a1,b", "and #>$3ffff,b", "asl #5,b,b",
+            "move x0,a", "tst a", ("jcc", "eq", "lk_l"), "clr b",
+            ("label", "lk_l"),
+            "move b1,x1", "move y:(r0)+,x0", "move y:(r0),a", "sub x0,a", "move a,y1", "mpy y1,x1,a", "add x0,a", "asl a", "rts"]
+
+
 def code(at, shift=0, store_pitch=False, scan=False, stretch=False, lscan=None):
     """pitchmod.code's place: -> (words for P:at.., RR's address, TRIG's address)"""
     import voicefx as V
     assert shift == SHIFT and not stretch and lscan is None, "pshape: pitchmod with the shift, no stretch"
     yb, t0, t1 = YB, PM.Y_TMP0 + shift, PM.Y_TMP1 + shift
-    extra = ([f"move y0,y:(r1+${PM.OFF_PITCH:x})"] if store_pitch else []) + (
+    extra = ([f"move y0,y:(r1+${PM.OFF_PITCH:x})"] if store_pitch and not LATE_PITCH[0] else []) + (
         [f"move y:(r1+${PM.OFF_SCANPH:x}),a", f"move y:(r1+${PM.OFF_SCANR:x}),x0", "add x0,a", f"move a1,y:(r1+${PM.OFF_SCANPH:x})"] if scan else [])
     filt = [*FILT[0](), f"move #>${yb:x},r1", "lua (r1)+n1,r1"] if FILT else []
     rr = ["move r4,a", "sub #>$40,a", "lsr #4,a", "move a1,n1", f"move #>${yb:x},r1", "lua (r1)+n1,r1", *extra, *filt,
@@ -194,12 +205,7 @@ def code(at, shift=0, store_pitch=False, scan=False, stretch=False, lscan=None):
           f"move #>${PM.PITCH_MAX:x},x0", "cmp x0,a", "tgt x0,a",
           f"move #>${PM.PITCH_MIN:x},x0", "cmp x0,a", "tlt x0,a",
           "move a1,y0", ("jmp", PM.P_EXP),
-          ("label", "lk"),                                                                               # a1 = pos, r0 = the shape
-          "move a1,b", "lsr #18,b", "move y:(r0)+,x0", "move r0,x1", "add x1,b", "move b1,r0",
-          "move a1,b", "and #>$3ffff,b", "asl #5,b,b",
-          "move x0,a", "tst a", ("jcc", "eq", "lk_l"), "clr b",
-          ("label", "lk_l"),
-          "move b1,x1", "move y:(r0)+,x0", "move y:(r0),a", "sub x0,a", "move a,y1", "mpy y1,x1,a", "add x0,a", "asl a", "rts",
+          *lk_items(),
           *(FILT[2]() if FILT and len(FILT) > 2 else [])]
     rw, labels = V.assemble(rr, at)
     LABELS.update(labels)

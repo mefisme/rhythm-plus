@@ -44,11 +44,13 @@ def sat(v):
     return max(-0x800000, min(0x7FFFFF, v)) & 0xFFFFFF
 
 
-def model(src, m_vals, pd, rd, dd):
-    """the copy Q (32 words) the three hooks make from X:$9D.. src"""
+def model(src, m_vals, pd, rd, dd, vx=None):
+    """the copy Q (32 words) the three hooks make from X:$9D.. src; vx: the volume cut + t (L and R x (1 - V) first)"""
     q = list(src)
     for t in range(8):
         L, R, rv, dl = (s24(x) for x in src[4 * t:4 * t + 4])
+        if vx:
+            L, R = (s24(sat(((g << 24) - 2 * g * s24(vx[t])) >> 24)) for g in (L, R))
         m = mpy(m_vals[t], pd[t])
         if m >= 0:
             q[4 * t], q[4 * t + 1] = sat(((L << 24) - 2 * L * m) >> 24), R & 0xFFFFFF
@@ -114,6 +116,18 @@ def main():
             if diff:
                 bad.append(diff[:3])
         check(f"{b}: the hooks' Q = the model (pan both ways, sends up and down, 6 random sets)", not bad, bad[:2])
+        if "vx" in mm:
+            vxa, bad = int(mm["vx"], 16), []
+            for src, mv, pd, rd, dd in cases:
+                vx = [rnd.choice((0, 0x7FFFFF, 0x400000, rnd.randrange(0x800000))) for _ in range(8)]
+                want = model(src, mv, pd, rd, dd, vx)
+                res, _ = rhdspemu.run(0, call=hooks["lr"], mem=mem_for(src, mv, pd, rd, dd) + [("y", vxa, vx)], segs=segs,
+                                      dumps=[("x", M.Q, 32)])
+                q = res[("x", M.Q)]
+                diff = [(i, hex(q[i]), hex(want[i])) for i in range(32) if i % 4 < 2 and q[i] != want[i]]
+                if diff:
+                    bad.append(diff[:3])
+            check(f"{b}: (vol) the pan hook's L / R x (1 - V) at Y:${vxa:X} + t, then the pan (6 random sets)", not bad, bad[:2])
         lim = []
         src = [0x600000, 0x500000, M.FULL, 0] * 8
         res, _ = rhdspemu.run(0, call=hooks["rev"], mem=mem_for(src, [0x7FFFFF] * 8, [0] * 8, [0x7FFC00] * 8, [0] * 8), segs=segs,

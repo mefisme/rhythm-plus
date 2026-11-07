@@ -155,6 +155,7 @@ SP_RANDK, RAND_V = 7, 26                                  # (pxrand) the pitch p
 SP_GLIDEK, GLIDE_V = 8, 27                                # (glide) K8 = fshape's glide time
 FADE_V = 28                                               # (fade) Shift + K7 = fshape's LFO fade-in
 FADE = [False]                                            # set by install(fade=True)
+FADETAN = [False]                                         # (fadetan) Shift held: the pitch page's K7 tan, as the filter page's Shift knobs
 FCLR = [False]                                            # set by install(fclr=True)
 X_IDX = (10, 5, 9, 4, 8)                                  # (fpage) pad 29's K1-K5: bitcrush, filter type, pitch follow, ring amount / frequency (nocrush: no bitcrush, the rest from K1)
 X_KNOBS = len(X_IDX)
@@ -2529,6 +2530,26 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
             E(str_imm, 2, 0, 0)
             E(b, "ou_kn")
             a.label("ou_ks")
+        if FADETAN[0]:
+            E(cmp_imm, 1, SP_RANDK - 1)
+            E(b_cond, "ou_fn", "ne")
+            E(mov_reg, 6, 0)
+            E(bl, sp["c_spshift"])
+            E(ldr_sp, 1, 16)
+            E(cmp_imm, 0, 0)
+            E(b_cond, "ou_fr", "eq")
+            imm32(0, COLOURS + 4 * SHIFT_BRT)
+            E(ldr_imm, 0, 0, 0)
+            E(cmp_reg, 1, 7)
+            E(b_cond, "ou_fw", "eq")                      # Shift held: K7 the stock's Shift tan, full when shown
+            E(movs_imm, 1, KNOB_LVL)
+            E(bl, "c_tmscl")
+            a.label("ou_fw")
+            E(str_imm, 0, 6, 0)
+            E(b, "ou_kn")
+            a.label("ou_fr")
+            E(mov_reg, 0, 6)
+            a.label("ou_fn")
         E(cmp_reg, 1, 7)
         E(b_cond, "ou_kd", "eq")
         E(mov_reg, 6, 0)                                  # a knob not shown: the page's colour at KNOB_LVL of the stock's brightness of its value
@@ -2717,7 +2738,7 @@ def apply_mixpage():
 
 def install(img, report, base_addr, stockplus=False, testpages=False, fpage=False, click=False, twoview=False, shiftled=False,
             bounce=False, pageclear=False, steadyreset=False, resetcue=False, stepmarker=False, trackpulse=False, steppage=False, softclear=False,
-            viewlock=False, momhold=False, nocrush=False, gran=False, perpage=False, pagecols=False, shapes=False, shapebar=False, filtpage=False, k78white=False, volpage=False, syncbar=False, depthfirst=False, scanfx=False, pageorder=False, mixpage=False, pxrand=False, glide=False, fade=False, fclr=False):
+            viewlock=False, momhold=False, nocrush=False, gran=False, perpage=False, pagecols=False, shapes=False, shapebar=False, filtpage=False, k78white=False, volpage=False, syncbar=False, depthfirst=False, scanfx=False, pageorder=False, mixpage=False, pxrand=False, glide=False, fade=False, fclr=False, fadetan=False):
     import rh_fw
     global SP_MAP, F_MAP, V_MAP, SP_MIDK
     if depthfirst:
@@ -2740,6 +2761,8 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     spn = SP_GLIDEK if glide else SP_RANDK if pxrand else None
     assert not fade or (glide and report["fshape"].get("fade")), "fade: glide, fshape's fade"
     FADE[0] = fade
+    assert not fadetan or fade, "fadetan: fade"
+    FADETAN[0] = fadetan
     assert not fclr or (syncbar and filtpage), "fclr: the filter page with syncbar"
     FCLR[0] = fclr
     assert not pageorder or (scanfx and volpage and pageclear), "pageorder: the scan on FX, the mix page, pageclear"
@@ -2776,7 +2799,7 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     sbl = None
     if syncbar:
         assert filtpage and "syncbar" in report and report["syncbar"]["rates"] == list(SB_RATES), "syncbar: the filter page, syncbar"
-        assert {**SHAPE_N, **F_SHN, **V_SHN} == {**SB_SHAPES, 5: 3}
+        assert {**SHAPE_N, **F_SHN, **V_SHN} == {**SB_SHAPES, 5: F_SHN[5]}
         sbl = {k: int(v, 16) for k, v in report["syncbar"]["labels"].items()}
     vo = None
     if volpage:
@@ -2821,6 +2844,6 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
                            prev_out=hex(L["prev_out"]), stockplus=bool(stockplus), fpage=fpage, click=click, twoview=twoview, shiftled=shiftled, bounce=bounce, pageclear=pageclear, steadyreset=steadyreset, resetcue=resetcue, stepmarker=stepmarker, trackpulse=trackpulse, steppage=steppage, softclear=softclear, viewlock=viewlock, momhold=momhold, page0=25 if pageclear else PAD_PAGE0,
                            x_idx=xi, gran=bool(gran), perpage=perpage, pagecols=pagecols, shapes=shapes, shapebar=shapebar,
                            filtpage=filtpage, k78white=k78white, volpage=volpage, syncbar=syncbar,
-                           depthfirst=depthfirst, scanfx=scanfx, padmap=padmap, mixpage=mixpage, pxrand=pxrand, glide=glide, fade=fade, fclr=fclr, spn=spn, maps=dict(sp=list(SP_MAP), f=list(F_MAP), v=list(V_MAP)),
+                           depthfirst=depthfirst, scanfx=scanfx, padmap=padmap, mixpage=mixpage, pxrand=pxrand, glide=glide, fade=fade, fclr=fclr, spn=spn, **({"fadetan": True} if fadetan else {}), maps=dict(sp=list(SP_MAP), f=list(F_MAP), v=list(V_MAP)),
                            tmclick={36: 1, 52: 2, 56: 3}.get(rhstate.OFF["tmenu"][1], 0), pages=[hex(c) for c in pages], labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")})
     return labels, code

@@ -1,5 +1,7 @@
 """Unicorn test of smpads.py on a build with it (RH_BUILD) and the RAM dump: Clear + pad 1 / 2 sets the pitch to 64 and the stock's
-«applied» to none without the stock's fit; without Clear, and every other pad, the stock's handler.
+«applied» to none without the stock's fit; without Clear, and every other pad, the stock's handler.  A build with smpads' sm: pad 21
+and its other pads (19, 20) turn the selected track's switches on / off (fshape's value 29, its block "SM" in the record), their LEDs in
+Sample mode, the core 1 word.
 
     python tests/emu_smpads.py STOCK.bin BUILT.bin RAM.bin
 """
@@ -54,6 +56,92 @@ def setup(fw, ram):
     return uc
 
 
+def smval(uc, t):
+    call(uc, int(ET.MAN["report"]["fshape"]["labels"]["c_fsval"], 16), t, ET.MAN["report"]["fshape"]["sm0"])
+    return uc.reg_read(UC_ARM_REG_R0)
+
+
+def sm_checks(uc):
+    import fshape as FS
+    rep = ET.MAN["report"]
+    lab = lambda m, k: int(rep[m]["labels"][k], 16)  # noqa: E731
+    pads = {int(k): v for k, v in rep["smpads"]["pads"].items()}
+    names = {FS.SM_XF: "loop crossfade", FS.SM_RD: "retrigger de-click", FS.SM_EF: "end fade", FS.SM_DR: "drone mode"}
+    call(uc, M.SELTRK, M.CONT)
+    t = uc.reg_read(UC_ARM_REG_R0)
+    o = 1 if t != 1 else 2
+    v0 = [smval(uc, k) for k in range(8)]
+    check(f"sm: every track starts with the defaults ({FS.SMDEF[0]}: crossfade off, de-click on, end fade on)", v0 == [FS.SMDEF[0]] * 8, v0)
+    cv, cm = ET.C.CTRL + M.O_VIEW, M.CONT + M.O_MODE
+    view0, mode0 = u32(uc, cv), uc.mem_read(cm, 1)[0]
+    col = lambda off: struct.unpack("<H", uc.mem_read(M.PAL + off, 2))[0]  # noqa: E731
+    slot = rhstate_slot()
+    for pd, bit in pads.items():
+        nm = names[bit]
+        uc.mem_write(slot, b"\0")
+        pad(uc, t, pd)
+        v = smval(uc, t)
+        check(f"sm: pad {pd + 1} turns track {t + 1}'s {nm} {'off' if FS.SMDEF[0] & bit else 'on'}, not the stock's handler, other tracks and switches kept",
+              v == FS.SMDEF[0] ^ bit and STOCK_PADS == [] and smval(uc, o) == FS.SMDEF[0], (v, STOCK_PADS))
+        call(uc, lab("rhrec", "c_rrt"))
+        blk = uc.reg_read(UC_ARM_REG_R0) + FS.SMBLK_OFF
+        data = bytes(uc.mem_read(blk, FS.SMBLK_LEN))
+        body = data[4:]
+        check(f"sm: pad {pd + 1}: the record's block \"SM\", its check byte, the change from the defaults",
+              data[:2] == b"SM" and data[2] == (sum(body) & 0xFF) ^ FS.CHECK and struct.unpack("<8H", body) == tuple(bit if k == t else 0 for k in range(8)),
+              data.hex())
+        check(f"sm: pad {pd + 1}: track {t + 1} marked to write", uc.mem_read(slot, 1)[0] >> t & 1 == 1, uc.mem_read(slot, 1)[0])
+        uc.mem_write(cv, struct.pack("<I", M.CONT))
+        uc.mem_write(cm, bytes([M.MODE_SMP]))
+        f = ET.led(uc, lab("smpads", "c_smled"))
+        lit = {q: f[q] == col(M.PAL_ON if v & b2 else M.PAL_OFF) for q, b2 in pads.items()}
+        check(f"sm: Sample mode: pads {', '.join(str(q + 1) for q in pads)} in the stock's chosen / not chosen colours", all(lit.values()),
+              {q + 1: hex(f[q]) for q in pads})
+        pad(uc, t, pd)
+        f = ET.led(uc, lab("smpads", "c_smled"))
+        check(f"sm: pad {pd + 1} again: back to the defaults, its colour {'chosen' if FS.SMDEF[0] & bit else 'not chosen'}",
+              smval(uc, t) == FS.SMDEF[0] and f[pd] == col(M.PAL_ON if FS.SMDEF[0] & bit else M.PAL_OFF), (smval(uc, t), hex(f[pd])))
+        uc.mem_write(cv, struct.pack("<I", view0))
+        uc.mem_write(cm, bytes([mode0]))
+    uc.mem_write(cv, struct.pack("<I", M.CONT))
+    uc.mem_write(cm, bytes([mode0 if mode0 != M.MODE_SMP else 0]))
+    f2 = ET.led(uc, lab("smpads", "c_smled"))
+    f3 = ET.led(uc, int(rep["smpads"]["prev_led"], 16))
+    uc.mem_write(cv, struct.pack("<I", view0))
+    uc.mem_write(cm, bytes([mode0]))
+    check("sm: not Sample mode: the frame as the rest of the chain drew it", f2 == f3)
+    for q in range(17, 22):
+        if q not in pads and q != 21:
+            pad(uc, t, q)
+            check(f"sm: pad {q + 1}: the stock's", STOCK_PADS == [q] and smval(uc, t) == FS.SMDEF[0], (STOCK_PADS, smval(uc, t)))
+    words = []
+    spw = lab("stockplus", "c_spw")
+
+    def hook(u, a, n, d):
+        words.append((u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R1)))
+    h = uc.hook_add(UC_HOOK_CODE, hook, None, spw, spw + 1)
+    for flags in (FS.SMDEF[0], FS.SM_RD, 0, 7, FS.SMDEF[0] | FS.SM_DR):
+        call(uc, int(rep["fshape"]["labels"]["c_fsput"], 16), t, rep["fshape"]["sm0"], flags)
+        words.clear()
+        call(uc, lab("fshape", "c_fldsp"), t)
+        got = [w for w, a in words if a == FS.SMF + t]
+        check(f"sm: c_fldsp writes track {t + 1}'s switches {flags} XOR the defaults ({flags ^ FS.SMDEF[0]}) to core 1 Y:${FS.SMF + t:X}",
+              got == [flags ^ FS.SMDEF[0]], got)
+        if rep["fshape"].get("loopxf"):
+            xfb, xw = int(rep["fshape"]["xfb"], 16), {k: int(v, 16) for k, v in rep["fshape"]["xf_words"].items()}
+            on = [w for w, a in words if a == xfb + t]
+            ln = [(w, a) for w, a in words if a in (xw["XN"], xw["XQ"])]
+            check(f"sm: c_fldsp writes the crossfade {'on' if flags & 1 else 'off'} to Y:${xfb + t:X}, its length 256 (step $8000)",
+                  on == [flags & 1] and ln == [(256, xw["XN"]), (0x8000, xw["XQ"])], (on, ln))
+    uc.hook_del(h)
+    call(uc, int(rep["fshape"]["labels"]["c_fsput"], 16), t, rep["fshape"]["sm0"], FS.SMDEF[0])
+
+
+def rhstate_slot():
+    import rhstate
+    return rhstate.ST + rhstate.OFF["fshape"][0]
+
+
 def main():
     stock, fw, ram = (open(p, "rb").read() for p in sys.argv[1:4])
     uc = setup(fw, ram)
@@ -82,6 +170,8 @@ def main():
             check(f"pad {i + 1}{' with Clear' if held else ''}: the stock's, pitch kept", STOCK_PADS == [i] and pitch(uc, t) == 70
                   and not UNAPPLIED, (STOCK_PADS, pitch(uc, t)))
     clear(uc, False)
+    if ET.MAN["report"]["smpads"].get("sm"):
+        sm_checks(uc)
     print("ALL PASS" if not ET.FAILS else f"{len(ET.FAILS)} FAIL")
     if ET.FAILS:
         raise SystemExit(1)

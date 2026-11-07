@@ -151,6 +151,16 @@ def main():
             want = g1 + mpy(A, S.value(tab_e(2), 0x400000)) + 0x30000
             check(f"{build}: (glide) the envelope and the random offset on top of G, G kept without them", abs(got - want) <= 2 and gp[3] == g1,
                   (hex(got), hex(want), hex(gp[3]), hex(g1)))
+            if fs.get("nfollow"):
+                PW = int(fs["pitch"], 16)
+                mem = tabs + [("y", a, [v & 0xFFFFFF]) for a, v in {GK + 3: gtab[80], GP + 3: 0, yb + 3: 0x400000, yb + PM.OFF_A + 3: A,
+                                                                      S.SHP_E + 3: 2, RO + 3: 0x30000, PW + 3: 0x777777}.items()]
+                res, _ = rhdspemu.run(1, call=rr, mem=mem, segs=segs, regs_code=DP.asm(["move #>$70,r4", "move #>$100000,y0"]),
+                                      dumps=[("y", KEEP, 1), ("y", PW, 8)])
+                pw = [s24(w) for w in res[("y", PW)]]
+                check(f"{build}: (nfollow) the filter's pitch at Y:${PW:X} + t = G + the random offset (not the stock's pitch, not the envelope); "
+                      "the voice's pitch as without it", pw[3] == g1 + 0x30000 and all(w == 0 for i, w in enumerate(pw) if i != 3)
+                      and abs(s24(res[("y", KEEP)][0]) - want) <= 2, (hex(pw[3]), hex(g1 + 0x30000), hex(s24(res[("y", KEEP)][0]))))
             p, g, n, k = 0x180000, 0, 0, gtab[96]
             while abs(p - g) > (p * 5) // 100 and n < 2000:
                 g, _ = gl_run(1, p, {GK + 1: k, GP + 1: g})

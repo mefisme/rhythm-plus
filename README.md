@@ -1,6 +1,6 @@
 # Rhythm Plus
 
-Rhythm Plus is a firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Track +** added: a track menu with pages of extra sound controls for each track. It also adds a count-in and some workflow features.
+Rhythm Plus is a firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Track +** added: a track menu with pages of extra sound controls for each track. It also adds **Pattern Mutate**, a count-in and some workflow features.
 
 ## Credits
 
@@ -53,6 +53,15 @@ Tap the selected track's button to open Track +. Tap it again to close it. While
 - **Shift + Patterns** (View Lock) keeps Track + open. **Hold** the selected track's button to see the other view while you hold it.
 
 All parameters, and what you can do with each one: [`manual/track_plus_parameters.md`](manual/track_plus_parameters.md).
+
+### Pattern Mutate
+
+On the Patterns page, hold Shift and tap Duplicate: each track gets a new play list, a short run of its own patterns in a random order. The track plays the list in a loop in place of its chain. Your patterns do not change. Hold Clear and Shift and tap Duplicate to go back to the chains.
+
+- **Settings:** hold Shift and hold Duplicate. Page 1: Length, Length type, Pool, When. Page 2 (Down): Length 5-8, Amount, Repeats, Keep slot 1. The track buttons choose which tracks mutate.
+- **Scenes** keep each track's mutate. View Lock works with a mutate.
+
+The manual for Pattern Mutate and Track +, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf).
 
 ### More
 
@@ -122,7 +131,7 @@ Then rebuild and compare the SHA-256 with the manifests before you commit the ne
 
 | Folder | What it holds |
 |---|---|
-| `builds/` | One script for each version (`build_a0085.py` is the newest). |
+| `builds/` | One script for each version (`build_a0120.py` is the newest). |
 | `modules/` | The features: each module adds its code to the firmware. |
 | `tests/` | The emulator tests. |
 | `tools/` | Setup and the installer page generator. |

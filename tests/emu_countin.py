@@ -25,6 +25,8 @@ os.environ["RH_TRACKRESET"] = "1" if MAN["report"].get("trackreset") else "0"
 os.environ["RH_GRAIN"] = "1" if "grain" in MAN["report"] else "0"
 os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"
+os.environ["RH_UPGUARD"] = "1" if "upguard" in MAN["report"] else "0"
+os.environ["RH_MUTSET"] = ("2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
 import ourram  # noqa: E402,F401
 import countin as C  # noqa: E402
 import rhstate  # noqa: E402

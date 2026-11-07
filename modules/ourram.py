@@ -24,7 +24,9 @@ TRACKRESET = os.environ.get("RH_TRACKRESET") == "1"
 PSHAPE = os.environ.get("RH_PSHAPE") == "1"          # RH_PSHAPE=1: pshape's slot (the shape tables' next word)
 FSHAPE = os.environ.get("RH_FSHAPE") == "1"          # RH_FSHAPE=1: fshape's slot (the filter's tracks to write, the round, the tick)
 GRAIN = os.environ.get("RH_GRAIN") == "1"            # RH_GRAIN=1: grain_rp's slot (the granular's words to core 0)
-SLOTS = (("trackreset", 220),) * TRACKRESET + (("pageclear", 8),) * PAGECLEAR + (("plog", PLOG),) * PROBES + SP_SLOTS * STOCKPLUS + (("grain", 4),) * GRAIN + (("pshape", 4),) * PSHAPE + (("fshape", 8),) * FSHAPE + (("tmenu", 32 + 4 * (TMCLICK > 0) + 16 * (TMCLICK > 1) + 4 * (TMCLICK > 2)), ("clkci", 52), ("playfix", 16), ("countin", 8), ("vismet", 4), ("srcount", 8)) + (("srprobe", 8),) * PROBES
+UPGUARD = os.environ.get("RH_UPGUARD") == "1"        # RH_UPGUARD=1: upguard's slot (set while the stock uploads a sample)
+MUTSET = {"1": 20, "2": 32}.get(os.environ.get("RH_MUTSET"), 0)   # mutset's slot: 1 the settings page, 2 with the mutate
+SLOTS = (("mutset", MUTSET),) * (MUTSET > 0) + (("upguard", 4),) * UPGUARD + (("trackreset", 220),) * TRACKRESET + (("pageclear", 8),) * PAGECLEAR + (("plog", PLOG),) * PROBES + SP_SLOTS * STOCKPLUS + (("grain", 4),) * GRAIN + (("pshape", 4),) * PSHAPE + (("fshape", 8),) * FSHAPE + (("tmenu", 32 + 4 * (TMCLICK > 0) + 16 * (TMCLICK > 1) + 4 * (TMCLICK > 2)), ("clkci", 52), ("playfix", 16), ("countin", 8), ("vismet", 4), ("srcount", 8)) + (("srprobe", 8),) * PROBES
 # from the top down: the last slots get the smallest offsets (byte loads reach 31, word loads 124); sizes are multiples of 4
 MAGIC = 0x3152554F                                 # "OUR1"
 

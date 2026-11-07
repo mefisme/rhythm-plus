@@ -2,7 +2,7 @@
 
 This section defines the parameters that you can see and change in Track +. It also tells you which of them you can automate or lock to a step.
 
-Firmware: Rhythm Plus A0085.
+Firmware: Rhythm Plus A0120.
 
 ## Terms
 
@@ -81,7 +81,7 @@ Exception: K7 and K8 on the Filter page are the stock's low-pass and resonance. 
 | K4 | Filter LFO depth | fine |
 | K5 | Filter LFO shape | second sweep |
 | K6 | Filter LFO rate: right of the middle = synced to the tempo, left = free | second sweep (synced half), fine (free half) |
-| K7 | Low-pass filter (stock) | Filter type: stock, 24 dB, comb |
+| K7 | Low-pass filter (stock) | Filter type: stock or 24 dB |
 | K8 | Resonance (stock) | Pitch follow: the low-pass follows the note's pitch |
 
 ### Mix (pad 28, mint)

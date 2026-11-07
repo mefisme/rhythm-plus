@@ -8,8 +8,8 @@ Ours: that word -> a short jsr to a hook in the unused vectors P:$50..$FF (nop i
 and returns r2 = Q:
   * LR (P:$11E3): m = PD x M; m >= 0: L x (1 - m), R; m < 0: L, R x (1 + m);
   * DLY (P:$120C), REV (P:$123B): k = D x (1 + M) / 2; k >= 0: s + k x (FULL - s); k < 0: s + k x s (s the stock's send);
-M = core 1's move LFO for the track at shared Y:SH + t (-1..1); PD, RD, DD = the depths the ARM writes to core 0's Y:YD + t, + 8, + 16
-(0 when the move's rate is off). Core 0's X / Y:$1400.. are zero in every dump, with no absolute operand in the stock.
+M = the move LFO for the track at shared Y:SH + t (-1..1); PD, RD, DD = the depths the ARM writes to core 0's Y:YD + t, + 8, + 16
+(0 when the move's rate is off).  vol: LR takes L and R x (1 - V) first, V = c0fx's volume cut at core 0's Y:VX + t (0 = full level). Core 0's X / Y:$1400.. are zero in every dump, with no absolute operand in the stock.
 """
 from __future__ import annotations
 
@@ -29,12 +29,21 @@ SITES = {0x11E3: "lr", 0x120C: "dly", 0x123B: "rev"}
 SEND = {"dly": (3, O_DD), "rev": (2, O_RD)}              # the send's word in the track's four, its depth
 
 
-def items():
+def vx():
+    import fshape as FS
+    return FS.VB + FS.O_VX
+
+
+def items(vol=False):
+    m = ["move y:(r5)+,x0", "move y:(r4)+,x1", "mpy x1,x0,a", "move a,x0"]            # x0 = m
+    lr = ["move x:(r1)+,y0", "move x:(r1)+,y1"]                                        # L, R
+    cut = ["move y:(r3)+,x1", "mpy x1,y0,a", "move y0,b", "sub a,b", "move b,y0",
+           "mpy y1,x1,a", "move y1,b", "sub a,b", "move b,y1"]                         # L, R x (1 - V)
     it = [("label", "lr"),
           f"move #>${SRC:x},r1", f"move #>${Q:x},r0", f"move #>${SH:x},r5", f"move #>${YD + O_PD:x},r4",
+          *([f"move #>${vx():x},r3"] if vol else []),
           "do #8,${lr_e:x}",
-          "move y:(r5)+,x0", "move y:(r4)+,x1", "mpy x1,x0,a", "move a,x0",            # x0 = m
-          "move x:(r1)+,y0", "move x:(r1)+,y1",                                        # L, R
+          *(lr + cut + m if vol else m + lr),
           "tst a", ("jcc", "lt", "lr_n"),
           "mpy y0,x0,b", "move y0,a", "sub b,a", "move a,x:(r0)+", "move y1,x:(r0)+", ("jmp", "lr_c"),
           ("label", "lr_n"),
@@ -62,18 +71,18 @@ def items():
     return it
 
 
-def code():
-    words, labels = core0.asm_at(items(), AT)
+def code(vol=False):
+    words, labels = core0.asm_at(items(vol), AT)
     assert AT + len(words) <= 0x100, ("the hooks past the vectors", hex(AT + len(words)))
     return words, labels
 
 
-def install(img, report, base_addr=None):
-    words, labels = code()
+def install(img, report, base_addr=None, vol=False):
+    words, labels = code(vol)
     for i, w in enumerate(words):
         core0.patch_p0(img, AT + i, 0, w)
     for at, n in SITES.items():
         core0.patch_p0(img, at, OLD, 0x0D0000 | labels[n])
-    report["mixmove"] = dict(at=hex(AT), words=len(words), q=hex(Q), yd=hex(YD), sh=hex(SH), full=hex(FULL),
+    report["mixmove"] = dict(at=hex(AT), words=len(words), q=hex(Q), yd=hex(YD), sh=hex(SH), full=hex(FULL), **({"vx": hex(vx())} if vol else {}),
                              hooks={n: hex(labels[n]) for n in SITES.values()}, sites={hex(a): n for a, n in SITES.items()})
     return {}, b""

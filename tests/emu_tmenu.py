@@ -17,6 +17,18 @@ HERE = Path(__file__).resolve().parents[1]
 os.environ.setdefault("RH_BUILD", Path(sys.argv[2]).parent.name if len(sys.argv) > 2 else "a0021")   # the build of the image tested
 os.environ.setdefault("RH_PROBES", "0")
 MAN = json.loads((HERE / "firmware" / os.environ["RH_BUILD"] / "manifest.json").read_text())
+ROUTE = MAN["report"].get("upguard", {}).get("route")
+
+
+def core_of(u):
+    """the core of a DSP word as the ARM's code meant it: a core 1 Y word upguard's router sent to core 0 counts as core 1's, once"""
+    c, adr = u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R2)
+    if ROUTE and c == 0 and 0x8000 <= adr < 0x10000:
+        if any(int(lo, 16) <= adr & 0x7FFF < int(hi, 16) for lo, hi in ROUTE[0]):
+            return 1
+        if any(int(lo, 16) <= adr & 0x7FFF < int(hi, 16) for lo, hi in ROUTE[1]):
+            return None                                                # (its core 1 copy follows)
+    return c
 SP = MAN["report"]["tmenu"].get("stockplus", False)
 FP = MAN["report"]["tmenu"].get("fpage", False)
 GRAN = MAN["report"]["tmenu"].get("gran", False)
@@ -39,6 +51,7 @@ SPN = MAN["report"]["tmenu"].get("spn") or (6 if SCANFX else 8)   # the pitch pa
 PXRAND = MAN["report"]["tmenu"].get("pxrand", False)   # the pitch page's K7: fshape's random pitch (value 26)
 GLIDE = MAN["report"]["tmenu"].get("glide", False)     # the pitch page's K8: fshape's glide time (value 27)
 FADE = MAN["report"]["tmenu"].get("fade", False)       # the pitch page's Shift + K7: fshape's LFO fade-in (value 28)
+FADETAN = MAN["report"]["tmenu"].get("fadetan", False) # Shift held: the pitch page's K7 tan
 FCLR = MAN["report"]["tmenu"].get("fclr", False)       # the filter page's K7 / K8: the Clear lights
 MIXER = 0x2004E090                                 # the Mixer's view (vtable 0x08067918): one off the track views
 os.environ["RH_STOCKPLUS"] = "1" if SP else "0"
@@ -49,6 +62,8 @@ os.environ["RH_TRACKRESET"] = "1" if MAN["report"].get("trackreset") else "0"
 os.environ["RH_GRAIN"] = "1" if "grain" in MAN["report"] else "0"
 os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"
+os.environ["RH_UPGUARD"] = "1" if "upguard" in MAN["report"] else "0"
+os.environ["RH_MUTSET"] = ("2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
 import ourram  # noqa: E402,F401
 with ourram.remix_imports():
     import stockplus as SPM  # noqa: E402
@@ -61,6 +76,8 @@ import rpasm  # noqa: E402
 rpasm.use()
 T.PAD_PAGE0 = MAN["report"]["tmenu"].get("page0", T.PAD_PAGE0)
 T.X_IDX = tuple(MAN["report"]["tmenu"].get("x_idx", T.X_IDX))
+if "nocomb" in MAN["report"]:
+    T.F_SHN[5] = MAN["report"]["nocomb"]["types"]
 T.X_KNOBS = len(T.X_IDX)
 _maps = MAN["report"]["tmenu"].get("maps")
 if _maps:                                                       # this build's knob order (depthfirst)
@@ -1003,7 +1020,7 @@ def filter_page(fw, ram, head):
     s = sel(uc)
     writes = []
     def wr(u, a, n, d):
-        if u.reg_read(UC_ARM_REG_R0) == 1:
+        if core_of(u) == 1:
             writes.append((u.reg_read(UC_ARM_REG_R1) >> 8, u.reg_read(UC_ARM_REG_R2) & 0x7FFF))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, wr, None, TH.WR16, TH.WR16 + 1)
@@ -1095,7 +1112,7 @@ def px_rand(fw, ram, head):
     s = sel(uc)
     writes = []
     def wr(u, a, n, d):
-        if u.reg_read(UC_ARM_REG_R0) == 1:
+        if core_of(u) == 1:
             writes.append((u.reg_read(UC_ARM_REG_R1) >> 8, u.reg_read(UC_ARM_REG_R2) & 0x7FFF))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, wr, None, TH.WR16, TH.WR16 + 1)
@@ -1174,6 +1191,17 @@ def px_rand(fw, ram, head):
         check(f"  Shift + K{k7 + 1} 12 clicks: the fade-in 12 x 128 (Shift: no fine steps here); the random pitch kept",
               fd() == 12 * 128 and px() == [5 * 128, 0] and all(fd(t) == 0 for t in range(8) if t != s), (fd(), px()))
         bar_check(uc, head, s, k7, f"  Shift held, K{k7 + 1} shown: the bar shows the fade-in", sp=True, shift=True)
+        tan = u32(uc, T.COLOURS + 4 * T.SHIFT_BRT)
+        for kn in (k7, 0):
+            uc.mem_write(SLOT + T.O_KNOB, bytes([kn + 1]))
+            shift(False); led(uc, head); led(uc, head); o0 = list(out(uc)[T.LED_KNOB0:T.LED_KNOB0 + 8])
+            shift(True); led(uc, head); led(uc, head); o1 = list(out(uc)[T.LED_KNOB0:T.LED_KNOB0 + 8])
+            w = list(o0)
+            if FADETAN:
+                w[k7] = tan if kn == k7 else scl(tan, T.KNOB_LVL)
+            check(f"  Shift held, K{kn + 1} shown: K{k7 + 1} " + (f"the stock's Shift tan{' at full' if kn == k7 else ''}" if FADETAN else "as without Shift")
+                  + ", the other knobs as without Shift", o1 == w, ([f"{x:06x}" for x in o1], [f"{x:06x}" for x in w]))
+        uc.mem_write(SLOT + T.O_KNOB, bytes([k7 + 1]))
         shift(False)
         bar_check(uc, head, s, k7, f"  Shift let go: the bar shows the random pitch again", sp=True)
         call(uc, int(MAN["report"]["rhrec"]["labels"]["c_rrt"], 16))
@@ -1286,9 +1314,9 @@ def vol_page(fw, ram, head):
     s = sel(uc)
     writes, wall = [], []
     def wr(u, a, n, d):
-        if u.reg_read(UC_ARM_REG_R0) == 1:
+        if core_of(u) == 1:
             writes.append((u.reg_read(UC_ARM_REG_R1) >> 8, u.reg_read(UC_ARM_REG_R2) & 0x7FFF))
-        wall.append((u.reg_read(UC_ARM_REG_R0), (u.reg_read(UC_ARM_REG_R1) >> 8) & 0xFFFFFF, u.reg_read(UC_ARM_REG_R2)))
+        wall.append((core_of(u), (u.reg_read(UC_ARM_REG_R1) >> 8) & 0xFFFFFF, u.reg_read(UC_ARM_REG_R2)))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, wr, None, TH.WR16, TH.WR16 + 1)
     def vw(): return {y: x for x, y in writes if FS.VB <= y < FS.VB + FS.O_VX}
@@ -1345,8 +1373,9 @@ def vol_page(fw, ram, head):
         uc.mem_write(tp, struct.pack("<I", tk))
         del wall[:]
         led(uc, head)
-        ph = [w for c, w, adr in wall if c == 0 and adr == MM.SH + 8 + s]
-        check(f"  K{mt(22) + 1} synced (value {v}), the tick moved: the move LFO's phase at shared Y:${MM.SH + 8 + s:X} through core 0",
+        pa = 0x8000 | (int(MAN["report"]["c0fx"]["mp"], 16) + s) if "c0fx" in MAN["report"] else MM.SH + 8 + s
+        ph = [w for c, w, adr in wall if c == 0 and adr == pa]
+        check(f"  K{mt(22) + 1} synced (value {v}), the tick moved: the move LFO's phase at core 0 / shared Y:${pa & 0x3FFFF:X}",
               ph and ph[-1] == SPM.k3_phase(v, tk) & 0xFFFFFF, (ph, SPM.k3_phase(v, tk)))
         uc.mem_write(SLOT + T.O_KNOB, bytes([mt(22) + 1]))
         led(uc, head)
@@ -1998,8 +2027,8 @@ def stockplus_shapes(fw, ram, head):
     s = sel(uc)
     writes = []
     def wr(u, a, n, d):
-        if u.reg_read(UC_ARM_REG_R0) == 1:
-            writes.append((u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R1), u.reg_read(UC_ARM_REG_R2)))
+        if core_of(u) == 1:
+            writes.append((core_of(u), u.reg_read(UC_ARM_REG_R1), u.reg_read(UC_ARM_REG_R2)))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, wr, None, TH.WR16, TH.WR16 + 1)
     yb = int(MAN["report"]["pitchmod"]["y_base"], 16)
@@ -2025,8 +2054,12 @@ def stockplus_shapes(fw, ram, head):
     FB = int(MAN["report"]["fshape"]["fb"], 16) if "fshape" in MAN["report"] else 0x10000
     GK = int(MAN["report"]["fshape"].get("gk", "0x10000"), 16) if "fshape" in MAN["report"] else 0x10000   # (glide) fshape's glide words
     FR = int(MAN["report"]["fshape"].get("fr", "0x10000"), 16) if "fshape" in MAN["report"] else 0x10000   # (fade) fshape's fade words
+    SMF = int(MAN["report"]["fshape"].get("smf", "0x10000"), 16) if "fshape" in MAN["report"] else 0x10000  # (sm) the Sample mode switches
+    XFW = {int(v, 16) for v in MAN["report"]["fshape"].get("xf_words", {}).values()} if "fshape" in MAN["report"] else set()
+    XFB = int(MAN["report"]["fshape"].get("xfb", "0x10000"), 16) if "fshape" in MAN["report"] else 0x10000  # (loopxf) the crossfade's words
     def tabs(): return [(y & 0x7FFF, x >> 8) for c, x, y in writes if (PS.ENV_Y <= y & 0x7FFF < FB or VOLT and PS.VOL_Y <= y & 0x7FFF < 0x2000)
-                        and not GK <= y & 0x7FFF < GK + 8 and not FR <= y & 0x7FFF < FR + 16]
+                        and not GK <= y & 0x7FFF < GK + 8 and not FR <= y & 0x7FFF < FR + 16
+                        and not SMF <= y & 0x7FFF < SMF + 8 and not XFB <= y & 0x7FFF < XFB + 8 and y & 0x7FFF not in XFW]
     def ok_for(tracks):
         g = trk()
         others = {a for t in range(8) if t not in tracks for a in want_words(t)} - {a for t in tracks for a in want_words(t)}
@@ -2279,8 +2312,8 @@ def stockplus_page(fw, ram, head):
     s = sel(uc)
     writes = []
     def wr(u, a, n, d):
-        if u.reg_read(UC_ARM_REG_R0) == 1:                             # core 1's (core 0's: the granular, emu_grain.py)
-            writes.append((u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R1), u.reg_read(UC_ARM_REG_R2)))
+        if core_of(u) == 1:                             # core 1's (core 0's: the granular, emu_grain.py)
+            writes.append((core_of(u), u.reg_read(UC_ARM_REG_R1), u.reg_read(UC_ARM_REG_R2)))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, wr, None, TH.WR16, TH.WR16 + 1)
     yb = int(MAN["report"]["pitchmod"]["y_base"], 16)

@@ -4,9 +4,10 @@ voice with the shape tables in Y, and voicefilt's LPIDX with FM added; P:$1C3 re
     python tests/emu_fshape.py BUILD [BUILD ...]      (BUILD: firmware/<build>)
 
 Checks: the filter's timeline (T += S, at most 1), FM = (A x ENV[shape](T) + L x LFO[shape](phase / 2)) >> 16 for every shape, the
-pitch's words untouched by it, LPIDX = the stock's index + FM clamped to 0..128 (the comb: 128).
+pitch's words untouched by it, LPIDX = the stock's index + FM clamped to 0..128 (the comb: 128; without it, the index as any type).
 (vol) The voice loop's jsr to LVL; LVL with depth 0 = the stock's level ramp; phase += R, VX = D x (1 - shape(phase / 2)) / 2 for the
-16 volume shapes; the samples and the level = the stock's ramp toward the target x (1 - VX); r0 kept.
+16 volume shapes; the samples and the level = the stock's ramp toward the target x (1 - VX); r0 kept.  (c0fx) no LVL: the stock's call
+and ramp (the LFOs: tests/emu_c0fx.py).
 """
 from __future__ import annotations
 
@@ -46,6 +47,13 @@ def mpy(a, b):
 
 
 def vol_checks(build, img, rep, segs):
+    if rep.get("c0fx"):
+        st = (HERE / "remix" / "stock" / "circuitrhythm-firmware-5706-STOCK.bin").read_bytes()
+        word = lambda im, a: int.from_bytes(im[rhdsp1.where(im, a):rhdsp1.where(im, a) + 3], "big")   # noqa: E731
+        check(f"{build}: (c0fx) P:$241 = the stock's jsr $244, its level ramp P:$244..$25B the stock's words",
+              word(img, F.LVL_CALL) == word(st, F.LVL_CALL) == 0x0D0000 | F.STOCK_LVL
+              and all(word(img, a) == word(st, a) for a in range(F.LOW_AT, F.LOW_END)))
+        return
     lvl = int(rep["fshape"]["lvl"], 16)
     o = rhdsp1.where(img, F.LVL_CALL)
     check(f"{build}: the voice loop's P:$241 = jsr LVL (${lvl:x})", int.from_bytes(img[o:o + 3], "big") == 0x0D0000 | lvl)
@@ -55,10 +63,12 @@ def vol_checks(build, img, rep, segs):
     vb = F.VB
     samples = [(0x123456 * (i + 1) * (1 if i % 2 else -1)) & 0xFFFFFF for i in range(32)]
 
-    def run(call, v, tgt, cur, words):
+    stock_segs = rhdspemu.segments(1, 0)
+
+    def run(call, v, tgt, cur, words, stock=False):
         mem = tabs + [("x", 1, [32]), ("x", BUF, samples), ("y", 0x1405, [v]), ("y", LEVEL + 2 * v, [tgt, cur])]
         mem += [("y", a, [w]) for a, w in words.items()]
-        res, _ = rhdspemu.run(1, call=call, mem=mem, segs=segs, regs_code=DP.asm(["move #>$54,r0"]),
+        res, _ = rhdspemu.run(1, call=call, mem=mem, segs=stock_segs if stock else segs, regs_code=DP.asm(["move #>$54,r0"]),
                               dumps=[("x", BUF, 32), ("x", LEVEL + 2 * v + 1, 1), ("y", vb + F.O_VX + v, 1), ("y", vb + F.O_VP + v, 1),
                                      ("y", R0KEEP, 1)])
         return (res[("x", BUF)], res[("x", LEVEL + 2 * v + 1)][0], res[("y", vb + F.O_VX + v)][0], res[("y", vb + F.O_VP + v)][0],
@@ -67,7 +77,7 @@ def vol_checks(build, img, rep, segs):
     v = 3
     bad = []
     for tgt, cur in ((0x7FFFFF, 0x7FFFFF), (0x7FFFFF, 0), (0, 0x7FFFFF), (0x400000, 0x123456)):
-        st = run(0x244, v, tgt, cur, {})
+        st = run(0x244, v, tgt, cur, {}, stock=True)
         lv = run(LSTUB, v, tgt, cur, {vb + F.O_VR + v: 0x1000, vb + F.O_VQ + v: S.LFO_Y})
         if lv[:2] != st[:2] or lv[2] != 0 or lv[4] != 0x54:
             bad.append((hex(tgt), hex(cur), lv[1:], st[1:2]))
@@ -85,7 +95,7 @@ def vol_checks(build, img, rep, segs):
             lv = run(LSTUB, v, 0x7FFFFF, 0x600000, {vb + F.O_VP + v: ph0 - r, vb + F.O_VR + v: r, vb + F.O_VD + v: d, vb + F.O_VQ + v: q})
             a = att(d, tab, (ph0 & 0xFFFFFF) >> 1)
             eff = ((0x7FFFFF << 24) - 2 * a * 0x7FFFFF) >> 24
-            st = run(0x244, v, eff, 0x600000, {})
+            st = run(0x244, v, eff, 0x600000, {}, stock=True)
             if lv[2] != a or lv[3] != ph0 & 0xFFFFFF or lv[:2] != st[:2] or lv[4] != 0x54:
                 bad.append((sh, hex(ph0), hex(lv[2]), hex(a), hex(lv[3])))
     check(f"{build}: LVL: phase += R, VX = D x (1 - shape) / 2, the stock's ramp toward target x (1 - VX): 16 shapes at 4 points", not bad, bad[:3])
@@ -183,7 +193,10 @@ def main():
                 bad.append((idx, fm, n5, b, want))
         check(f"{build}: LPIDX: the stock's index + FM, clamped 0..128, the resonance kept", not bad, bad)
         n5, b = lp_run(5, 60, 33, -40, kt=2)
-        check(f"{build}: LPIDX with the comb: 128, no resonance (FM not on it)", (n5, b) == (128, 0), (n5, b))
+        if rep.get("nocomb"):
+            check(f"{build}: LPIDX, no comb: a type word of 2 is the stock's index + FM", (n5, b) == (20, 33), (n5, b))
+        else:
+            check(f"{build}: LPIDX with the comb: 128, no resonance (FM not on it)", (n5, b) == (128, 0), (n5, b))
         if rep["fshape"].get("vol"):
             vol_checks(build, img, rep, segs)
     print("ALL PASS" if not FAILS else f"{len(FAILS)} FAIL")

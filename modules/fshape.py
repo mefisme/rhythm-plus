@@ -16,6 +16,14 @@
     then the envelope, the LFO and the random offset on top; c_fldsp writes K from the glide table (GL_MIN .. GL_MAX to 95 %).
   * (fade) value 28, the LFO's fade-in (block "FI"): TRIG sets the mute W = 1 at Y:FW + t; RR takes W -= FR (at least 0) and the LFO
     x (1 - W); c_fldsp writes FR from the fade table (1 = none, else a full fade in FD_MIN .. FD_MAX).
+  * (sm) value 29, the track's Sample mode switches (block "SM"; bit 0 loop crossfade, bit 1 retrigger de-click, bit 2 end fade,
+    bit 3 drone; 1 = on):
+    c_fldsp writes it XOR the defaults to Y:SMF + t (0 = the defaults); with end fade off, lfade skips the stock's end fade in every mode.
+  * (declick) a new note on a sounding voice: TRIG sets D = L (the voice's last output word, Y:DCB + 8 + t; 0 with the de-click off),
+    LVL adds D to the voice's words and takes D x DK each word (0 once |D| < DMIN), then keeps L; a voice not sounding gets L = 0 (P:$23A).
+    lfade, dcidle and dclast live over the stock's level ramp P:$244..$25B, dead once LVL takes its only call (P:$241).
+  * (loopxf) Circuit Remix's loop crossfade (its loopxf v4, through pitchmod's loopxf=4) with its core 1 words moved to envelope 4's spare
+    words (Remix's sit on ours): its on / off at Y:XFB + t (switch bit 0), its scratch from Y:XFS; c_fldsp writes them and the length.
 RAM: rhstate "fshape" + 0 the tracks to write (bit t), + 1 the frame counter, + 4 the tick last seen.
 """
 from __future__ import annotations
@@ -75,6 +83,7 @@ PX = [False]                                             # set by strip(px=True)
 GK, GP = PS.ENV_Y + 0x30, PS.ENV_Y + 0x38               # (glide) core 1's Y, + t: the glide's factor, the glided pitch (past envelope 0's points)
 GL_MIN, GL_MAX = 0.01, 1.0                               # (glide) seconds to 95 % of the jump, at the knob's first step and its top
 GLIDE = [False]                                          # set by strip(glide=True)
+NFOLLOW = [False]                                        # set by strip(nfollow=True): the pitch follow takes G + the random offset
 FI0, NFI = 28, 1                                         # (fade) value 28: the pitch LFO's fade-in time
 FIDEF = (0,)
 FIBLK_OFF, FIBLK_LEN = 172, 4 + 2 * NFI * 8              # "FI", the check byte, 0, 8 tracks x 1 halfword; after "PX", in Remix's patchain room
@@ -84,6 +93,37 @@ FD_MIN, FD_MAX = 0.02, 2.0                               # (fade) seconds of a f
 FADE = [False]                                           # set by strip(fade=True)
 assert VB + O_VX + 8 <= MB and MB + 16 <= PS.VOL_Y
 STOCK_LVL, LVL_CALL = 0x244, 0x241                       # core 1's level ramp, its jsr in the voice loop
+# (loopfade) core 1 P:$25C zeroes the track's level target while the voice's fetch is within $100 of its end, loop or not: a dip
+# every loop pass. Its `brset #0,y1,$269` (reverse) -> jmp lfade: a loop (mode bit 1) returns at its rts $268, else the stock's tests.
+EF_SITE, EF_OLD, EF_FWD, EF_REV, EF_RTS = 0x261, (0x0CC7A0, 0x000008), 0x263, 0x269, 0x268
+LOOPF = [False]                                          # set by strip(loopfade=True)
+SM0, NSM = 29, 1                                         # (sm) value 29: the Sample mode switches
+SM_XF, SM_RD, SM_EF = 1, 2, 4                            # its bits: loop crossfade, retrigger de-click, end fade
+SMDEF = (SM_RD | SM_EF,)
+SMBLK_OFF, SMBLK_LEN = 384, 4 + 2 * NSM * 8              # "SM", the check byte, 0, 8 tracks x 1 halfword; after OFF54's blocks
+SMMARK0, SMMARK1 = ord("S"), ord("M")
+SMF = PS.ENV_Y + 2 * PS.STRIDE + 0x30                    # (sm) core 1's Y, + t: the switches (past envelope 2's points)
+SMON = [False]                                           # set by strip(sm=True)
+DCB = PS.ENV_Y + 3 * PS.STRIDE + 0x30                    # (declick) core 1's Y: D + t, L + 8 + t (past envelope 3's points)
+DK, DMIN = round(math.exp(-1 / 96) * (1 << 23)), 0x3F     # D's factor a word (2 ms at 48 kHz), the D taken as 0
+LOW_AT, LOW_END = 0x244, 0x25C                           # (declick) the stock's level ramp, dead with LVL
+IDLE_SITE, IDLE_OLD, IDLE_TO = 0x23A, (0x0D104A, 0x00048C), 0x6C6   # the voice loop's `beq $6C6` for a voice not sounding
+VBUF = 0x2A02                                            # the voice's words (X), x:$1 of them
+DECLICK = [0]                                            # set by strip(declick=1: D at TRIG / 2: the smooth stage 4)
+ST4_AT, ST4_OLD, ST4_LIN, ST4_END = 0x636, (0x200009, 0x0C1C8B), 0x638, 0x642   # (declick 2) the note-on's stage 4, its straight fade
+FCOS = round(math.cos(math.pi / 33) * (1 << 23))         # (declick 2) the fade's cos(pi / 33) and 2 cos(pi / 33) - 1
+FK = round((2 * math.cos(math.pi / 33) - 1) * (1 << 23))
+DRONE = [False]                                          # set by strip(drone=True)
+SM_DR = 8                                                # (drone) its switch bit (pad 20)
+NOTE_AT, NOTE_OLD = 0x4F4, (0x200013, 0x54F41B)          # (drone) the note-on message's handler, its first two words
+OFF_AT, OFF_OLD = 0x509, (0x200013, 0x2C071B)            # (drone) the note-off message's handler, its first two words
+LN, LOFF = DCB, DCB + 8                                  # (drone) core 1's Y + t: the track's last note-on word, its last note-off's block
+BLK = 0x1602                                             # (drone) dspload's block counter (pitchmod's shift $300)
+XFS = PS.ENV_Y + 4 * PS.STRIDE + 0x22                    # (loopxf) core 1's Y: Remix's scratch words (past envelope 4's points)
+XFB = PS.ENV_Y + 4 * PS.STRIDE + 0x30                    # (loopxf) + t: the crossfade on (1) / off (0)
+XF_N = 256                                               # (loopxf) the crossfade's length in words, Remix's
+XF_SCRATCH = ("XR", "XA", "XE", "XS", "XN", "XQ", "WR4", "WS", "WL", "WB")
+LOOPXF = [False]                                         # set by strip(loopxf=True)
 
 
 def block_bytes(vals):
@@ -161,7 +201,9 @@ def trig_part():
            f"move #>${RD:x},r1", "lua (r1)+n1,r1", "move y:(r1),x1", "mpy x1,x0,a", f"move a,y:(r1+${RO - RD:x})",
            "move n1,a"] if PX[0] else []
     fd = [f"move #>${FW:x},r1", "move #>$7fffff,x0", "move x0,y:(r1+n1)"] if FADE[0] else []
-    return [f"move #>${FB + O_T:x},r1", "move x0,y:(r1+n1)", *fd, *rnd]
+    dc = [f"move #>${DCB + 8:x},r1", "move y:(r1+n1),b", f"move #>${SMF:x},r1", "move #$0,x0",
+          f"btst #{SM_RD.bit_length() - 1},y:(r1+n1)", "tcs x0,b", f"move #>${DCB:x},r1", "move b,y:(r1+n1)"] if DECLICK[0] == 1 else []
+    return [f"move #>${FB + O_T:x},r1", "move x0,y:(r1+n1)", *fd, *rnd, *dc]
 
 
 def fade_part():
@@ -182,7 +224,11 @@ def fade_table():
 
 def px_part():
     """(px) RR, after the pitch's sum in a (r1 = pitchmod's base + the track, b = the envelope + the LFO): (glide) a = G + b,
-    + the note's random offset"""
+    + the note's random offset; (nfollow) G + the offset kept as voicefilt's pitch, before b"""
+    if NFOLLOW[0]:
+        return [f"move y:(r1+${GP - PS.YB:x}),a", "sub y0,a", "move a,y1", f"move y:(r1+${GK - PS.YB:x}),x1", "mpy y1,x1,a", "add y0,a",
+                f"move a,y:(r1+${GP - PS.YB:x})", f"move y:(r1+${RO - PS.YB:x}),x0", "add x0,a", f"move a,y:(r1+${PS.PM.OFF_PITCH:x})",
+                "add b,a"]
     gl = [f"move y:(r1+${GP - PS.YB:x}),a", "sub y0,a", "move a,y1", f"move y:(r1+${GK - PS.YB:x}),x1", "mpy y1,x1,a", "add y0,a",
           f"move a,y:(r1+${GP - PS.YB:x})", "add b,a"] if GLIDE[0] else []
     return [*gl, f"move y:(r1+${RO - PS.YB:x}),x0", "add x0,a"]
@@ -199,8 +245,16 @@ def glide_table():
 
 def lvl_part():
     """LVL (in place of the stock's level ramp, after RR's lk): the volume LFO of voice v = y:$1405 (phase += R, VX = D x (1 - shape) / 2),
-    then the stock's ramp toward the target x (1 - VX); r0 kept; r1, n1 changed"""
+    then the stock's ramp toward the target x (1 - VX); r0 kept; r1, n1 changed.  (c0fx) no LVL: the voice loop keeps the stock's ramp"""
+    import c0fx
     import mixmove as MM
+    if c0fx.STRIPPED[0]:
+        assert not DECLICK[0], "c0fx: the de-click's code sits in the stock's ramp"
+        return [*(drone_items() if DRONE[0] else []),
+                *([("label", "lfade"), f"jset #1,y1,${EF_RTS:x}",
+                   *([f"move #>${SMF:x},r5", "move y:>$1405,n5", "lua (r5)+n5,r5", f"btst #{SM_EF.bit_length() - 1},y:(r5)", f"jcs ${EF_RTS:x}"]
+                     if SMON[0] else []),
+                   f"jset #0,y1,${EF_REV:x}", f"jmp ${EF_FWD:x}"] if LOOPF[0] and not DECLICK[0] else [])]
     mv = ["move y:>$1405,n1", f"move #>${MB:x},r1", "lua (r1)+n1,r1",
           "move y:(r1),x0", "move y:(r1+$8),r0",                                         # MR, the table
           f"move #>${MM.SH:x},r1", "lua (r1)+n1,r1",
@@ -228,20 +282,125 @@ def lvl_part():
             ("do", "lv_e"),
             "move x1,b", "sub x0,b", "asr #6,b,b", "add x0,b", "move b,x0", "move x:(r2),y1", "mpy x0,y1,a", "move a,x:(r2)+",
             ("label", "lv_e"),
-            "move (r5)+", "move x0,x:(r5)", "rts"]
+            "move (r5)+", "move x0,x:(r5)", *(dc_part(low_code()[1]["dclast"]) if DECLICK[0] == 1 else ["rts"]),
+            *(st4_items() if DECLICK[0] == 2 else []),
+            *(drone_items() if DRONE[0] else []),
+            *([("label", "lfade"), f"jset #1,y1,${EF_RTS:x}",
+               *([f"move #>${SMF:x},r5", "move y:>$1405,n5", "lua (r5)+n5,r5", f"btst #{SM_EF.bit_length() - 1},y:(r5)", f"jcs ${EF_RTS:x}"]
+                 if SMON[0] else []),
+               f"jset #0,y1,${EF_REV:x}", f"jmp ${EF_FWD:x}"] if LOOPF[0] and not DECLICK[0] else [])]
 
 
-def strip(vol=False, move=False, px=False, glide=False, fade=False):
+def dc_part(last):
+    """(declick) LVL's end (n1 = the voice, r2 past its words): D added to each word, D x DK; then dclast (at `last`) keeps L"""
+    return [f"move #>${DCB:x},r1", "move y:(r1+n1),b", "tst b", ("jccs", "eq", last),
+            f"move #>${VBUF:x},r2", f"move #>${DK:x},x1",
+            ("do", "dc_e"),
+            "move x:(r2),a", "add b,a b,x0", "move a,x:(r2)+", "mpy x1,x0,b",
+            ("label", "dc_e"),
+            "tfr b,a", "abs a", f"cmp #${DMIN:x},a", ("jccs", "ge", "dc_k"), "clr b",
+            ("label", "dc_k"),
+            "move b,y:(r1+n1)", ("jmps", last)]
+
+
+def st4_items():
+    """(declick 2) the note-on's stage 4 (from P:$636: a = the voice's gain, r1 = its words, r4 = r1 - 1), switch on: the block x gain x
+    (1 + cos(pi (n + 1) / 33)) / 2 (u = gain / 2 x cos by u' = 2 cos(pi / 33) u - u_), then the stock's end P:$642; off: its straight fade"""
+    return [("label", "st4"),
+            "move y:>$1405,b", f"add #>${SMF:x},b", "move b1,r5", f"btst #{SM_RD.bit_length() - 1},y:(r5)", ("jcc", "cs", "st4_s"),
+            "asr a", "move a,y1", "move a,y0", f"move #>${FCOS:x},x1", "mpy y1,x1,a", "move (r4)+",
+            ("do", "st4_e"),
+            "move a,x0", "tfr x0,b", "add y1,b", f"move #>${FK:x},x1", "mac x1,x0,a", "sub y0,a x0,y0", "move b,x0",
+            "move x:(r1)+,x1", "mpy x1,x0,b", "move b,x:(r4)+",
+            ("label", "st4_e"),
+            ("jmps", ST4_END),
+            ("label", "st4_s"), "tfr a,b", "asr #5,b,b", ("jmps", ST4_LIN)]
+
+
+def drone_items():
+    """(drone) the note-on message (from P:$4F4: y1 = the message, the track in bits 0-2, the note in bits 8-15): Y:LN + t keeps it; with
+    the switch on, the same note and the voice sounding (active, stage 0-1 or a stage 2 its note-off set in this block; a loop, or more
+    than $100 from its end), no new note and stage 1; else the stock's handler.  droff (from P:$509, the note-off) keeps the block at
+    Y:LOFF + t.  Both use only their stock handler's registers"""
+    return [("label", "drone"),
+            "clr a", "move #>$7,a1", "and y1,a", "move a1,n4",
+            f"move #>${LN:x},r4", "move y:(r4+n4),b", "move y1,y:(r4+n4)",
+            f"move #>${SMF:x},r4", f"btst #{SM_DR.bit_length() - 1},y:(r4+n4)", ("jcc", "cc", "dr_s"),
+            "cmp y1,b", ("jcc", "ne", "dr_s"),
+            f"move #>${LOFF:x},r4", "move y:(r4+n4),x1",
+            "asl #4,a,a", "move a1,n4", "move #>$40,r4", "lua (r4)+n4,r4",
+            "move x:(r4+$4),b", "tst b", ("jcc", "eq", "dr_s"),
+            "move x:(r4+$a),b", "cmp #>$2,b", ("jcc", "lt", "dr_p"), ("jcc", "gt", "dr_s"),
+            f"move y:>${BLK:x},b", "cmp x1,b", ("jcc", "ne", "dr_s"),
+            ("label", "dr_p"),
+            "move y:(r4+$5),x1", "btst #1,x1", ("jcc", "cs", "dr_t"),
+            "move x:(r4+$3),a", "move y:(r4+$3),b", "btst #0,x1", ("jcc", "cs", "dr_r"),
+            "sub #>$100,b", "cmp a,b", ("jcc", "le", "dr_s"), ("jmp", "dr_t"),
+            ("label", "dr_r"), "add #>$100,b", "cmp b,a", ("jcc", "le", "dr_s"),
+            ("label", "dr_t"), "move #>$1,b", "move b1,x:(r4+$a)", "rts",
+            ("label", "dr_s"), "clr a", "clr b", "move #>$7,a1", ("jmp", NOTE_AT + 3),
+            ("label", "droff"),
+            "clr a", "move #>$7,a1", "and y1,a", "move a1,n4",
+            f"move #>${LOFF:x},r4", f"move y:>${BLK:x},b", "move b1,y:(r4+n4)",
+            "clr a", "clr b", "move #>$7,a1", ("jmp", OFF_AT + 2)]
+
+
+def low_items():
+    """(declick) P:$244..: lfade (the end fade's test); declick 1: dcidle (a voice not sounding: L = 0), dclast (L = the voice's last
+    word, rts)"""
+    return [("label", "lfade"), f"jset #1,y1,${EF_RTS:x}",
+            f"move #>${SMF:x},r5", "move y:>$1405,n5", "lua (r5)+n5,r5", f"btst #{SM_EF.bit_length() - 1},y:(r5)", f"jcs ${EF_RTS:x}",
+            f"jset #0,y1,${EF_REV:x}", ("jmps", EF_FWD),
+            *([("label", "dcidle"), "move y:>$1405,n1", f"move #>${DCB + 8:x},r1", "move b,y:(r1+n1)", ("jmps", IDLE_TO),
+               ("label", "dclast"), "move (r2)-", "move x:(r2),a", f"move #>${DCB + 8:x},r1", "move a,y:(r1+n1)", "rts"]
+              if DECLICK[0] == 1 else [])]
+
+
+def low_code():
+    """-> (words for P:LOW_AT.., labels)"""
+    import voicefx as V
+    w, labels = V.assemble(low_items(), LOW_AT)
+    assert LOW_AT + len(w) <= LOW_END, f"P:${LOW_AT:x}: {len(w)} words (room {LOW_END - LOW_AT})"
+    return w, labels
+
+
+def strip(vol=False, move=False, px=False, glide=False, fade=False, loopfade=False, sm=False, declick=False, loopxf=False, drone=False,
+          nfollow=False):
     """from now on pshape's RR / TRIG carry the filter's half and voicefilt's LPIDX adds FM; vol: LVL after RR; move: the move LFO in LVL;
-    px: the random pitch in TRIG and RR; glide: the glide in RR; fade: the pitch LFO's fade-in in TRIG and RR"""
+    px: the random pitch in TRIG and RR; glide: the glide in RR; fade: the pitch LFO's fade-in in TRIG and RR; loopfade: no end fade
+    in loop mode (its jump in LVL's block); sm: the end fade per track (value 29); declick: the retrigger de-click (1: D from
+    TRIG; 2: a smooth fade in the note-on's stage 4); loopxf: Remix's crossfade's words moved to ours (pitchmod with loopxf=4); drone: the
+    same note on a sounding voice keeps it playing (switch SM_DR); nfollow: the pitch follow on the note's pitch (G + the random
+    offset), not the stock's"""
     import voicefilt as F
     assert vol or not move
     assert move or not px
     assert px or not glide
     assert PS.ENV_Y + PS.NPT + 1 <= GK and GP + 8 <= PS.ENV_Y + PS.STRIDE
     assert px or not fade
+    assert vol or not loopfade
+    LOOPF[0] = loopfade
+    assert loopfade or not sm
+    assert PS.ENV_Y + 2 * PS.STRIDE + PS.NPT + 1 <= SMF and SMF + 8 <= PS.ENV_Y + 3 * PS.STRIDE
+    SMON[0] = sm
+    assert sm or not declick
+    assert PS.ENV_Y + 3 * PS.STRIDE + PS.NPT + 1 <= DCB and DCB + 16 <= PS.ENV_Y + 4 * PS.STRIDE
+    DECLICK[0] = int(declick)
+    assert sm or not drone
+    assert not (drone and declick == 1), "drone: LN sits on the de-click's words"
+    DRONE[0] = drone
+    assert sm or not loopxf
+    if loopxf:
+        import loopxf as XF
+        assert PS.ENV_Y + 4 * PS.STRIDE + PS.NPT + 1 <= XFS and XFS + len(XF_SCRATCH) <= XFB and XFB + 8 <= PS.ENV_Y + 5 * PS.STRIDE
+        for k, name in enumerate(XF_SCRATCH):
+            setattr(XF, name, XFS + k)
+        XF.XFON = XFB
+    LOOPXF[0] = loopxf
     assert PS.ENV_Y + PS.STRIDE + PS.NPT + 1 <= FR and FW + 8 <= PS.ENV_Y + 2 * PS.STRIDE
     GLIDE[0], FADE[0] = glide, fade
+    assert glide or not nfollow
+    NFOLLOW[0] = PS.LATE_PITCH[0] = nfollow
     PS.PLFO = fade_part if fade else None
     assert F.TMP + 7 <= RSEED and RD + 8 <= F.TMP and RO + 8 <= F.STATE2
     MOVE[0], PX[0] = move, px
@@ -265,7 +424,7 @@ def strip(vol=False, move=False, px=False, glide=False, fade=False):
 
 
 # ---------------------------------------------------------------- the ARM
-def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
+def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, sm=False):
     a = Asm(base)
     E = a.emit
     O = rhstate.OFF["fshape"][0]
@@ -296,6 +455,10 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
         assert glide
         E(raw, b"".join(v.to_bytes(4, "little") for v in fade_table()))
         E(raw, b"".join(v.to_bytes(2, "little") for v in FIDEF))
+    t_smdef = t_fidef + 2 * NFI
+    if sm:
+        assert fade
+        E(raw, b"".join(v.to_bytes(2, "little") for v in SMDEF))
 
     # ---- c_flblk() -> r0 = the block in the record's tail, 0 without the record; clobbers r1, r2
     a.label("c_flblk")
@@ -358,6 +521,11 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
     E(b_w, L["c_shval"])
     a.label("fv_o")
     if vol:
+        if sm:
+            E(cmp_imm, 1, SM0)
+            E(b_cond, "fv_s", "lo")
+            E(b_w, "c_smval")
+            a.label("fv_s")
         if fade:
             E(cmp_imm, 1, FI0)
             E(b_cond, "fv_p", "lo")
@@ -405,6 +573,11 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
     E(b_w, L["c_shput"])
     a.label("fp_o")
     if vol:
+        if sm:
+            E(cmp_imm, 1, SM0)
+            E(b_cond, "fp_s", "lo")
+            E(b_w, "c_smput")
+            a.label("fp_s")
         if fade:
             E(cmp_imm, 1, FI0)
             E(b_cond, "fp_p", "lo")
@@ -491,6 +664,8 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
         vl_code(a, E, imm32, L, O, t_pxdef, "px", PXBLK_OFF, PXBLK_LEN, (PXMARK0, PXMARK1), PX0, NPX)
     if fade:
         vl_code(a, E, imm32, L, O, t_fidef, "fi", FIBLK_OFF, FIBLK_LEN, (FIMARK0, FIMARK1), FI0, NFI)
+    if sm:
+        vl_code(a, E, imm32, L, O, t_smdef, "sm", SMBLK_OFF, SMBLK_LEN, (SMMARK0, SMMARK1), SM0, NSM)
 
     # ---- c_flr(r0 = the rate's value) -> r0 = R: 0 in the middle, Stock+'s rate table right of it, BPM x KQ[i] >> 8 left; clobbers r1-r3
     a.label("c_flr")
@@ -682,6 +857,26 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
         E(movw, 1, FR)
         E(adds_reg, 1, 1, 4)
         E(bl, L["c_spw"])
+    if sm:
+        E(mov_reg, 0, 4)
+        E(movs_imm, 1, SM0)
+        E(bl, "c_fsval")
+        E(movs_imm, 1, SMDEF[0])
+        E(eors_reg, 0, 1)
+        put(SMF - FB)
+        if LOOPXF[0]:
+            import loopxf as XF
+            xn, xq = XF.length_words(XF_N)
+            E(mov_reg, 0, 4)
+            E(movs_imm, 1, SM0)
+            E(bl, "c_fsval")
+            E(movs_imm, 1, SM_XF)
+            E(raw, h(0x4008))                              # ands r0, r1
+            put(XFB - FB)
+            for w, at in ((xn, XF.XN), (xq, XF.XQ)):
+                E(movw, 0, w)
+                E(movw, 1, at)
+                E(bl, L["c_spw"])
     E(pop_list, [4, 5], pc=True)
     if move:
         # ---- c_fl0w(r0 = word, r1 = core 0's Y address) / c_flsw(r0 = word, r1 = a shared address): through core 0; clobbers r0-r3, r12
@@ -776,7 +971,7 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
     E(movs_imm, 4, 0)
     a.label("ff_t")
 
-    def sync(vi, off, tag, shared=None):                   # track r4's LFO of rate value vi, synced: its phase at Y:off + r4 (or shared + r4)
+    def sync(vi, off, tag, shared=None, core0=None):       # track r4's LFO of rate value vi, synced: its phase at Y:off + r4 (or shared / core 0's + r4)
         E(mov_reg, 0, 4)
         E(movs_imm, 1, vi)
         E(bl, "c_fsval")
@@ -800,7 +995,11 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
         E(muls, 0, 1)
         imm32(1, K3_MIDPH)
         E(adds_reg, 0, 0, 1)
-        if shared is None:
+        if core0 is not None:
+            E(movw, 1, core0)
+            E(adds_reg, 1, 1, 4)
+            E(bl, "c_fl0w")
+        elif shared is None:
             put(off)
         else:
             imm32(1, shared)
@@ -811,8 +1010,12 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False):
     if vol:
         sync(V1 + 1, VB - FB + O_VP, "v")
     if move:
+        import c0fx
         import mixmove as MM
-        sync(V1 + 4, 0, "m", shared=MM.SH + 8)
+        if c0fx.STRIPPED[0]:
+            sync(V1 + 4, 0, "m", core0=c0fx.MP)
+        else:
+            sync(V1 + 4, 0, "m", shared=MM.SH + 8)
     E(adds_imm8, 4, 1)
     E(cmp_imm, 4, 8)
     if move:
@@ -836,7 +1039,11 @@ def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, mar
     E(bl, L["c_rrt"])
     E(cmp_imm, 0, 0)
     E(b_cond, f"{p}b_x", "eq")
-    E(adds_imm8, 0, boff)
+    if boff < 256:
+        E(adds_imm8, 0, boff)
+    else:
+        E(movw, 1, boff)
+        E(adds_reg, 0, 0, 1)
     a.label(f"{p}b_x")
     E(pop_list, [], pc=True)
 
@@ -968,7 +1175,7 @@ def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, mar
     E(pop_list, [4, 5], pc=True)
 
 
-def install(img, report, base_addr, vol=False, move=False, px=False, glide=False, fade=False):
+def install(img, report, base_addr, vol=False, move=False, px=False, glide=False, fade=False, sm=False):
     """After pshape (FILT through strip()), stockplus_rp, rhrec, countin, dspready and rhstate; with ourram's slot (RH_FSHAPE=1).
     vol: strip(vol=True), pshape with vol; LVL in place of the stock's level ramp."""
     import rhbuild
@@ -996,16 +1203,22 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
     if fade:
         pc = rhrec.OFF["patchain"]
         assert glide and FADE[0] and PXBLK_OFF + PXBLK_LEN <= FIBLK_OFF and FIBLK_OFF + FIBLK_LEN <= pc[0] + pc[1] and FIBLK_OFF < 256, "fade: strip(fade=True)"
-    code, labels = arm_code(base_addr, L, vol, move, px, glide, fade)
+    if sm:
+        assert fade and SMON[0] and all(o + n <= SMBLK_OFF for o, n in rhrec.OFF54.values()) and SMBLK_OFF + SMBLK_LEN <= BLK_OFF, "sm: strip(sm=True)"
+    code, labels = arm_code(base_addr, L, vol, move, px, glide, fade, sm)
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4:
         img += bytes([0xFF])
     assert DSP_LABELS, "pitchmod built voicefilt after fshape.strip()"
     extra = {}
     if vol:
-        lvl = PS.LABELS["lvl"]
-        assert lvl < 0x1000, "LVL in the short jsr's reach"
-        rhdsp1.patch_p(img, LVL_CALL, 0x0D0000 | STOCK_LVL, 0x0D0000 | lvl)
+        import c0fx
+        if c0fx.STRIPPED[0]:
+            lvl = STOCK_LVL                                # the stock's ramp keeps its call
+        else:
+            lvl = PS.LABELS["lvl"]
+            assert lvl < 0x1000, "LVL in the short jsr's reach"
+            rhdsp1.patch_p(img, LVL_CALL, 0x0D0000 | STOCK_LVL, 0x0D0000 | lvl)
         extra = dict(vol=True, vb=hex(VB), lvl=hex(lvl), vblk_off=VBLK_OFF, vdefs=list(VDEF_M if move else VDEF))
         if move:
             extra.update(move=True, mb=hex(MB))
@@ -1015,6 +1228,44 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
             extra.update(glide=True, gk=hex(GK), gp=hex(GP))
         if fade:
             extra.update(fade=True, fiblk_off=FIBLK_OFF, fidefs=list(FIDEF), fr=hex(FR), fw=hex(FW))
+        if DECLICK[0]:
+            lw, ll = low_code()
+            for i, w in enumerate(lw):
+                o = rhdsp1.where(img, LOW_AT + i)
+                rhdsp1.patch_p(img, LOW_AT + i, int.from_bytes(img[o:o + 3], "big"), w)
+            PS.LABELS.update(ll)
+        if LOOPF[0]:
+            lf = PS.LABELS["lfade"]
+            rhdsp1.patch_p(img, EF_SITE, EF_OLD[0], 0x0AF080)
+            rhdsp1.patch_p(img, EF_SITE + 1, EF_OLD[1], lf)
+            extra.update(loopfade=hex(lf))
+        if sm:
+            extra.update(sm=True, sm0=SM0, smblk_off=SMBLK_OFF, smdefs=list(SMDEF), smf=hex(SMF))
+        if DECLICK[0] == 1:
+            di = PS.LABELS["dcidle"]
+            rhdsp1.patch_p(img, IDLE_SITE, IDLE_OLD[0], 0x0AF0AA)
+            rhdsp1.patch_p(img, IDLE_SITE + 1, IDLE_OLD[1], di)
+            extra.update(declick=True, dcb=hex(DCB), dk=hex(DK), dcidle=hex(di), dclast=hex(PS.LABELS["dclast"]))
+        if DECLICK[0] == 2:
+            st4 = PS.LABELS["st4"]
+            rhdsp1.patch_p(img, ST4_AT, ST4_OLD[0], 0x0AF080)
+            rhdsp1.patch_p(img, ST4_AT + 1, ST4_OLD[1], st4)
+            extra.update(declick=2, st4=hex(st4), fcos=hex(FCOS), fk=hex(FK))
+        if DRONE[0]:
+            dr = PS.LABELS["drone"]
+            rhdsp1.patch_p(img, NOTE_AT, NOTE_OLD[0], 0x0AF080)
+            rhdsp1.patch_p(img, NOTE_AT + 1, NOTE_OLD[1], dr)
+            do = PS.LABELS["droff"]
+            rhdsp1.patch_p(img, OFF_AT, OFF_OLD[0], 0x0AF080)
+            rhdsp1.patch_p(img, OFF_AT + 1, OFF_OLD[1], do)
+            assert int(report["pitchmod"]["y_blocks"], 16) == BLK, "drone: BLK is dspload's counter"
+            extra.update(drone=hex(dr), droff=hex(do), ln=hex(LN), loff=hex(LOFF), blk=hex(BLK), sm_dr=SM_DR)
+        if LOOPXF[0]:
+            import loopxf as XF
+            assert report["pitchmod"].get("loopxf_v") == 4 and XF.XFON == XFB, "loopxf: strip(loopxf=True) and pitchmod's loopxf=4"
+            extra.update(loopxf=True, xfb=hex(XFB), xfs=hex(XFS), xf_n=XF_N, xf_words={k: hex(getattr(XF, k)) for k in XF_SCRATCH})
+    if NFOLLOW[0]:
+        extra.update(nfollow=True, pitch=hex(PS.YB + PS.PM.OFF_PITCH))
     report["fshape"] = dict(fb=hex(FB), blk_off=BLK_OFF, lpidx=hex(DSP_LABELS["lpidx"]), defs=list(DEF), slot=hex(rhstate.ST + rhstate.OFF["fshape"][0]),
                             labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")}, **extra)
     return labels, code
