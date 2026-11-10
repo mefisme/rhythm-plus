@@ -42,7 +42,7 @@ Tap the selected track's button to open Track +. Tap it again to close it. While
 | 27 | Reserved (dark) | Filter page archived |
 | 28 | Reserved (dark) | Mix page archived |
 | 29 | Pitch (sky blue) | Pitch envelope and LFO, random pitch, glide; Shift + K7: LFO fade-in |
-| 30 | (none yet) | |
+| 30 | Granular (lime) | The grain engine: Position, Size, Density, Scan, scatter, Edge, Reverse; Shift: Level, Size scatter, Timing, Jitter, Slice, Lock |
 | 31 | FX (amber) | Ring modulation, sample start scan |
 
 - **Shapes:** 16 pitch-envelope shapes and 10 pitch-LFO shapes.
@@ -61,7 +61,11 @@ On the Patterns page, hold Shift and tap Duplicate: each track gets a new play l
 - **Settings:** hold Shift and hold Duplicate. Page 1: Length, Length type, Pool, When. Page 2 (Down): Length 5-8, Amount, Repeats, Keep slot 1. The track buttons choose which tracks mutate.
 - **Scenes** keep each track's mutate. View Lock works with a mutate.
 
-The historical A0120 manual for Pattern Mutate and Track +, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf). Its Filter/Mix pages are archived in A0121; use the parameter reference above for the current layout.
+### Granular
+
+Track + pad 30 plays the track's sample as many short grains: clouds, drones, stutters and chopped beats. Hold pad 30 for its settings: on or off, Triggered or Texture, Flow or Retrigger, Bounce, Freeze and Pitch Set. Slice cuts the sample into 2 to 16 parts, Scan steps through them on the tempo, and Lock repeats the random grains as a loop. The Granular page is in the AG test builds.
+
+The manual, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf). It covers Pattern Mutate, Track +, the Pitch page and Granular.
 
 ### More
 

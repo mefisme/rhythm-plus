@@ -1,14 +1,19 @@
-"""Writes manual/rhythm_plus_manual.html: the Pattern Mutate and Track + chapters (A4 pages, pad drawings in the unit's colours).
+"""Writes manual/rhythm_plus_manual.html: the Pattern Mutate, Track + and Granular chapters (A4 pages, pad drawings in the unit's colours).
 Print it to PDF with:  chrome --headless --print-to-pdf=manual/rhythm_plus_manual.pdf manual/rhythm_plus_manual.html"""
 from html import escape
 from pathlib import Path
 
-FIRMWARE = "A0120"
+FIRMWARE = "AG015"
 OUT = Path(__file__).resolve().parents[1] / "manual" / "rhythm_plus_manual.html"
 
 GRAD = ["ffc866", "ffd966", "fff766", "e5ff66", "c7ff66", "a6ff66", "87ff66", "66ff66"]   # the probability page's colours
 TRK = ["ff4e13", "ffff19", "9865ff", "00ffb5", "c63ac6", "3db24f", "1a47ff", "ff4c7b"]    # tracks 1-8
 GREEN, RED, WHITE = "66ff66", "ff2a1a", "ffffff"
+SKY, LIME, AMBER, GOLD, PINK = "4ab8ff", "9eff59", "ffa020", "ffc859", "ff59c2"   # Pitch page, Granular page, Texture, Pitch Set steps
+ON_G, OFF_R = "35df74", "ff3040"                                                  # Granular on / off
+ENV = ("Drop", "Fast drop", "Straight drop", "Rise", "Fast rise", "Up and down", "Down and up", "Hold then drop",
+       "Overshoot", "Bounce", "Octave steps", "Fifth and octave", "Stairs", "Trill", "Random steps", "Swell")
+LFO = ("Triangle", "Sine", "Saw up", "Saw down", "Square", "Narrow pulse", "Stairs", "Random steps", "Smooth random", "Bounce")
 OFF = (46, 46, 50)
 
 
@@ -45,7 +50,7 @@ def grid(cells, cols=None, rows=None, marks=None, knobs=False, buttons=None, not
         for k in range(8):
             cx = left + k * (PAD + GAP) + PAD / 2
             fill = knobs[k] if isinstance(knobs, (list, tuple)) else None
-            out.append(f'<circle cx="{cx}" cy="26" r="14" fill="#2a2a2e" stroke="{lit(fill) if fill else "#55555c"}" stroke-width="3"/>')
+            out.append(f'<circle cx="{cx}" cy="26" r="14" fill="#2a2a2e" stroke="{(fill if fill.startswith("#") else lit(fill)) if fill else "#55555c"}" stroke-width="3"/>')
             out.append(f'<line x1="{cx}" y1="26" x2="{cx + 7}" y2="16" stroke="#d8d8de" stroke-width="2" stroke-linecap="round"/>')
             out.append(f'<text x="{cx}" y="52" class="kl">K{k + 1}</text>')
     for i in range(32):
@@ -166,25 +171,111 @@ def patterns_clear():
     return trackrow([lit(GREEN) if t in (0, 2, 5) else lit("000000", 0) for t in range(8)])
 
 
-def trackplus():
+PAGE_COLOURS = {0: "ffffff", 3: SKY, 4: LIME, 5: AMBER}   # pads 26-31 by offset; 27 and 28 dark
+
+
+def trackplus_cells(page, bar, knob_colour, shown, knob_levels=None):
+    """Track + on track 1: the steps, the bar (8 fills 0..1), the page pads with `page` (offset 0..5) open"""
     cells, marks = {}, {}
     c = TRK[0]
     for i in range(16):
         cells[i] = lit(c, FULL if i % 4 == 0 else VDIM)
         marks[i] = str(i + 1)
-    for i in range(16, 24):
-        cells[i] = lit(c, FULL if i < 21 else VDIM)
-    cells[24] = lit(c, 0.2)
-    pages = [("ffffff", "26"), ("b8ff3a", "27"), ("3affc0", "28"), ("4ab8ff", "29"), (None, "30"), ("ffb020", "31")]
-    for k, (col, n) in enumerate(pages):
-        cells[25 + k] = lit(col, FULL if k == 0 else 0.45) if col else lit("000000", 0)
-        marks[25 + k] = n
+    for i, f in enumerate(bar):
+        cells[16 + i] = lit(c if isinstance(f, (int, float)) else f[0], f if isinstance(f, (int, float)) else f[1]) if f else lit("000000", 0)
+        marks[16 + i] = str(17 + i)
+    cells[24] = lit(c, 0.2) if page == 0 else lit("000000", 0)
+    for k in range(6):
+        col = PAGE_COLOURS.get(k)
+        cells[25 + k] = lit(col, FULL if k == page else 0.4) if col else lit("000000", 0)
+        marks[25 + k] = str(26 + k)
     cells[31] = lit("8c8c8c", 0.45)
     marks.update({24: "25", 31: "32"})
-    for i in range(16, 24):
-        marks[i] = str(i + 1)
-    knobs = [TRK[0] if k == 4 else None for k in range(8)]
+    knobs = [TRK[0] if k == shown else (lit(knob_colour, knob_levels[k]) if knob_levels else None) for k in range(8)]
     return grid(cells, rows={0: "Steps", 1: "", 2: "Bar", 3: "Pages"}, marks=marks, knobs=knobs)
+
+
+def trackplus():
+    return trackplus_cells(0, [FULL] * 5 + [VDIM] * 3, None, 4)
+
+
+def pitch_page():
+    bar = [0, 0, FULL, 0, 0, 0, 0, 0]
+    return trackplus_cells(3, bar, SKY, 1, [0.7, 1, 0.3, 0.35, 1, 0.5, 0.2, 0.2])
+
+
+def granular_page():
+    bar = [FULL, FULL, 0.5, 0, 0, 0, 0, 0]
+    return trackplus_cells(4, bar, LIME, 0, [1, 0.55, 0.45, 0.3, 0.2, 0.2, 0.55, 0.2])
+
+
+def granular_settings():
+    cells, marks = {}, {}
+    c = TRK[0]
+    for i in range(16):
+        cells[i] = lit(c, FULL if i % 4 == 0 else VDIM)
+        marks[i] = str(i + 1)
+    row = [lit(ON_G), lit(AMBER), lit(LIME), lit(LIME, DIM), lit(LIME, DIM), "#ffffff", lit("000000", 0), lit("000000", 0)]
+    for i, f in enumerate(row):
+        cells[16 + i], marks[16 + i] = f, str(17 + i)
+    for k in range(6):
+        col = PAGE_COLOURS.get(k)
+        cells[25 + k] = lit(col, FULL if k == 4 else 0.4) if col else lit("000000", 0)
+        marks[25 + k] = str(26 + k)
+    cells[31] = lit("8c8c8c", 0.45)
+    marks.update({24: "25", 31: "32", 29: "pulse"})
+    names = {0: "On", 1: "Mode", 2: "Flow", 3: "Bounce", 4: "Freeze", 5: "Set"}
+    return grid(cells, cols=names, rows={0: "Steps", 1: "", 2: "Bar", 3: "Pages"}, marks=marks,
+                knobs=[lit(LIME, v) for v in (1, 0.55, 0.45, 0.3, 0.2, 0.2, 0.55, 0.2)])
+
+
+def pitch_curve():
+    """the pitch of one note: the envelope's drop, then the vibrato that fades in"""
+    import math
+    w, h, x0, y0 = 600, 170, 46, 112
+    pts_env = [(x0 + t, y0 - 78 * math.exp(-t / 34)) for t in range(0, 170, 4)]
+    pts_vib = [(x0 + t, y0 - 14 * min(1, max(0, (t - 170) / 230)) * math.sin((t - 170) / 14)) for t in range(170, 540, 3)]
+    path = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts_env + pts_vib)
+    out = [f'<svg viewBox="0 0 {w} {h}" width="{w}" role="img"><rect width="{w}" height="{h}" rx="10" fill="#18181b"/>',
+           f'<line x1="{x0}" y1="{y0}" x2="{w - 20}" y2="{y0}" stroke="#55555c" stroke-dasharray="4 4"/>',
+           f'<text x="{x0 + 176}" y="{y0 - 8}" class="kl" style="text-anchor:start">the note\'s pitch</text>',
+           f'<line x1="{x0}" y1="18" x2="{x0}" y2="{h - 22}" stroke="#55555c"/>',
+           f'<text x="{x0 - 6}" y="26" class="rl">pitch</text><text x="{w - 22}" y="{h - 8}" class="rl">time</text>',
+           f'<path d="{path}" fill="none" stroke="#{SKY}" stroke-width="2.5"/>',
+           f'<text x="{x0 + 50}" y="40" class="kl" style="fill:#d8d8de;text-anchor:start">K1 amount, K2 shape</text>',
+           f'<line x1="{x0}" y1="{h - 30}" x2="{x0 + 130}" y2="{h - 30}" stroke="#d8d8de"/><text x="{x0 + 65}" y="{h - 14}" class="kl">K3 decay</text>',
+           f'<line x1="{x0 + 170}" y1="{h - 30}" x2="{x0 + 400}" y2="{h - 30}" stroke="#d8d8de"/><text x="{x0 + 285}" y="{h - 14}" class="kl">{"Shift + K7 fade-in"}</text>',
+           f'<text x="{x0 + 440}" y="80" class="kl" style="fill:#d8d8de">K4 depth, K5 shape, K6 rate</text>', "</svg>"]
+    return "".join(out)
+
+
+def grain_picture():
+    """the sample as a strip: Position, the scatter range, the grains, the slice lines"""
+    import math
+    import random
+    rnd = random.Random(5)
+    w, h, left, right, top = 600, 214, 20, 580, 96
+    out = [f'<svg viewBox="0 0 {w} {h}" width="{w}" role="img"><rect width="{w}" height="{h}" rx="10" fill="#18181b"/>']
+    for x in range(left, right, 3):
+        a = 6 + 30 * abs(math.sin(x / 23)) * (0.4 + 0.6 * rnd.random()) * (1.6 if (x - left) % 70 < 9 else 1)
+        a = min(a, 40)
+        out.append(f'<line x1="{x}" y1="{top + 44 - a}" x2="{x}" y2="{top + 44 + a}" stroke="#4a4a52" stroke-width="2"/>')
+    for k in range(1, 8):
+        x = left + k * (right - left) / 8
+        out.append(f'<line x1="{x}" y1="{top - 6}" x2="{x}" y2="{top + 94}" stroke="#8c8c94" stroke-dasharray="3 3"/>')
+    pos, spread = 250, 95
+    out.append(f'<rect x="{pos - spread}" y="{top}" width="{2 * spread}" height="88" fill="#{LIME}" fill-opacity=".12"/>')
+    out.append(f'<line x1="{pos}" y1="{top - 10}" x2="{pos}" y2="{top + 94}" stroke="#{LIME}" stroke-width="2.5"/>')
+    for i, gx in enumerate((168, 196, 232, 255, 282, 305, 330)):
+        gy = 22 + (i % 3) * 20
+        out.append(f'<path d="M{gx},{gy + 16} Q{gx + 13},{gy - 12} {gx + 26},{gy + 16}" fill="#{LIME}" fill-opacity=".85"/>')
+        out.append(f'<line x1="{gx + 2}" y1="{gy + 17}" x2="{gx + 2}" y2="{top}" stroke="#{LIME}" stroke-opacity=".35"/>')
+    out.append(f'<text x="{pos}" y="{top + 110}" class="kl" style="fill:#{LIME}">Position (K1)</text>')
+    out.append(f'<text x="{pos + spread + 8}" y="{top + 14}" class="kl" style="fill:#d8d8de;text-anchor:start">scatter (K5)</text>')
+    out.append(f'<text x="{pos + 110}" y="34" class="kl" style="fill:#d8d8de;text-anchor:start">grains: length K2, how many K3</text>')
+    out.append(f'<text x="{right}" y="{top - 12}" class="rl">slice lines ({"Shift"} + K5)</text>')
+    out.append(f'<text x="{left + 4}" y="{top - 12}" class="kl" style="text-anchor:start">the sample</text></svg>')
+    return "".join(out)
 
 
 # ---------------------------------------------------------------- the pages
@@ -225,10 +316,10 @@ figcaption { font-size: 9pt; color: var(--muted); margin-top: 1.5mm; }
   color: #fff; font-family: var(--head); font-weight: 600; font-size: 9pt; display: flex; align-items: center; justify-content: center; }
 .note { border-left: 3px solid var(--accent); background: #eef6f3; padding: 2.5mm 3.5mm; margin: 3mm 0; font-size: 9.8pt; }
 .cover { display: flex; flex-direction: column; }
-.cover .mast { background: #18181b; color: #fff; margin: -15mm -17mm 12mm; padding: 26mm 17mm 16mm; }
+.cover .mast { background: #18181b; color: #fff; margin: -15mm -17mm 8mm; padding: 20mm 17mm 12mm; }
 .cover .mast .eyebrow { color: #8be0c4; }
 .cover .mast p { color: #c9c9d0; font-size: 12pt; }
-.toc { list-style: none; padding: 0; margin: 4mm 0; } .toc li { display: flex; justify-content: space-between; border-bottom: 1px dotted var(--line); padding: 1.6mm 0; }
+.toc { list-style: none; padding: 0; margin: 3mm 0; } .toc li { display: flex; justify-content: space-between; border-bottom: 1px dotted var(--line); padding: 1mm 0; }
 svg .kl { font: 600 10px var(--head); fill: #b8b8c0; text-anchor: middle; }
 svg .cl { font: 600 10px var(--head); fill: #d8d8de; text-anchor: middle; }
 svg .rl { font: 600 10px var(--head); fill: #b8b8c0; text-anchor: end; }
@@ -241,8 +332,8 @@ def build():
     pages = []
     pages.append(page(f"""
 <div class="mast"><div class="eyebrow">Rhythm Plus firmware {FIRMWARE} · Circuit Rhythm</div>
-<h1>Pattern Mutate<br>and Track +</h1>
-<p>New ways to vary your patterns and to shape each track. This chapter shows every control, page and light.</p></div>
+<h1>Pattern Mutate,<br>Track + and Granular</h1>
+<p>New ways to vary your patterns, to shape each track, and to turn a sample into grains. This manual shows every control, page and light.</p></div>
 <h3>Contents</h3>
 <ul class="toc">
 <li><span>1 · Pattern Mutate: overview and quick start</span><span>2</span></li>
@@ -253,8 +344,16 @@ def build():
 <li><span>6 · Pattern Mutate quick reference</span><span>7</span></li>
 <li><span>7 · Track +: overview and layout</span><span>8</span></li>
 <li><span>8 · The Parameter Editor (pad 26)</span><span>9</span></li>
-<li><span>9 · The extra pages (pads 27-31)</span><span>10-11</span></li>
-<li><span>10 · Resetting values and pages</span><span>12</span></li>
+<li><span>9 · The Pitch page (pad 29)</span><span>10</span></li>
+<li><span>10 · Pitch page: shapes, rates and sounds</span><span>11</span></li>
+<li><span>11 · The FX page (pad 31)</span><span>12</span></li>
+<li><span>12 · Granular: what it does</span><span>13</span></li>
+<li><span>13 · The Granular page (pad 30)</span><span>14</span></li>
+<li><span>14 · Granular: the Shift knobs</span><span>15</span></li>
+<li><span>15 · Granular: the settings (hold pad 30)</span><span>16</span></li>
+<li><span>16 · Granular: Timing, Slice and Lock</span><span>17</span></li>
+<li><span>17 · Granular: sounds to try</span><span>18</span></li>
+<li><span>18 · Resetting values and pages</span><span>19</span></li>
 </ul>
 <div class="note">The drawings show the pads and buttons of the Circuit Rhythm as a plan, not to scale. The colours are close to the colours
 on the unit; on the unit, a dim pad is darker than it is on paper.</div>""", "cover"))
@@ -391,27 +490,27 @@ from an earlier firmware opens with the default settings.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 7</div><h2>Track +: overview and layout</h2>
-<p>Track + is the track menu. It shows the eight knobs of the selected track on pages: the stock's own parameters and the extra
-parameters that Rhythm Plus adds, such as envelopes, LFOs, movement, glide and ring modulation.</p>
+<p>Track + is the track menu. It shows the eight knobs of the selected track on pages: the stock's own parameters, the Pitch page,
+the Granular page and the FX page.</p>
 <ol class="steps"><li>Select a track. Tap its track button again to open Track +.</li>
-<li>Tap a page pad (26-31) to choose a page. Each track keeps its own page.</li>
+<li>Tap a page pad: 26, 29, 30 or 31. Each track keeps its own page.</li>
 <li>Turn a knob. The bar shows its value. Tap the track button again to close Track +.</li></ol>
 {figure(trackplus(), "Track + on track 1, the Parameter Editor (pad 26) open, K5 shown on the bar.")}
 {table(["Pads", "Name", "What they do"], [
         ["1-16", "Steps", "The steps of the pattern, as on the track page. Hold a step to view or lock its values."],
         ["17-24", "Bar", "The value of the shown knob."],
         ["25", "Knob pick", "Shows the page's next knob on the bar, without turning it."],
-        ["26", "Parameter Editor (white)", "The stock's eight knobs of the track."],
-        ["27-31", "Extra pages", "27 Filter (lime), 28 Mix (mint), 29 Pitch (sky blue), 30 none (dark), 31 FX (amber)."],
-        ["32", "All", f"With {CL} held: resets all pages (chapter 10)."]])}
+        ["26", "Parameter Editor (white)", "The stock's eight knobs of the track (chapter 8)."],
+        ["29", "Pitch (sky blue)", "Pitch envelope, vibrato, random pitch and glide (chapters 9 and 10)."],
+        ["30", "Granular (lime)", "The grain engine (chapters 12 to 17)."],
+        ["31", "FX (amber)", "Ring modulation and sample-start scan (chapter 11)."],
+        ["27, 28", "-", "Dark. They do nothing."],
+        ["32", "All", f"With {CL} held: resets all pages (chapter 18)."]])}
 <h3>Terms</h3>
 {table(["Term", "Meaning"], [
         ["Shown knob", "The last knob that you turned, or the knob that you picked with pad 25. Its light is in the track's colour."],
-        ["Edit", "Turn the knob to change the value for the whole track."],
-        ["Automate", "Arm Record and turn the knob while the pattern plays. The movement is recorded into the steps."],
-        ["Lock", "Hold a step, arm Record and turn the knob. The value goes into that step only."],
-        ["Reset", f"Hold {CL} and turn the knob right until it stops. The value goes back to its default; the knob light turns blue."],
-        ["Delete automation", f"Hold {CL} and turn the knob left until it stops. The knob's automation is deleted; the knob light turns red."]])}"""))
+        ["Reset", f"Hold {CL} and turn the knob right until it stops. The value goes back to its default; the knob light turns blue."]])}
+<p>Only the Parameter Editor's knobs can be automated and locked to steps (chapter 8).</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 8</div><h2>The Parameter Editor (pad 26)</h2>
@@ -429,62 +528,199 @@ on the held step, the bar shows the step's value.</p>
 <h3>Automate and lock</h3>
 {table(["To", "Do this"], [
         ["Automate", "Arm Record, play, turn the knob. The movement is recorded into the steps that play."],
-        ["Lock", "Arm Record, hold a step, turn the knob. The value goes into the held step, also while the pattern plays."]])}
-<p>While Record is armed and you turn a knob, the bar is red. While you hold a step with Record armed, the step's pad is red.</p>"""))
+        ["Lock", "Arm Record, hold a step, turn the knob. The value goes into the held step, also while the pattern plays."],
+        ["Delete automation", f"Hold {CL} and turn the knob left until it stops. The knob's automation is deleted; the knob light turns red."]])}
+<p>While Record is armed and you turn a knob, the bar is red. While you hold a step with Record armed, the step's pad is red.</p>
+<div class="note">Sample start and Sample length also set the part of the sample that the Granular page uses.</div>"""))
 
     pages.append(page(f"""
-<div class="eyebrow">Chapter 9</div><h2>The extra pages (pads 27-31)</h2>
-<p>The extra parameters are kept for each track and saved with the project. You can view, edit and reset them; they have no
-automation and no step locks. Filter K7 and K8 are the stock's low-pass and resonance (white lights): you can automate and lock
-them, as on the Parameter Editor.</p>
-<p>{SH} on these pages: on a shape knob, or a rate knob in its synced half, {SH} + turn right goes to the same pad on the second
-sweep, {SH} + turn left goes back. On the other knobs, {SH} + turn moves the value in fine steps.</p>
+<div class="eyebrow">Chapter 9</div><h2>The Pitch page (pad 29)</h2>
+<p>The Pitch page moves the pitch of each note while it plays. It has four parts: an envelope that bends the pitch at the start of
+the note, a vibrato (the LFO), a random jump for each note, and a glide from the last note.</p>
+{figure(pitch_curve(), "One note on the Pitch page: the envelope drops the pitch to the note, then the vibrato fades in.")}
+{table(["Knob", "Parameter", "What it does", f"{SH} + knob"], [
+        ["K1", "Envelope amount", "How far the envelope bends the pitch. Right of the middle: the pitch starts high. Left: it starts low. Middle: off.", "Fine"],
+        ["K2", "Envelope shape", "The path of the bend: 16 shapes (chapter 10).", "2nd sweep"],
+        ["K3", "Envelope decay", "How long the bend takes. Left: a fast click. Right: a slow sweep.", "Fine"],
+        ["K4", "Vibrato depth", "How far the vibrato moves the pitch. Left: off.", "Fine"],
+        ["K5", "Vibrato shape", "The wave of the vibrato: 10 shapes (chapter 10).", "2nd sweep"],
+        ["K6", "Vibrato rate", "Right of the middle: locked to the tempo. Left: free speed.", "2nd sweep / fine"],
+        ["K7", "Random pitch", "Each note starts at a random pitch, up to 12 semitones up or down. Left: off.", "Vibrato fade-in"],
+        ["K8", "Glide", "The pitch slides from the last note to the new one, up to about 1 second. Left: off.", "Fine"]])}
+<h3>{SH} on this page</h3>
+<p>On a shape knob (K2, K5), or on K6 in its synced half, {SH} + turn right goes to the same pad on the second sweep, and {SH} + turn
+left goes back. On the other knobs, {SH} + turn moves the value in fine steps.</p>
+<p>{SH} + K7 is the vibrato fade-in: at each note the vibrato starts at 0 and grows to the K4 depth, up to 2 seconds. K7 lights tan
+while {SH} is held.</p>
+<div class="note">The Pitch page's values are kept for each track and saved with the project. They have no automation and no step locks.</div>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 10</div><h2>Pitch page: shapes, rates and sounds</h2>
+{figure(pitch_page(), "The Pitch page with K2 shown: the bar lights one pad for each shape. Here, shape 3.")}
+<p>A shape knob lights one pad on the bar. Pads 17-24 in the track's colour are shapes 1-8. Pads 17-24 in sky blue are the second
+sweep: shapes 9-16. A synced vibrato rate shows the same way: the first sweep is 8 bars to 1/16, the second sweep is the same values as
+triplets.</p>
 <div class="cols"><div>
-<h3>Filter (pad 27, lime)</h3>
-{table(["Knob", "Parameter", f"{SH} + knob"], [
-        ["K1", "Envelope amount (from the middle)", "Fine"], ["K2", "Envelope shape", "2nd sweep"], ["K3", "Envelope decay", "Fine"],
-        ["K4", "LFO depth", "Fine"], ["K5", "LFO shape", "2nd sweep"], ["K6", "LFO rate: right = synced, left = free", "2nd sweep / fine"],
-        ["K7", "Low-pass (stock)", "Filter type: stock or 24 dB"], ["K8", "Resonance (stock)", "Pitch follow"]])}
+{table(["Pad", "Envelope (K2)", ""], [[str(17 + i), ENV[i], ENV[i + 8]] for i in range(8)])}
 </div><div>
-<h3>Mix (pad 28, mint)</h3>
-{table(["Knob", "Parameter", f"{SH} + knob"], [
-        ["K1", "Volume movement depth", "Fine"], ["K2", "Volume movement shape (10 LFO, 6 gates)", "2nd sweep"],
-        ["K3", "Volume movement rate: right = synced, left = free", "2nd sweep / fine"], ["K4", "Pan movement depth", "Fine"],
-        ["K5", "Move shape (pan and sends)", "2nd sweep"], ["K6", "Move rate: right = synced, left = free, middle = off", "2nd sweep / fine"],
-        ["K7", "Reverb send movement (from the middle)", "Fine"], ["K8", "Delay send movement (from the middle)", "Fine"]])}
-</div></div>"""))
+{table(["Pad", "Vibrato (K5)", ""], [[str(17 + i), LFO[i], LFO[i + 8] if i + 8 < len(LFO) else "-"] for i in range(8)])}
+</div></div>
+<p>The second column of each table is the second sweep. Vibrato rate (K6) synced, pads 17-24: 8 bars, 4 bars, 2 bars, 1 bar, 1/2,
+1/4, 1/8, 1/16.</p>
+<h3>Sounds to try</h3>
+{table(["Sound", "Settings"], [
+        ["Kick with a punch", "K1 far right, K2 drop, K3 a little right of the left end."],
+        ["Laser or zap", "K1 right, K2 fast drop, K3 at the middle."],
+        ["Rising tom", "K1 left of the middle: the pitch starts low and rises to the note. K2 drop, K3 at a third."],
+        ["Slow, singing vibrato", f"K4 at a quarter, K5 sine, K6 at 1/8 synced, {SH} + K7 at the middle."],
+        ["Hats that never repeat", "K7 at a quarter: each hit is a little higher or lower."],
+        ["Sliding pitch", "K8 at a third and K7 at a quarter: each note slides to its new random pitch."]])}"""))
 
     pages.append(page(f"""
-<div class="eyebrow">Chapter 9, continued</div><h2>The extra pages (pads 27-31)</h2>
-<div class="cols"><div>
-<h3>Pitch (pad 29, sky blue)</h3>
-{table(["Knob", "Parameter", f"{SH} + knob"], [
-        ["K1", "Envelope amount (from the middle)", "Fine"], ["K2", "Envelope shape", "2nd sweep"], ["K3", "Envelope decay", "Fine"],
-        ["K4", "LFO depth (vibrato)", "Fine"], ["K5", "LFO shape", "2nd sweep"], ["K6", "LFO rate: right = synced, left = free", "2nd sweep / fine"],
-        ["K7", "Random pitch, up to 12 semitones", "LFO fade-in, up to 2 s"], ["K8", "Glide, up to about 1 s", "Fine"]])}
-</div><div>
-<h3>FX (pad 31, amber)</h3>
-{table(["Knob", "Parameter", f"{SH} + knob"], [
-        ["K1", "Ring modulation amount", "Fine"], ["K2", "Ring modulation frequency", "Fine"], ["K3-K6", "None (dark)", "-"],
-        ["K7", "Scan depth: moves the sample start", "Fine"], ["K8", "Scan speed: right = synced, left = free", "2nd sweep / fine"]])}
-<p>Pad 30 has no page; it is dark.</p>
-</div></div>"""))
+<div class="eyebrow">Chapter 11</div><h2>The FX page (pad 31)</h2>
+<p>The FX page adds a ring modulator and a scan that moves the sample's start point.</p>
+{table(["Knob", "Parameter", "What it does", f"{SH} + knob"], [
+        ["K1", "Ring modulation amount", "How much of the ring sound you hear. Left: off.", "Fine"],
+        ["K2", "Ring modulation frequency", "The tone of the ring: low for a wobble, high for metal and bells.", "Fine"],
+        ["K3-K6", "-", "Dark.", "-"],
+        ["K7", "Scan depth", "How far the sample's start point moves.", "Fine"],
+        ["K8", "Scan speed", "Right of the middle: locked to the tempo. Left: free speed.", "2nd sweep / fine"]])}
+<h3>How the bar reads</h3>
+{table(["Knob type", "The bar"], [
+        ["Most knobs", "Fills from the left (pad 17) to the right (pad 24)."],
+        ["Knobs with a middle (amounts, rates, Scan)", "Fills from the middle out: right of the middle to the right, left of it to the left."],
+        ["Shape knobs, synced rates", "One pad for each value. Track colour: first sweep. Page colour: second sweep."]])}
+<div class="note">The FX page's values are kept for each track and saved with the project. They have no automation and no step locks.</div>"""))
 
     pages.append(page(f"""
-<div class="eyebrow">Chapter 10</div><h2>Resetting values and pages</h2>
+<div class="eyebrow">Chapter 12</div><h2>Granular: what it does</h2>
+<p>The Granular page plays the track's sample as many very short pieces called grains. Each grain is a few milliseconds to half a
+second long, with a soft fade in and out. Many grains together make a new sound from the sample: a cloud, a drone, a stutter, or a
+chopped beat.</p>
+{figure(grain_picture(), "The sample, with Position, the scatter range around it, the grains that play, and the slice lines.")}
+<p>You choose where the grains come from (Position), how long they are (Size) and how many play (Density). Scan moves Position through
+the sample by itself. Scatter adds random changes to each grain. Slice, Lock and Timing turn the cloud into a rhythm.</p>
+<h3>Quick start</h3>
+<ol class="steps">
+<li>Select a track that has a sample. Tap its track button again to open Track +.</li>
+<li>Tap pad 30. The Granular page opens and pad 30 lights lime.</li>
+<li>Hold pad 30. Pads 17-22 show the settings. Tap pad 17 until it is green: Granular is on.</li>
+<li>Still holding pad 30, tap pad 18 for amber: Texture plays all the time while the pattern plays. Let go of pad 30.</li>
+<li>Press {PL}. Turn K2 Size, K3 Density and K4 Scan, and listen.</li>
+</ol>
+<div class="note">After a reset, K4 Scan is a little right of the middle, so Position moves slowly forward. Turn K4 to the middle to
+stop it.</div>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 13</div><h2>The Granular page (pad 30)</h2>
+{figure(granular_page(), "The Granular page on track 1, with K1 Position shown on the bar.")}
+{table(["Knob", "Parameter", "What it does", "Default"], [
+        ["K1", "Position", "Where in the sample the grains start. Left: the start of the sample.", "Left"],
+        ["K2", "Size", "The length of each grain: 5 ms at the left, 0.5 s at the right.", "Middle"],
+        ["K3", "Density", "How many grains play at the same time: 1 to 16. With Timing on: the chance that a step plays a grain.", "40 %"],
+        ["K4", "Scan", "Moves Position by itself. Middle: stop. Right: forward. Left: backward. Further from the middle: faster.", "A little right"],
+        ["K5", "Position scatter", "Each grain starts at a random place near Position, up to half the sample away.", "Left (off)"],
+        ["K6", "Pitch scatter", "Each grain gets a random pitch, up to 12 semitones up or down.", "Left (off)"],
+        ["K7", "Edge", "The fades of each grain. Left: short and hard. Middle: smooth. Right: a fast start and a long fade out.", "Middle"],
+        ["K8", "Reverse", "The chance that a grain plays backward. Right: all grains.", "Left (off)"]])}
+<p>The knob lights show each knob's value in lime. The shown knob is in the track's colour, and the bar shows its value. K4 fills the
+bar from the middle out. Pad 25 does nothing on this page.</p>
+<p>Position, Scan and Slice work inside the part of the sample that Sample start and Sample length (Parameter Editor K2, K3) set.</p>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 14</div><h2>Granular: the {SH} knobs</h2>
+<p>Hold {SH} on the Granular page. K1-K6 show the second set of knobs in lime, and the bar shows the turned knob in lime. K7 and K8 are
+dark.</p>
+{table(["Knob", "Parameter", "What it does"], [
+        [f"{SH} + K1", "Level", "The volume of the grains, in fine steps. Default: the middle."],
+        [f"{SH} + K2", "Size scatter", "Each grain is a random amount shorter. Right: up to its whole length."],
+        [f"{SH} + K3", "Timing", "Middle: off, Density spaces the grains. Left: the grains come at a fixed time apart, from 0.5 s near the middle to 6 ms at the left. Right: the grains come on the tempo (chapter 16)."],
+        [f"{SH} + K4", "Jitter", "Moves each grain earlier or later, up to one gap between grains. It loosens a strict rhythm."],
+        [f"{SH} + K5", "Slice", "Left: off. Right: cuts the sample into 2 to 16 equal parts. Each grain starts at the start of a part (chapter 16)."],
+        [f"{SH} + K6", "Lock", "Left: each grain is new. Right: the same 16 grains repeat in a loop. Between: some grains change each time round (chapter 16)."]])}
+<h3>The bar with {SH} held</h3>
+{table(["Knob", "The bar"], [
+        [f"{SH} + K3 Timing", "From the middle. On the tempo side, half a pad for each step: 1/2, 1/4, 1/4 triplet, 1/8, 1/8 triplet, 1/16, 1/16 triplet, 1/32."],
+        [f"{SH} + K5 Slice", "Half a pad for each part: 4 slices fill 2 pads, 16 slices fill all 8."],
+        ["The other knobs", "Fills from the left."]])}
+<div class="note">To reset a {SH} knob: hold {CL}, then hold {SH}, then turn the knob right until it stops. Press {CL} first:
+{SH} + {CL} changes the metronome.</div>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 15</div><h2>Granular: the settings (hold pad 30)</h2>
+<p>Hold pad 30 for a moment. Pads 17-22 show the track's Granular settings. Tap a settings pad while you hold pad 30. Each pad sits
+under the knob it works with.</p>
+{figure(granular_settings(), "Pad 30 held: Granular on, Texture, Retrigger, Bounce off, Freeze off, Pitch Set Octaves.")}
+{table(["Pad", "Setting", "Lights"], [
+        ["17", "Granular on or off", f'<span class="sw" style="background:{lit(ON_G)}"></span> green: on · <span class="sw" style="background:{lit(OFF_R)}"></span> red: off. It blinks while it changes.'],
+        ["18", "Mode", f'<span class="sw" style="background:#ffffff"></span> white: Triggered · <span class="sw" style="background:{lit(AMBER)}"></span> amber: Texture'],
+        ["19", "Flow or Retrigger (Texture only)", f'<span class="sw" style="background:{lit(LIME, DIM)}"></span> dim: Flow · <span class="sw" style="background:{lit(LIME)}"></span> bright: Retrigger'],
+        ["20", "Bounce (under K4 Scan)", "Dim: off · bright: on"],
+        ["21", "Freeze (under K5)", "Dim: off · bright: on"],
+        ["22", "Pitch Set (under K6)", f'Tap to step: <span class="sw" style="background:{lit(LIME, DIM)}"></span> Off · <span class="sw" style="background:#ffffff"></span> Octaves · <span class="sw" style="background:{lit(SKY)}"></span> Fifths · <span class="sw" style="background:{lit(GOLD)}"></span> Minor · <span class="sw" style="background:{lit(PINK)}"></span> Major']])}
+{table(["Setting", "What it does"], [
+        ["Triggered", "Each note plays grains. The grains follow the note: a One Shot sample stops at its end, Gated and Loop stop at the note's end."],
+        ["Texture", f"The grains play all the time while the pattern plays, with no notes. When the pattern stops, they stop with a soft tail. A muted track plays no new grains. While stopped, a pad plays the grains as in Triggered."],
+        ["Retrigger", "Each note from the pattern starts the grains again at Position."],
+        ["Flow", "Notes do not restart the grains. The texture flows on."],
+        ["Bounce", "Scan turns back at each end of the sample, in place of a jump to the other end."],
+        ["Freeze", "Holds the sound on one spot: Scan and Position scatter stop, and notes do not restart the grains."],
+        ["Pitch Set", "Pitch scatter (K6) picks only the notes of the set: octaves, fifths, a minor chord or a major chord."]])}"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 16</div><h2>Granular: Timing, Slice and Lock</h2>
+<h3>Timing ({SH} + K3)</h3>
+<p>Right of the middle, each grain starts on a step of the tempo: from one grain each 1/2 note to one each 1/32 note. Density then
+sets the chance that a step plays: at the left only a few steps play, at the right every step plays. Low Density can leave a few
+steps in a row with no grain, so the sound stops for a moment. Turn Density up to fill the gaps.</p>
+<h3>Slice ({SH} + K5)</h3>
+<p>Slice cuts the sample into equal parts and makes each grain start at the start of a part. On a drum loop cut to whole bars, the grains
+then start on the beat, not between the hits. Slice cuts the sample, not the grains: each grain keeps the length that K2 Size sets. To play one whole
+hit for each grain, set Size to about one part.</p>
+{table(["With Slice on", "Result"], [
+        ["K1 Position", "Jumps from part to part. It does not slide."],
+        ["K5 Position scatter", "Each grain starts on a random part."],
+        ["K4 Scan", "Steps one part at a time, on the tempo. Middle: stop. Right: forward. Left: backward. Further from the middle: faster, from one part each 1/2 note to one each 1/32 note."]])}
+<p>For a 2-bar loop cut into 16 parts, each part is an eighth note. Set Scan to step one part each 1/8 note, and the loop plays back
+in order, in time. Then add Position scatter to jump between the parts.</p>
+<h3>Lock ({SH} + K6)</h3>
+<p>Lock repeats the random choices of the grains: position, pitch, length, timing and reverse. At the right, the same 16 grains play
+again and again. In the middle, some grains change each time round, so the pattern changes slowly. Lock needs something random to
+repeat: turn up K5, K6, {SH} + K2 or {SH} + K4.</p>
+<div class="note">With Timing on the tempo, 16 grains at 1/16 make one bar. Lock at the right then repeats a one-bar pattern. For the
+clearest loop, set K4 Scan to the middle.</div>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 17</div><h2>Granular: sounds to try</h2>
+<p>Start each sound from a reset Granular page ({CL} + pad 30), with Granular on.</p>
+{table(["Sound", "Settings"], [
+        ["Soft cloud", "Texture. K2 Size right of the middle, K3 Density at the right, K4 Scan a little right, K5 at a third, K7 Edge at the middle."],
+        ["Frozen drone", "Texture, Freeze on. K2 Size at the right, K3 Density at the right. Move K1 Position to choose the spot."],
+        ["Shimmer", "As Soft cloud, plus K6 Pitch scatter at a third and Pitch Set Octaves."],
+        ["Chord cloud", "As Soft cloud, plus K6 at a half and Pitch Set Major or Minor."],
+        ["Stutter", f"Triggered. K2 Size small, K3 Density low, {SH} + K3 Timing at 1/16."],
+        ["Chopped beat", f"A drum loop. K4 Scan at the middle. {SH} + K5 Slice at 16. {SH} + K3 Timing at 1/16. K5 at a half. K2 Size about one part."],
+        ["Beat replay", f"A drum loop. {SH} + K5 Slice at 16. K4 Scan right, one part each 1/8 note. {SH} + K3 Timing at 1/8. K2 Size about one part."],
+        ["Repeating glitch", f"As Chopped beat, plus K6 at a quarter, K8 Reverse at a quarter, and {SH} + K6 Lock at the right."],
+        ["Backward wash", "Texture. K4 Scan left of the middle, K8 Reverse at the right, K2 Size at the right, K3 Density at the right."]])}"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 18</div><h2>Resetting values and pages</h2>
 <h3>One knob</h3>
 {table(["Do this", "Result"], [
         [f"{CL} + turn the knob right until it stops", "The value goes back to its default. The knob light turns blue."],
-        [f"{CL} + turn the knob left until it stops", "Parameter Editor (and Filter K7 / K8): the knob's automation is deleted; the light turns red."]])}
-<p>To reset the Pitch page's LFO fade-in ({SH} + K7): hold {CL}, then hold {SH}, then turn K7 right. Press {CL} first: {SH} + {CL}
-changes the metronome.</p>
+        [f"{CL} + turn the knob left until it stops", "Parameter Editor only: the knob's automation is deleted; the light turns red."],
+        [f"{CL}, then {SH}, + turn right", f"A {SH} knob (Pitch {SH} + K7, the Granular {SH} knobs) goes back to its default."]])}
+<p>Press {CL} first: {SH} + {CL} changes the metronome.</p>
 <h3>A whole page</h3>
 {table(["Do this", "Result"], [
         [f"{CL} + tap pad 26", "The eight stock parameters go back to their defaults, and their automation in the current pattern is deleted."],
-        [f"{CL} + tap a page pad (27-31)", "All extra parameters of that page go back to their defaults."],
-        [f"{CL} + tap pad 32", "All of the above: the stock parameters, their automation in the current pattern, and the extra parameters of all pages."]])}
-<p>Page resets work on the selected track only. They do not change the sample, the mixer or the FX sends. The Filter page's K7 and
-K8 (the stock's low-pass and resonance) change only with pad 26 and pad 32, not with pad 27.</p>"""))
+        [f"{CL} + tap pad 29 or 31", "All values of the Pitch or FX page go back to their defaults."],
+        [f"{CL} + tap pad 30", "All Granular knobs, {SH} knobs, Level, Flow, Bounce, Freeze and Pitch Set go back to their defaults. Granular on or off and the mode stay.".replace("{SH}", SH)],
+        [f"{CL} + tap pad 32", "The stock parameters, their automation in the current pattern, and the Pitch and FX pages."]])}
+<p>Page resets work on the selected track only. They do not change the sample, the mixer or the FX sends.</p>
+<h3>The whole track</h3>
+<p>On a track page, {CL} + the track button resets the track as before. It also turns Granular off and resets its page.</p>"""))
 
     head = ('<title>Rhythm Plus Manual</title><meta name="viewport" content="width=device-width, initial-scale=1">'
             '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600&'

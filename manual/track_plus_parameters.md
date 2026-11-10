@@ -2,7 +2,7 @@
 
 This section defines the parameters that you can see and change in Track +. It also tells you which of them you can automate or lock to a step.
 
-Firmware: Rhythm Plus A0121 (local development build; not yet tested on hardware).
+Firmware: Rhythm Plus AG015 (test build).
 
 ## Terms
 
@@ -88,9 +88,56 @@ The Filter and Mix pages are archived. These pads are dark and do nothing.
 
 To reset Shift + K7 (LFO fade-in): hold Clear, then hold Shift, then turn K7 right. Do not press Shift first: Shift + Clear changes the metronome.
 
-### Pad 30
+### Granular (pad 30, lime)
 
-No page. The pad is dark.
+The Granular page plays the track's sample as many short grains. It works inside the part of the sample that Sample start and Sample length (Parameter Editor K2, K3) set. Pad 25 does nothing on this page.
+
+**Knobs**
+
+| Knob | Parameter | What it does | Default |
+|---|---|---|---|
+| K1 | Position | Where in the sample the grains start. Left: the start of the sample. | Left |
+| K2 | Size | The length of each grain: 5 ms at the left, 0.5 s at the right. | Middle |
+| K3 | Density | How many grains play at the same time: 1 to 16. With Timing on: the chance that a step plays a grain. | 40 % |
+| K4 | Scan | Moves Position by itself. Middle: stop. Right: forward. Left: backward. Further from the middle: faster. With Slice on: one part a step, on the tempo. | A little right of the middle |
+| K5 | Position scatter | Each grain starts at a random place near Position, up to half the sample away. | Left (off) |
+| K6 | Pitch scatter | Each grain gets a random pitch, up to 12 semitones up or down. | Left (off) |
+| K7 | Edge | The fades of each grain. Left: short and hard. Middle: smooth. Right: a fast start and a long fade out. | Middle |
+| K8 | Reverse | The chance that a grain plays backward. Right: all grains. | Left (off) |
+
+**Shift + knob**
+
+| Knob | Parameter | What it does | Default |
+|---|---|---|---|
+| Shift + K1 | Level | The volume of the grains, in fine steps. | Middle |
+| Shift + K2 | Size scatter | Each grain is a random amount shorter. Right: up to its whole length. | Left (off) |
+| Shift + K3 | Timing | Middle: off, Density spaces the grains. Left: a fixed time between grains, 0.5 s near the middle to 6 ms at the left. Right: one grain a step on the tempo: 1/2, 1/4, 1/4 triplet, 1/8, 1/8 triplet, 1/16, 1/16 triplet, 1/32. | Middle (off) |
+| Shift + K4 | Jitter | Moves each grain earlier or later, up to one gap between grains. | Left (off) |
+| Shift + K5 | Slice | Left: off. Right: cuts the sample into 2 to 16 equal parts; each grain starts at the start of a part. K1 Position jumps from part to part, and K4 Scan steps one part at a time on the tempo (the same eight steps as Timing). | Left (off) |
+| Shift + K6 | Lock | Left: each grain is new. Right: the same 16 grains repeat in a loop. Between: some grains change each time round. It repeats position, pitch, length, timing and reverse. | Left (off) |
+| Shift + K7, K8 | - | Dark. | - |
+
+The bar: K4 and Shift + K3 fill from the middle. Shift + K3 on the tempo side moves half a pad a step. Shift + K5 lights half a pad for each part (16 parts fill all 8 pads). With Shift held, the bar and the live knobs are lime.
+
+**Settings (hold pad 30, then tap a pad)**
+
+| Pad | Setting | Lights | What it does |
+|---|---|---|---|
+| 17 | On / Off | Green: on. Red: off. It blinks while it changes. | Turns Granular on or off for the track. |
+| 18 | Mode | White: Triggered. Amber: Texture. | Triggered: each note plays grains; One Shot stops at the sample's end, Gated and Loop at the note's end. Texture: the grains play all the time while the pattern plays, with a soft tail when it stops; a muted track plays no new grains; while stopped, a pad plays the grains as in Triggered. |
+| 19 | Flow / Retrigger | Dim: Flow. Bright: Retrigger. Shown in Texture only. | Retrigger: each note from the pattern starts the grains again at Position. Flow: notes do not restart them. |
+| 20 | Bounce | Dim: off. Bright: on. | Scan turns back at each end of the sample, in place of a jump to the other end. |
+| 21 | Freeze | Dim: off. Bright: on. | Holds the sound on one spot: Scan and Position scatter stop, and notes do not restart the grains. |
+| 22 | Pitch Set | Dim lime: Off. White: Octaves. Sky blue: Fifths. Amber: Minor. Pink: Major. | Tap to step. Pitch scatter (K6) picks only the notes of the set. |
+| 23, 24 | - | Dark. | - |
+
+**Reset**
+
+- Clear + turn a knob right until it stops: that knob goes back to its default. For a Shift knob: hold Clear, then hold Shift, then turn.
+- Clear + pad 30: all knobs, Shift knobs, Level, Flow, Bounce, Freeze and Pitch Set go back to their defaults. On / Off and the mode stay.
+- Clear + the track button (track reset): also turns Granular off and resets its page.
+
+The Granular values are kept for each track and saved with the project. They have no automation and no step locks.
 
 ### FX (pad 31, amber)
 
@@ -111,6 +158,6 @@ No page. The pad is dark.
 | Hold Clear, tap pad 32 | All of the above: the stock parameters, their automation in the current pattern, and the extra parameters of all pages. |
 
 All page resets work on the selected track only. They do not change the sample, the mixer or the FX page's sends.
-The stock's filters and resonance remain on the Parameter Editor. Clear + pads 27, 28 or 30 does nothing.
+The stock's filters and resonance remain on the Parameter Editor. Clear + pad 27 or 28 does nothing.
 
 Projects saved on an archived Filter or Mix page open in the Parameter Editor. Old Filter/Mix settings remain in the project for compatibility and do not affect this build.
