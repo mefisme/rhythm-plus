@@ -64,6 +64,8 @@ os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"
 os.environ["RH_UPGUARD"] = "1" if "upguard" in MAN["report"] else "0"
 os.environ["RH_MUTSET"] = ("2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
+os.environ["RH_AUTOPROT"] = "1" if "autoprot" in MAN["report"] else "0"
+os.environ["RH_AUTOBANK"] = "1" if "autobank" in MAN["report"] else "0"
 import ourram  # noqa: E402,F401
 with ourram.remix_imports():
     import stockplus as SPM  # noqa: E402
@@ -421,7 +423,7 @@ def main():
     check("side buttons (LEDs 40-47): as the stock draws them", f[40:48] == sf[40:48], (f[40:48], sf[40:48]))
     check("pads 1-16: as the stock draws them", f[0:16] == sf[0:16], (f[0:16], sf[0:16]))
     check(f"pads 25 and 27-{26 + NP} white, pads 17-24 (the bar), 26 and {27 + NP}-32 dark in the frame", f[24] == T.COL_FULL and not any(f[25:T.PAD_PAGE0])
-          and all(x == (0 if PADMAP[j] is None else T.COL_FULL) for j, x in enumerate(f[T.PAD_PAGE0:T.PAD_PAGE0 + NP])) and not any(f[16:24]) and not any(f[T.PAD_PAGE0 + NP:32]), f[16:32])
+          and all(x == (0 if PADMAP[j] is None else T.COL_FULL) for j, x in enumerate(f[T.PAD_PAGE0:T.PAD_PAGE0 + len(PADMAP)])) and not any(f[16:24]) and not any(f[T.PAD_PAGE0 + len(PADMAP):32]), f[16:32])
     dimw = scl(0xFFFFFF, T.WHITE * dim_mul(uc) >> 8)
     cyc = scl(tc, T.CYC_LVL)
     check(f"  after the output stage: pad 25 the track's colour at CYC_LVL ({cyc:06x}), pad 27 (the parameter editor, shown) full white,"
@@ -587,17 +589,18 @@ def main():
         check(f"  the stock never sees pad {p}", changed == [] and u32(uc, SLOT + T.O_TAKEN) == 0, changed[:6])
         if SP:
             check(f"  Stock+'s page bits: {'the selected track' if i else 'none'}", spb(uc) == (1 << s if i else 0), hex(spb(uc)))
-    for p in list(range(26, T.PAD_PAGE0 + 1)) + [T.PAD_PAGE0 + j + 1 for j, i in enumerate(PADMAP) if i is None] + list(range(T.PAD_PAGE0 + NP + 1, 33)):
+    virtual_pad=MAN['report'].get('granular',{}).get('ui',{}).get('page_pad',-2)+1
+    for p in list(range(26, T.PAD_PAGE0 + 1)) + [T.PAD_PAGE0 + j + 1 for j, i in enumerate(PADMAP) if i is None and T.PAD_PAGE0+j+1!=virtual_pad] + list(range(T.PAD_PAGE0 + len(PADMAP) + 1, 33)):
         pad(uc, p - 1); unpad(uc, p - 1)
     check(f"pad 26{f' and {27 + NP}-32' if NP < 6 else ''} tapped: the page stays, nothing taken", b8(uc, T.O_PAGE) == 0 and u32(uc, SLOT + T.O_TAKEN) == 0, b8(uc, T.O_PAGE))
     if MAN["report"]["tmenu"].get("padmap"):
         got = []
-        for j in range(NP):
+        for j in range(len(PADMAP)):
             pad(uc, T.PAD_PAGE0); unpad(uc, T.PAD_PAGE0)
             pad(uc, T.PAD_PAGE0 + j); unpad(uc, T.PAD_PAGE0 + j)
             got.append(b8(uc, T.O_PAGE))
         check("pads 26-31: the editor, filter, mix, pitch, none (the page stays), FX",
-              got == [0, T.PAGE_F, T.PAGE_V, T.PAGE_SP, 0, T.PAGE_X] and PADMAP == [0, T.PAGE_F, T.PAGE_V, T.PAGE_SP, None, T.PAGE_X], got)
+              got == [pg if pg is not None else 0 for pg in PADMAP], got)
         pad(uc, T.PAD_PAGE0); unpad(uc, T.PAD_PAGE0)
     if SP:
         pad(uc, pp(1)); unpad(uc, pp(1))
@@ -1420,7 +1423,7 @@ def sync_bar(fw, ram, head):
         ws = struct.unpack_from("<48I", fw, o)
         if list(ws) != [t[i] for t in (SPM.DIVS, SPM.KQ, SPM.PHQ) for i in SBM.PERM]:
             bad.append(at)
-    check(f"sync bar: Stock+'s and fshape's sync tables in the new order ({', '.join(rb['tables'])})", len(rb["tables"]) == 2 and not bad, bad)
+    check(f"sync bar: Stock+'s and fshape's sync tables in the new order ({', '.join(rb['tables'])})", len(rb["tables"]) == (1 if MAN["report"]["tmenu"].get("soundonly") else 2) and not bad, bad)
     uc = setup(fw, ram)
     s = sel(uc)
     tap(uc, s); led(uc, head)
@@ -1433,12 +1436,14 @@ def sync_bar(fw, ram, head):
           SBM.step_of(uiv(7, v7)) == 3 and list(out(uc)[16:24]) == (want_x_bar(uc, s, 7) if SCANFX else want_sp_bar(uc, s, 7)),
           (v7, SBM.step_of(uiv(7, v7))))
     import fshape as FS
-    pv = pp(T.PAGE_V)
+    rate_id = 19 if VOLPAGE else 2
+    rate_page = T.PAGE_V if VOLPAGE else T.PAGE_SP
+    pv = pp(rate_page)
     pad(uc, pv); unpad(uc, pv)
-    kr = T.V_MAP.index(19)
+    kr = (T.V_MAP if VOLPAGE else T.SP_MAP).index(rate_id)
     uc.mem_write(SLOT + T.O_KNOB, bytes([kr + 1]))
-    def rate(): return flval(uc, s, 19)
-    knob(uc, kr, clicks_to(19, rate(), 8192))
+    def rate(): return flval(uc, s, rate_id)
+    knob(uc, kr, clicks_to(rate_id, rate(), 8192))
     shf = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
     def shift(on): uc.mem_write(shf, bytes([on]))
     def bar(): led(uc, head); return list(out(uc)[16:24])
@@ -1448,36 +1453,37 @@ def sync_bar(fw, ram, head):
     seen = []
     for c in range(1, 65):
         knob(uc, kr, 1)
-        seen.append((SBM.step_of(uiv(19, rate())), bar()))
-    ok = all(st == (c - 1) // 4 and b == one(st & 7, tc if st < 8 else PAGES[T.PAGE_V]) for c, (st, b) in enumerate(seen, 1))
+        seen.append((SBM.step_of(uiv(rate_id, rate())), bar()))
+    ok = all(st == (c - 1) // 4 and b == one(st & 7, tc if st < 8 else PAGES[rate_page]) for c, (st, b) in enumerate(seen, 1))
     check("  K2 turned right from the middle, 64 clicks: 4 clicks a step, 8 bars .. 1/16 on pads 17-24 in the track's colour, then the "
           "triplets on pads 17-24 in the page's colour", ok, [(st, f"{b.index(max(b)) + 17}") for st, b in seen[::4]])
     knob(uc, kr, -200); knob(uc, kr, 64 + 4 * 3 + 1)                 # the far left, the middle, then 1 bar (step 3)
     w0 = rate()
     shift(1); knob(uc, kr, 2); shift(0)
-    check("  at 1 bar, Shift + turn right: 1 bar T, the same pad (20) in the page's colour", SBM.step_of(uiv(19, rate())) == 11
-          and bar() == one(3, PAGES[T.PAGE_V]), (SBM.step_of(uiv(19, rate())), bar()))
+    check("  at 1 bar, Shift + turn right: 1 bar T, the same pad (20) in the page's colour", SBM.step_of(uiv(rate_id, rate())) == 11
+          and bar() == one(3, PAGES[rate_page]), (SBM.step_of(uiv(rate_id, rate())), bar()))
     shift(1); knob(uc, kr, 3); shift(0)
-    check("  Shift + turn right again: nothing", SBM.step_of(uiv(19, rate())) == 11)
+    check("  Shift + turn right again: nothing", SBM.step_of(uiv(rate_id, rate())) == 11)
     knob(uc, kr, 4)
-    check("  a plain turn right: on along the triplets (1/2 T, pad 21)", SBM.step_of(uiv(19, rate())) == 12 and bar() == one(4, PAGES[T.PAGE_V]))
+    check("  a plain turn right: on along the triplets (1/2 T, pad 21)", SBM.step_of(uiv(rate_id, rate())) == 12 and bar() == one(4, PAGES[rate_page]))
     shift(1); knob(uc, kr, -1); shift(0)
-    check("  Shift + turn left: back to the straight step (1/2, pad 21, the track's colour)", SBM.step_of(uiv(19, rate())) == 4
-          and bar() == one(4, tc), (SBM.step_of(uiv(19, rate())), bar()))
+    check("  Shift + turn left: back to the straight step (1/2, pad 21, the track's colour)", SBM.step_of(uiv(rate_id, rate())) == 4
+          and bar() == one(4, tc), (SBM.step_of(uiv(rate_id, rate())), bar()))
     knob(uc, kr, -200); knob(uc, kr, 64 - 10)
-    u0 = uiv(19, rate())
+    u0 = uiv(rate_id, rate())
     shift(1); knob(uc, kr, -3); shift(0)
-    check("  free (left of the middle), Shift + turn: fine, 4 a click; the bar from the middle", uiv(19, rate()) == u0 - 12
-          and bar() == bar_rgb(uc, s, "mid", uiv(19, rate()) >> 7, uiv(19, rate())), (u0, uiv(19, rate())))
+    check("  free (left of the middle), Shift + turn: fine, 4 a click; the bar from the middle", uiv(rate_id, rate()) == u0 - 12
+          and bar() == bar_rgb(uc, s, "mid", uiv(rate_id, rate()) >> 7, uiv(rate_id, rate())), (u0, uiv(rate_id, rate())))
     check("  free left of the middle = the engine's free half (the stored value right of it)", rate() > 8192 + 128 and w0 != rate())
-    pad(uc, pp(T.PAGE_F)); unpad(uc, pp(T.PAGE_F))
-    kq = T.F_MAP.index(15)
-    knob(uc, kq, (2 * 1638 + 800 - flval(uc, s, 15)) // 128)
-    n = flval(uc, s, 15) * 10 >> 14
-    v15 = flval(uc, s, 15)
-    shift(1); knob(uc, kq, 2); shift(0)
-    check(f"  the filter's LFO shape {n + 1} (10 shapes), Shift + turn right: nothing (no shape {n + 9})", n >= 2 and flval(uc, s, 15) == v15,
-          (n, flval(uc, s, 15)))
+    if FILTPAGE:
+        pad(uc, pp(T.PAGE_F)); unpad(uc, pp(T.PAGE_F))
+        kq = T.F_MAP.index(15)
+        knob(uc, kq, (2 * 1638 + 800 - flval(uc, s, 15)) // 128)
+        n = flval(uc, s, 15) * 10 >> 14
+        v15 = flval(uc, s, 15)
+        shift(1); knob(uc, kq, 2); shift(0)
+        check(f"  the filter's LFO shape {n + 1} (10 shapes), Shift + turn right: nothing (no shape {n + 9})", n >= 2 and flval(uc, s, 15) == v15,
+              (n, flval(uc, s, 15)))
 
 
 def test_pages(fw, ram, head):

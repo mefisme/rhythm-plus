@@ -24,6 +24,7 @@ MP, SAVE = 0x1438, 0x1440                                 # core 0's Y: the move
 VK = 0x32AB81                                           # 1 - (63 / 64) ^ 32: core 1's per-word level smoothing over a block
 BANK = 0x304F0                                            # shared Y: track t's samples at + 64 t + 32 (y:$FFFFD0 bit 0)
 STRIPPED = [False]                                        # set by strip()
+MIX_ENABLED = [True]                                     # Historical Mix processing; false in the lean build.
 
 
 def ring_y():
@@ -37,6 +38,8 @@ def routes():
     import fshape as FS
     import pshape as PS
     r = ring_y()
+    if not MIX_ENABLED[0]:
+        return [(r + VX_RPH, r + VX_RAM + 8)], []
     return [(r + VX_RPH, r + VX_RAM + 8), (FS.VB, PS.VOL_Y + PS.NG * PS.STRIDE)], [(PS.LFO_Y, PS.LFO_Y + PS.NL * PS.STRIDE)]
 
 
@@ -93,7 +96,10 @@ def items():
     e(["rts", ("label", "c0_rt")])
     for k in range(8):
         e([f"move y:>${SAVE + k:x},r{k}", f"move y:>${SAVE + 8 + k:x},n{k}", ("words", [0x05F060 | k, SAVE + 16 + k])])
-    e(["rts", *PS.lk_items()])
+    e(["rts", *(PS.lk_items() if MIX_ENABLED[0] else [])])
+    if not MIX_ENABLED[0]:
+        start = L.index("movep y:<<$ffffd0,b")
+        L = L[:2] + L[start:]  # Keep register save/restore and ring; omit both Mix LFOs.
     return L
 
 
@@ -105,9 +111,10 @@ def code():
     return words, labels
 
 
-def strip():
+def strip(mix=True):
     """from now on fshape builds no LVL and voicefx has no ring stage (after nocomb.strip())"""
     import voicefx
+    MIX_ENABLED[0] = mix
     fx0 = voicefx.items
 
     def fx_items(shift=0, pre=None, lite=False):
@@ -129,6 +136,6 @@ def install(img, report, base_addr):
     segs = [(AT, words), (HOOK, [0x0BF080, labels["c0"]])]
     core0.install(img, report, base_addr, counter=False, loader=True, segs=segs)
     only0, both = routes()
-    report["c0fx"] = dict(at=hex(AT), words=len(words), c0=hex(labels["c0"]), lk=hex(labels["lk"]), mp=hex(MP), save=hex(SAVE),
+    report["c0fx"] = dict(at=hex(AT), words=len(words), c0=hex(labels["c0"]), **(dict(lk=hex(labels["lk"]), mp=hex(MP)) if MIX_ENABLED[0] else dict(mix=False)), save=hex(SAVE),
                           vk=hex(VK), ring=hex(ring_y()), only0=[[hex(a), hex(b)] for a, b in only0], both=[[hex(a), hex(b)] for a, b in both])
     return labels

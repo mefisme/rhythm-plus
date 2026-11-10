@@ -90,12 +90,12 @@ def main():
         segs = program(img, rep)
         got = {at: ws for _, at, ws in segs}
         check(f"{build}: the loader's segments: C0 at P:${C.AT:X}, P:$224 = jsr C0", C.AT in got and got.get(C.HOOK) == [0x0BF080, c0])
-        st = got[0]
+        st = {address+i:word for space,address,words in segs if space=='p' for i,word in enumerate(words)}
         bk = DP.asm(["movep y:<<$ffffd0,b", "asl #5,b,b", "move b,n3"])
         c0w = got[C.AT]
         at = next((i for i in range(len(c0w) - 2) if c0w[i:i + 3] == bk), None)
         check(f"{build}: the bank as the stock's mix takes it (P:$367: movep y:$FFFFD0, asl #5, into n1; ours n3)",
-              at is not None and st[0x367:0x36A] == DP.asm(["movep y:<<$ffffd0,b", "asl #5,b,b", "move b,n1"]))
+              at is not None and [st[address] for address in range(0x367,0x36a)] == DP.asm(["movep y:<<$ffffd0,b", "asl #5,b,b", "move b,n1"]))
         tail = wrap + DP.jsr(c0) + DP.asm([f"move r{k},y:>${KEEP + k:x}" for k in range(8)] + [f"move n{k},y:>${KEEP + 8 + k:x}" for k in range(8)]
                                           + [f"move m1,y:>${KEEP + 16:x}"]) + [0x00000C]
         segs = segs + [("p", C.MIX, [0x00000C]), ("p", WRAP, tail), ("p", REF, ring_ref())]
@@ -158,6 +158,8 @@ def main():
                 cut = (cut + mpy(C.VK, vx - cut)) & 0xFFFFFF
                 vb = res[("y", FS.VB)]
                 gotl = (res[("y", MM.SH)][t], res[("y", C.MP)][t], vb[FS.O_VP + t], vb[FS.O_VX + t])
+                if not rep["c0fx"].get("mix", True):
+                    m,p,vp,cut = (words[MM.SH][t],words[C.MP][t],words[FS.VB + FS.O_VP][t],words[FS.VB + FS.O_VX][t])
                 if gotl != (m, p, vp, cut):
                     bad_lfo.append((case, t, sh[t], sh[8 + t], [hex(x) for x in gotl], [hex(x) for x in (m, p, vp, cut)]))
             k = res[("y", KEEP)]
@@ -169,7 +171,7 @@ def main():
               not bad_lfo, bad_lfo[:2])
         check(f"{build}: the stock's r0-r7, n0-n7 and a modulo m1 kept", not bad_reg, bad_reg[:2])
         bad = []
-        for s in range(FS.NVS):
+        for s in range(FS.NVS if rep["c0fx"].get("mix", True) else 0):
             qq = S.LFO_Y + S.STRIDE * s if s < S.NL else S.VOL_Y + S.STRIDE * (s - S.NL)
             tab = [tw[qq - S.ENV_Y + j] for j in range(S.NPT + 1)]
             phs = [0, 0x300000, 0x900000, 0xF00000, 0x123456, 0x7FFFFF, 0xABCDEF, 0x555555]

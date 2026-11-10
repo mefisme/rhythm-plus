@@ -7,12 +7,15 @@ b=${1:?build folder, for example a0085}; B=${b^^}
 cd "$(dirname "$0")/.."
 PY=${PYTHON:-python}
 export RH_PROBES=0
+export RH_AUTOPROT=$(grep -q '"autoprot"' firmware/$b/manifest.json && echo 1 || echo 0)
+export RH_AUTOBANK=$(grep -q '"autobank"' firmware/$b/manifest.json && echo 1 || echo 0)
+export RH_GRANULAR=$(grep -q '"integration_version": 1' firmware/$b/manifest.json && echo 1 || echo 0)
 STOCK=remix/stock/circuitrhythm-firmware-5706-STOCK.bin
 RAM=remix/stock/rhythm-ram-frd1-synced.bin
 LOG=buildtmp/$b-memaudit.txt; mkdir -p buildtmp; rm -f "$LOG"
 fail=0
 run() { r=$("$@" 2>&1 | tail -1); echo "$r" | grep -q "ALL PASS" || fail=1; echo "$r"; }
-for t in smpads tmenu pageclear trackreset clearbrightness clkci countin diagread resetcontrols srcount stepmarker steppage trackpulse playfix_ours $( [ -n "$(grep -o "\"upguard\"" firmware/$b/manifest.json)" ] && echo upguard ) $( grep -q "\"mutset\"" firmware/$b/manifest.json && echo mutset ); do
+for t in smpads tmenu pageclear trackreset clearbrightness clkci countin diagread resetcontrols srcount stepmarker steppage trackpulse playfix_ours $( [ -n "$(grep -o "\"upguard\"" firmware/$b/manifest.json)" ] && echo upguard ) $( grep -q "\"mutset\"" firmware/$b/manifest.json && echo mutset ) $( grep -q '"soundonly": true' firmware/$b/manifest.json && echo soundonly ) $( grep -q "\"acdiag\"" firmware/$b/manifest.json && echo acdiag ) $( grep -q "\"dsdiag\"" firmware/$b/manifest.json && echo dsdiag ) $( grep -q "\"autoprot\"" firmware/$b/manifest.json && echo autoprot ) $( grep -q "\"autobank\"" firmware/$b/manifest.json && echo autobank ); do
   echo -n "$t: "; RH_BUILD=$b RH_MEMAUDIT=$LOG run "$PY" tests/emu_$t.py $STOCK firmware/$b/rhythmplus-$B.bin $RAM
 done
 echo -n "ramaudit: "; run "$PY" tests/emu_ramaudit.py $b $LOG

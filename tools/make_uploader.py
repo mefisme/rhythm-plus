@@ -14,8 +14,14 @@ sys.path[:0] = [str(Path(__file__).resolve().parents[1] / d) for d in ("modules"
 import make_rm_uploader as m  # noqa: E402
 import rh_fw  # noqa: E402
 
-MINE = ("A0120", "A0119", "A0118", "A0117", "A0116", "A0115", "A0114", "A0113", "A0112", "A0111", "A0110", "A0109", "A0108", "A0107", "A0106", "A0105", "A0104", "A0103", "A0102", "A0101", "A0100", "A0099", "A0098", "A0097", "A0096", "A0095", "A0094", "A0093", "A0092", "A0091", "A0090", "A0089", "A0088", "A0087", "A0086", "A0085", "A0084", "A0083", "A0082", "A0081", "A0080", "A0079", "A0078", "A0077", "A0076", "A0075", "A0074", "A0073", "A0072", "A0071", "A0070", "A0069", "A0068", "A0066", "A0065", "A0064", "A0063", "A0020", "A0019", "A0018", "A0017", "A0016", "A0015", "A0014", "A0013", "A0012", "A0011", "A0010", "A0009", "A0008", "A0001", "A04FS", "A0.04F", "STC11", "STC10", "STCI9", "ST2FX", "STFRS", "A0.03F", "A03FS", "STPF1", "STPD5")
+MINE = ("AD007", "AD004", "AD003", "AD002", "AD001", "A0122", "A0120", "A0119", "A0118", "A0117", "A0116", "A0115", "A0114", "A0113", "A0112", "A0111", "A0110", "A0109", "A0108", "A0107", "A0106", "A0105", "A0104", "A0103", "A0102", "A0101", "A0100", "A0099", "A0098", "A0097", "A0096", "A0095", "A0094", "A0093", "A0092", "A0091", "A0090", "A0089", "A0088", "A0087", "A0086", "A0085", "A0084", "A0083", "A0082", "A0081", "A0080", "A0079", "A0078", "A0077", "A0076", "A0075", "A0074", "A0073", "A0072", "A0071", "A0070", "A0069", "A0068", "A0066", "A0065", "A0064", "A0063", "A0020", "A0019", "A0018", "A0017", "A0016", "A0015", "A0014", "A0013", "A0012", "A0011", "A0010", "A0009", "A0008", "A0001", "A04FS", "A0.04F", "STC11", "STC10", "STCI9", "ST2FX", "STFRS", "A0.03F", "A03FS", "STPF1", "STPD5")
 DESC = {
+    "AD007": ("Research build with a CONFIRMED Grid FX conflict in its optional full-bank test. Do not flash for a new memory test or refill the full candidate bank. First-playback prototype fix and bounded lock restore remain available; no SD automation persistence.", "Research build with a CONFIRMED Grid FX conflict in its optional full-bank test. Do not flash for a new memory test or refill the full candidate bank. First-playback prototype fix and bounded lock restore remain available; no SD automation persistence."),
+    "AD004": ("Research prototype with KNOWN first-playback suspension bug after stopped lock recording. Do not flash for a new test. Volatile one-lane Track 1 Pattern 1 proof; no saved automation.", "Research prototype with KNOWN first-playback suspension bug after stopped lock recording. Do not flash for a new test. Volatile one-lane Track 1 Pattern 1 proof; no saved automation."),
+    "AD003": ("Diagnostic only: AD002 fixed-window transfer proof using stock consecutive reads. Guided stopped-playback timing test; no automation feature yet.", "Diagnostic only: AD002 fixed-window transfer proof using stock consecutive reads. Guided stopped-playback timing test; no automation feature yet."),
+    "AD002": ("Diagnostic only: AD001 + keyed, fixed-window core-0 X/Y RAM canaries and DSP-to-ITCM lossless decoder transfer timing. No SD/sample-memory writes or DSP program changes. Guided test only.", "Diagnostic only: AD001 + keyed, fixed-window core-0 X/Y RAM canaries and DSP-to-ITCM lossless decoder transfer timing. No SD/sample-memory writes or DSP program changes. Guided test only."),
+    "AD001": ("Diagnostic only: A0120 + opt-in ITCM canary and lossless decoder benchmarks. No Track + automation yet; no SD writes. Use only for the guided test.", "Diagnostic only: A0120 + opt-in ITCM canary and lossless decoder benchmarks. No Track + automation yet; no SD writes. Use only for the guided test."),
+    "A0122": ("Base de prueba sin Granular: sin las páginas Filter y Mix ni el aviso de error de Clear.", "Test base with no Granular: no Filter or Mix pages and no Clear error light."),
     "A0120": ("A0119 + View Lock works over a mutate: its white pads always show, and Shift + pad moves them without ending the mutate.", "A0119 + View Lock works over a mutate: its white pads always show, and Shift + pad moves them without ending the mutate."),
     "A0119": ("A0118 + a mutate while stopped shows the whole new list (the old paused pad hidden until you play).", "A0118 + a mutate while stopped shows the whole new list (the old paused pad hidden until you play)."),
     "A0118": ("A0117 + Keep slot 1 on page 2 of the mutate page: On, each list starts on the chain's first pattern.", "A0117 + Keep slot 1 on page 2 of the mutate page: On, each list starts on the chain's first pattern."),
@@ -174,9 +180,22 @@ def main():
     stock = m.STOCK_BIN.read_bytes()
     assert hashlib.sha256(stock).hexdigest() == rh_fw.STOCK_5706["image_sha256"]
     versions = list(MINE)
+    hardware = {"AG015": HERE / "buildtmp" / "granular-hardware-ag015",
+                "AG014": HERE / "buildtmp" / "granular-hardware-ag014",
+                "AG012": HERE / "buildtmp" / "granular-hardware-ag012",
+                "AG011": HERE / "buildtmp" / "granular-hardware-ag011",
+                "AG010": HERE / "buildtmp" / "granular-hardware-ag010",
+                "AG009": HERE / "buildtmp" / "granular-hardware-ag009",
+                "AG008": HERE / "buildtmp" / "granular-hardware-ag008",
+                "AG007": HERE / "buildtmp" / "granular-hardware-ag007",
+                "AG006": HERE / "buildtmp" / "granular-hardware-ag006",
+                "AG005": HERE / "buildtmp" / "granular-hardware-ag005",
+                "AG004": HERE / "buildtmp" / "granular-hardware-ag004",
+                "AG003": HERE / "buildtmp" / "granular-hardware-ag003"}
+    versions[:0] = [v for v, path in hardware.items() if (path / "manifest.json").is_file()]
     patches = {}
     for v in versions:
-        d = HERE / "firmware" / v.lower()
+        d = hardware.get(v, HERE / "firmware" / v.lower())
         man = json.loads((d / "manifest.json").read_text())
         img = next(d.glob("*.bin")).read_bytes()
         assert hashlib.sha256(img).hexdigest() == man["image_sha256"], v
@@ -186,7 +205,31 @@ def main():
         assert hashlib.sha256(rh_fw.encode(img)).hexdigest() == man["syx_sha256"], v
         patches[v] = dict(dir=v.lower(), image_sha256=man["image_sha256"], syx_sha256=man["syx_sha256"], size=len(img), ops=ops)
         print(v, len(ops), "ops,", sum(len(base64.b64decode(o[1])) for o in ops if o[0] == 1), "bytes of our own")
-    desc = DESC
+    desc = {**DESC,
+            "AG014": ("Prueba granular: arranque del DSP más rápido para evitar el bucle de arranque; color lima.",
+                      "Granular test: faster DSP start to stop the boot loop; lime page color."),
+            "AG015": ("Prueba granular: Lock en Shift + K6 repite los granos; Slice en Shift + K5 corta la muestra en 2 a 16 partes y Scan avanza una parte a tempo.",
+                      "Granular test: Lock on Shift + K6 repeats the grains; Slice on Shift + K5 cuts the sample into 2 to 16 parts, and Scan steps one part at a time on the tempo."),
+            "AG012": ("Prueba granular: color lima y colores ordenados en la fila de ajustes.",
+                      "Granular test: lime page color and tidy settings row colors."),
+            "AG011": ("Prueba granular: Bounce, Freeze y Pitch Set bajo sus perillas.",
+                      "Granular test: Bounce, Freeze and Pitch Set sit under their knobs."),
+            "AG010": ("Prueba granular: perillas Shift de Dispersion, Tiempo y Jitter; pads Pitch Set y Rebote; Texture respeta Mute.",
+                      "Granular test: Shift knobs for Size Scatter, Timing and Jitter; Pitch Set and Bounce pads; Texture follows mutes."),
+            "AG009": ("Prueba granular: Limpiar pista conserva el modo de muestra; filtro limpio siempre activo.",
+                      "Granular test: Clear Track keeps the sample mode; the clean filter is always on."),
+            "AG008": ("Prueba granular: Texture sigue Play y Stop, con cola suave al parar.",
+                      "Granular test: Texture follows Play and Stop, with a soft tail at Stop."),
+            "AG007": ("Prueba granular: fundidos curvos, Clean/Raw, nivel estable y nueva curva de densidad.",
+                      "Granular test: curved fades, Clean/Raw, steady level, and a new Density curve."),
+            "AG006": ("Prueba granular: One Shot termina con la muestra; Gated y Loop siguen la nota.",
+                      "Granular test: One Shot ends with the sample; Gated and Loop follow the note."),
+            "AG005": ("Prueba granular: Triggered sigue la nota, Freeze, Retrigger, nivel fino y luces de knobs.",
+                      "Granular test: Triggered follows the note, Freeze, Retrigger, fine Level, and knob lights."),
+            "AG004": ("Prueba granular: On/Off, Freeze, nivel, Clear + knob y Scan con Granular.",
+                      "Granular test: On/Off, Freeze, Level, Clear + knob, and FX Scan with Granular."),
+            "AG003": ("Prueba granular con acceso DSP nativo. Comprueba el arranque con Granular apagado.",
+                      "Granular hardware test using stock DSP access. Check boot with Granular Off first.")}
     tpl = m.TEMPLATE.replace("const DESC = " + json.dumps(m.DESC, ensure_ascii=False), "const DESC = " + json.dumps(desc, ensure_ascii=False))
     assert tpl != m.TEMPLATE
     for old, new in DESC_BOX:

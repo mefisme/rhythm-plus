@@ -6,6 +6,7 @@ cancels. Load snapshots follow Remix: 25 parameter bytes and selected sample.
 Sound knobs/fine values and Stock+ use defaults; other parameters use the snapshot.
 Notes and sample flips remain. No settings of another track or pattern are cleared.
 """
+import os
 import sys
 from pathlib import Path
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / d) for d in ("modules", "builds", "tests", "remix/tools")]
@@ -18,6 +19,8 @@ import countin as C
 import rhstate
 
 SIZE, PHOTO, TAG = 220, 12, 0xC3
+PLAY_MODE = 1
+KEEP_PLAY_MODE = os.environ.get("RH_GRANULAR") == "1"
 LOAD, RESEND = 0x080379AE, 0x08031A10
 RELEASE, RELEASE_CONT = 0x0803DDB0, 0x0803DDB4
 OUT_CALL = 0x0803E802
@@ -75,6 +78,8 @@ def install(img, report, base_addr, viewsync=False, softclear=False):
     E(movs_imm, 0, 26); E(muls, 0, 4); E(adds_imm8, 0, PHOTO); E(adds_reg, 7, 7, 0)
     E(movs_imm, 5, 0)
     a.label('reset_param')
+    if KEEP_PLAY_MODE:
+        E(cmp_imm, 5, PLAY_MODE); E(b_cond, 'reset_next', 'eq')
     E(cmp_imm, 5, 6); E(b_cond, 'reset_write', 'lo')
     E(cmp_imm, 5, 15); E(b_cond, 'reset_next', 'ls')
     a.label('reset_write')
@@ -90,7 +95,8 @@ def install(img, report, base_addr, viewsync=False, softclear=False):
     E(movs_imm, 1, 0); E(bl, 0x0803FD26)
     E(ldrb_imm, 1, 7, 25); E(strb_imm, 1, 0, 0)
     E(mov_reg, 0, 6); E(bl, 0x0803FBEC)
-    E(mov_reg, 0, 4); E(movs_imm, 1, 6); E(bl, pcreset)
+    E(mov_reg, 0, 4); E(movs_imm, 1, 6)
+    a.label('c_trreset_pages_call'); E(bl, pcreset)
     imm(0, 0x2003D380); E(lsls_imm, 1, 4, 2); E(adds_reg, 0, 0, 1); E(ldr_imm, 4, 0, 0)
     E(ldr_imm, 0, 4, 0x40); E(movs_imm, 1, 0); E(bl, C.PARAM_GET)
     E(mov_reg, 6, 0); E(ldrb_imm, 7, 6, 0)

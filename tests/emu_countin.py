@@ -10,6 +10,7 @@ cibpm's count at an external clock's tempo; vismet's Clear flash on each click a
 The click level (master parameter 9) is set by a hook on its getter; its real getter is read once from the dump.
 """
 import json
+from functools import lru_cache
 import os
 import struct
 import sys
@@ -37,7 +38,7 @@ from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_AR
 
 L = {k: int(v, 16) for k, v in MAN["report"]["countin"]["labels"].items()}
 C_RST = int(MAN["report"]["rhstate"]["labels"]["c_rst"], 16)
-C_ERLED = int(MAN["report"]["errled"]["labels"]["c_erled"], 16)
+C_ERLED = int(MAN["report"].get("errled", {}).get("labels", {}).get("c_erled", "0"), 16)
 ST, SIZE, TOP = rhstate.ST, rhstate.SIZE, rhstate.HEAP_LIMIT
 CI = ST + rhstate.OFF["countin"][0]
 VM = ST + rhstate.OFF["vismet"][0]
@@ -119,7 +120,20 @@ def setup(fw, ram, built, level=64):
 
 
 def press(uc, bid): call(uc, C.BTN_ENTRY, C.CTRL, bid)
-def led(uc): call(uc, C_ERLED, C.CTRL, FRAME)           # the head of the LED chain
+
+
+@lru_cache(maxsize=8)
+def led_target(site, code):
+    from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB
+    ins = next(Cs(CS_ARCH_ARM, CS_MODE_THUMB).disasm(code, site))
+    assert ins.mnemonic == "bl"
+    return int(ins.op_str.lstrip("#"), 0)
+
+
+def led(uc):
+    # Follow the actual patched call, including builds without the error reporter.
+    site = C.LED_CALLS[0]
+    call(uc, led_target(site, bytes(uc.mem_read(site, 4))), C.CTRL, FRAME)
 
 
 def test_block(fw, ram):
@@ -412,6 +426,9 @@ def test_vismet(stock, fw, ram):
     tick(uc, 0x5000)                                      # bit 8 clear: errled's red half
     metro(uc, 1, 0)
     check("no error, 20 ms after a silent beat: green", clear_led(uc, 0x5000 + 20) == C.COLS[1])
+    if not C_ERLED:
+        check("error reporter omitted: silent-beat indicator remains green", clear_led(uc, 0x5000 + 20) == C.COLS[1])
+        return
     w32(uc, C.CTRL, 0)                                    # an error: errled's blink wins over the flash
     check("error, 20 ms after a silent beat: red, not green", clear_led(uc, 0x5000 + 20) == C.COL_REC and u32(uc, VM) == 0x5000)
 
@@ -424,7 +441,8 @@ def main():
     if "clkci" not in MAN["report"]:                    # with clkci the count is clkci's (tests/emu_clkci.py)
         test_count(built, ram)
     test_vismet(stock, built, ram)
-    test_errled(built, ram)
+    if C_ERLED:
+        test_errled(built, ram)
     print("ALL PASS" if not fails else f"{len(fails)} FAILED")
     sys.exit(1 if fails else 0)
 

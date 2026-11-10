@@ -1,6 +1,6 @@
 """Sample mode's pitch reset: Clear + pad 1 or 2 (MIT; Rhythm Plus, Circuit Rhythm 5706).
 
-The stock (its pad handler 0x08057DA8 read in Ghidra): Sample mode (the Samples button twice, CONT's mode byte 9) hands each pad (index
+The stock (its pad handler 0x08057DA8): Sample mode (the Samples button twice, CONT's mode byte 9) hands each pad (index
 0-31) to slot 0 of its subview (vtable 0x08067D8C); pads 1 / 2 fit the sample to the pattern by the pitch.  Each track has a fit object
 (0x200469CC + 0xB4 t, vtable 0x0806847C): [+ 0x30] p0 = the pitch (64 = the sample's own, 1/5 semitone a step), [+ 0x14] / [+ 0x18] the
 proxy and parameter id the stock writes the pitch through; 0x0803C1D4(fit) = the stock's «applied» on pads 1 / 2 back to none.

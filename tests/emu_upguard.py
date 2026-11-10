@@ -56,7 +56,9 @@ def main():
     stock, fw, ram = (open(p, "rb").read() for p in sys.argv[1:4])
     for at in U.CALLS:
         check(f"{at:#x}: stock bl to the upload", bl_at(stock, at) == ("bl", U.UPLOAD))
-        check(f"{at:#x}: bl c_upw", bl_at(fw, at) == ("bl", C_UPW))
+        life=R.get('granular',{}).get('lifecycle')
+        target=int(life['labels']['c_glupload'],16) if life else C_UPW
+        check(f"{at:#x}: upload guard chain", bl_at(fw, at) == ("bl", target) and (not life or int(life['previous_upload'],16)==C_UPW))
     for (mod, lab, off), at in zip(U.WRITERS, G["writers"]):
         at = int(at, 16)
         check(f"{lab}: its write is bl c_dspw", at == int(R[mod]["labels"][lab], 16) + off and bl_at(fw, at) == ("bl", C_DSPW))
@@ -81,13 +83,14 @@ def main():
     check("c_upw: the mark cleared after, the upload's result kept",
           uc.mem_read(FLAG, 1)[0] == 0 and uc.reg_read(UC_ARM_REG_R0) == 0x1234)
 
-    spw, flsw = int(R["stockplus"]["labels"]["c_spw"], 16), int(R["fshape"]["labels"]["c_flsw"], 16)
+    spw, flsw = int(R["stockplus"]["labels"]["c_spw"], 16), int(R["fshape"]["labels"]["c_flsw"], 16) if "c_flsw" in R["fshape"]["labels"] else None
     for mark in (0, 1):
         uc.mem_write(FLAG, bytes([mark]))
         writes.clear()
         call(uc, spw, 0x123456, 0x1E70)
-        call(uc, flsw, 0x654321, 0x37328)
-        want = [] if mark else [(core(0x1E70)[0], 0x123456 << 8 & 0xFFFFFFFF, 0x9E70), (0, 0x654321 << 8 & 0xFFFFFFFF, 0x37328)]
+        if flsw:
+            call(uc, flsw, 0x654321, 0x37328)
+        want = [] if mark else [(core(0x1E70)[0], 0x123456 << 8 & 0xFFFFFFFF, 0x9E70)] + ([(0, 0x654321 << 8 & 0xFFFFFFFF, 0x37328)] if flsw else [])
         check(f"mark {mark}: Stock+'s and fshape's writes {'dropped' if mark else 'as the stock writes them'}", writes == want,
               f"{[tuple(hex(x) for x in w) for w in writes]}")
     if "route" in G:
@@ -103,11 +106,11 @@ def main():
                 bad.append((hex(addr), [tuple(hex(x) for x in w) for w in writes]))
         check(f"route: core 1 Y words at the ranges' edges to core 1, core 0 only {only0} or both {both}", not bad, bad[:3])
         writes.clear()
-        call(uc, flsw, 0x111111, 0x9E70)
+        call(uc, flsw if flsw else C_DSPW, *((0x111111, 0x9E70) if flsw else (0, 0x111111 << 8, 0x9E70)))
         check("route: a core 0 word passes as it is", writes == [(0, 0x111111 << 8, 0x9E70)], writes)
         uc.mem_write(FLAG, bytes([1]))
         writes.clear()
-        call(uc, spw, 0x0ABCDE, both[0][0])
+        call(uc, spw, 0x0ABCDE, (both or only0)[0][0])
         check("route: with the mark set, nothing to either core", writes == [], writes)
     print("ALL PASS" if not FAILS else f"FAILED: {FAILS}")
     sys.exit(1 if FAILS else 0)

@@ -626,7 +626,7 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
     E(b_cond, "pp_kc", "eq")
     E(mov_reg, 1, 4)
     E(subs_imm8, 1, page0)
-    E(cmp_imm, 1, npages)
+    E(cmp_imm, 1, len(PADMAP))
     E(b_cond, "pp_tk", "hs")                              # the bar's pads, pad 26, the reserved pages: nothing
     if padmap:
         for j, pg in enumerate(PADMAP):
@@ -1421,6 +1421,8 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
         E(bl, shapes["c_shframe"])
     if filt:
         E(bl, filt["c_flframe"])
+    elif L.get("aux_frame"):
+        E(bl, L["aux_frame"])
     E(bl, L["c_rst"])
     E(cmp_imm, 0, 0)
     E(b_cond, "ld_x0", "eq")
@@ -1730,7 +1732,7 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
     if sp:
         ldb(0, 4, O_PAGE)
         E(cmp_imm, 0, PAGE_SP)
-        (far("ld_ed", "ne") if filt else E(b_cond, "ld_ed", "ne"))
+        (far("ld_ed", "ne") if filt or sb else E(b_cond, "ld_ed", "ne"))
         E(movs_imm, 0, 0)
         stb(0, 4, O_WHT)
         stb(0, 4, O_RED)
@@ -2738,11 +2740,14 @@ def apply_mixpage():
 
 def install(img, report, base_addr, stockplus=False, testpages=False, fpage=False, click=False, twoview=False, shiftled=False,
             bounce=False, pageclear=False, steadyreset=False, resetcue=False, stepmarker=False, trackpulse=False, steppage=False, softclear=False,
-            viewlock=False, momhold=False, nocrush=False, gran=False, perpage=False, pagecols=False, shapes=False, shapebar=False, filtpage=False, k78white=False, volpage=False, syncbar=False, depthfirst=False, scanfx=False, pageorder=False, mixpage=False, pxrand=False, glide=False, fade=False, fclr=False, fadetan=False):
+            viewlock=False, momhold=False, nocrush=False, gran=False, perpage=False, pagecols=False, shapes=False, shapebar=False, filtpage=False, k78white=False, volpage=False, syncbar=False, depthfirst=False, scanfx=False, pageorder=False, mixpage=False, pxrand=False, glide=False, fade=False, fclr=False, fadetan=False, soundonly=False):
     import rh_fw
-    global SP_MAP, F_MAP, V_MAP, SP_MIDK
+    global SP_MAP, F_MAP, V_MAP, SP_MIDK, SB_RATES
+    if soundonly:
+        assert not (filtpage or volpage or mixpage or gran)
+        SB_RATES = (2, 7)
     if depthfirst:
-        assert shapes and filtpage and syncbar, "depthfirst: the Stock+ shapes page, the filter page, syncbar"
+        assert shapes and (filtpage or soundonly) and syncbar, "depthfirst: shapes and syncbar"
         SP_MAP, F_MAP, V_MAP = DF_SP_MAP, DF_F_MAP, DF_V_MAP
         SP_MIDK = tuple(k for k, i in enumerate(SP_MAP) if i in MID_VALUES)
         assert sorted(SP_MAP) == sorted(DF_SP_MAP) and sorted(F_MAP) == list(range(12, 18)) and sorted(V_MAP) == [18, 19, 20]
@@ -2751,7 +2756,7 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
         assert depthfirst and volpage and report["fshape"].get("move") and "mixmove" in report, "mixpage: depthfirst, fshape's move, mixmove"
         apply_mixpage()
         assert sorted(V_MAP) == list(range(18, 26))
-    assert not scanfx or (depthfirst and filtpage), "scanfx: the depth-first order, the filter page"
+    assert not scanfx or (depthfirst and (filtpage or soundonly)), "scanfx: depth-first order"
     if pxrand:
         assert scanfx and report["fshape"].get("px") and SP_MAP[SP_RANDK - 1] == 11, "pxrand: the scan on FX, fshape's px"
         SP_MAP = SP_MAP[:SP_RANDK - 1] + (RAND_V,) + SP_MAP[SP_RANDK:]
@@ -2765,8 +2770,8 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     FADETAN[0] = fadetan
     assert not fclr or (syncbar and filtpage), "fclr: the filter page with syncbar"
     FCLR[0] = fclr
-    assert not pageorder or (scanfx and volpage and pageclear), "pageorder: the scan on FX, the mix page, pageclear"
-    padmap = list(PADMAP_ORDER) if pageorder else None
+    assert not pageorder or (scanfx and (volpage or soundonly) and pageclear), "pageorder: scan and pageclear"
+    padmap = [0, None, None, PAGE_SP, None, PAGE_X] if soundonly else list(PADMAP_ORDER) if pageorder else None
     assert not pageorder or report["pageclear"].get("padmap") == padmap, "pageclear's pads in the same order"
     xi = list(X_SCAN if scanfx else X_FL if filtpage else X_IDX[1:] if nocrush else X_IDX)
     import rhbuild
@@ -2783,6 +2788,9 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     tests = TEST_RGB2 if pagecols else TEST_RGB[1:] if fpage else TEST_RGB
     assert not pagecols or fpage
     pages = PAGE_RGB + ((X_RGB,) if fpage else ()) + (tests if testpages else ()) if stockplus else PAGE_RGB[:1]
+    if soundonly:
+        pages = PAGE_RGB + (X_RGB,)
+        L["aux_frame"] = int(report["fshape"]["labels"]["c_flframe"], 16)
     sh = None
     if shapes:
         assert stockplus and fpage and "pshape" in report, "shapes: Stock+'s page with pshape"
@@ -2798,7 +2806,7 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     assert filtpage or not k78white
     sbl = None
     if syncbar:
-        assert filtpage and "syncbar" in report and report["syncbar"]["rates"] == list(SB_RATES), "syncbar: the filter page, syncbar"
+        assert (filtpage or soundonly) and "syncbar" in report and report["syncbar"]["rates"] == list(SB_RATES), "syncbar: matching rates"
         assert {**SHAPE_N, **F_SHN, **V_SHN} == {**SB_SHAPES, 5: F_SHN[5]}
         sbl = {k: int(v, 16) for k, v in report["syncbar"]["labels"].items()}
     vo = None
@@ -2844,6 +2852,6 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
                            prev_out=hex(L["prev_out"]), stockplus=bool(stockplus), fpage=fpage, click=click, twoview=twoview, shiftled=shiftled, bounce=bounce, pageclear=pageclear, steadyreset=steadyreset, resetcue=resetcue, stepmarker=stepmarker, trackpulse=trackpulse, steppage=steppage, softclear=softclear, viewlock=viewlock, momhold=momhold, page0=25 if pageclear else PAD_PAGE0,
                            x_idx=xi, gran=bool(gran), perpage=perpage, pagecols=pagecols, shapes=shapes, shapebar=shapebar,
                            filtpage=filtpage, k78white=k78white, volpage=volpage, syncbar=syncbar,
-                           depthfirst=depthfirst, scanfx=scanfx, padmap=padmap, mixpage=mixpage, pxrand=pxrand, glide=glide, fade=fade, fclr=fclr, spn=spn, **({"fadetan": True} if fadetan else {}), maps=dict(sp=list(SP_MAP), f=list(F_MAP), v=list(V_MAP)),
+                           depthfirst=depthfirst, scanfx=scanfx, padmap=padmap, mixpage=mixpage, pxrand=pxrand, glide=glide, fade=fade, fclr=fclr, spn=spn, **({"soundonly": True} if soundonly else {}), **({"fadetan": True} if fadetan else {}), maps=dict(sp=list(SP_MAP), f=list(F_MAP), v=list(V_MAP)),
                            tmclick={36: 1, 52: 2, 56: 3}.get(rhstate.OFF["tmenu"][1], 0), pages=[hex(c) for c in pages], labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")})
     return labels, code

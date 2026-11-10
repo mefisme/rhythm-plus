@@ -30,15 +30,15 @@ def main():
     def seedsp():
         for i in range(12): E.call(uc, E.SPL['c_spput'], s, i, 2048)
     def push(p): E.pad(uc, p); E.unpad(uc, p)
-    FSL = {k: int(v, 16) for k, v in E.MAN['report']['fshape']['labels'].items()} if FILT else {}
+    FSL = {k: int(v, 16) for k, v in E.MAN['report']['fshape']['labels'].items()} if FILT or PX else {}
     FDEF = E.MAN['report']['fshape']['defs'] if FILT else []
-    def flvals(): return [E.call(uc, FSL['c_fsval'], s, 12 + k) or uc.reg_read(E.UC_ARM_REG_R0) for k in range(6)]
+    def flvals(): return [E.call(uc, FSL['c_fsval'], s, 12 + k) or uc.reg_read(E.UC_ARM_REG_R0) for k in range(6 if FILT else 0)]
     def seedfl():
-        for k in range(6): E.call(uc, FSL['c_fsput'], s, 12 + k, 3000)
+        for k in range(6 if FILT else 0): E.call(uc, FSL['c_fsput'], s, 12 + k, 3000)
     VDEF = E.MAN['report']['fshape']['vdefs'] if VOL else []
-    def vlvals(): return [E.call(uc, FSL['c_fsval'], s, 18 + k) or uc.reg_read(E.UC_ARM_REG_R0) for k in range(8)]
+    def vlvals(): return [E.call(uc, FSL['c_fsval'], s, 18 + k) or uc.reg_read(E.UC_ARM_REG_R0) for k in range(8 if VOL else 0)]
     def seedvl():
-        for k in range(8): E.call(uc, FSL['c_fsput'], s, 18 + k, 3000)
+        for k in range(8 if VOL else 0): E.call(uc, FSL['c_fsput'], s, 18 + k, 3000)
     PXDEF = E.MAN['report']['fshape']['pxdefs'] if PX else []
     if PX and E.MAN['report']['fshape'].get('fade'):
         PXDEF = PXDEF + E.MAN['report']['fshape']['fidefs']
@@ -115,24 +115,24 @@ def main():
     E.check('FX reset keeps stock knobs and sample parameters', values(uc, s) == stock_before)
     if FILT:
         seedsp(); seedfl()
-        check0 = flvals() == [3000] * 6
+        check0 = flvals() == [3000] * (6 if FILT else 0)
         push(E.pp(3))
         E.check(f"the filter page (pad {E.pp(3) + 1}) resets its 6 values and Stock+'s filter type / pitch follow only", check0 and flvals() == FDEF
                 and spvals() == [E.DEFS[i] if i in FSP else 2048 for i in range(12)] and values(uc, s) == stock_before, (flvals(), spvals()))
         seedfl()
     if VOL:
         seedsp(); seedvl()
-        check0 = vlvals() == [3000] * 8
+        check0 = vlvals() == [3000] * (8 if VOL else 0)
         push(E.pp(4))
-        E.check(f"the movement page (pad {E.pp(4) + 1}) resets its 8 values only", check0 and vlvals() == VDEF and flvals() == [3000] * 6
+        E.check(f"the movement page (pad {E.pp(4) + 1}) resets its 8 values only", check0 and vlvals() == VDEF and flvals() == [3000] * (6 if FILT else 0)
                 and spvals() == [2048] * 12 and values(uc, s) == stock_before, (vlvals(), flvals()))
         seedvl()
     if None in E.PADMAP:
         seedsp(); seedfl(); seedvl()
         st0 = values(uc, s)
         push(E.T.PAD_PAGE0 + E.PADMAP.index(None))
-        E.check(f"Clear + pad {E.T.PAD_PAGE0 + E.PADMAP.index(None) + 1} (no page): nothing reset", spvals() == [2048] * 12 and flvals() == [3000] * 6
-                and vlvals() == [3000] * 8 and values(uc, s) == st0, (spvals(), flvals(), vlvals()))
+        E.check(f"Clear + pad {E.T.PAD_PAGE0 + E.PADMAP.index(None) + 1} (no page): nothing reset", spvals() == [2048] * 12 and flvals() == [3000] * (6 if FILT else 0)
+                and vlvals() == [3000] * (8 if VOL else 0) and values(uc, s) == st0, (spvals(), flvals(), vlvals()))
         seedfl(); seedvl()
     if PX:
         E.check(f'the FX, filter, mix and empty pads keep the {PXN}', pxvals() == [3000] * len(PXDEF), pxvals())
@@ -161,7 +161,7 @@ def main():
             E.led(uc, E.LB['c_tmled']); frame = E.out(uc); feedback.append(frame[31])
             if E.MAN['report']['tmenu'].get('resetcue'):
                 want = E.clear_red(uc) if dt % 128 == 0 else 0
-                E.check(f'Clear All: every page flashes together at {dt} ms', list(frame[E.T.PAD_PAGE0:E.T.PAD_PAGE0 + E.NP]) == [0 if i is None else want for i in E.PADMAP])
+                E.check(f'Clear All: every page flashes together at {dt} ms', list(frame[E.T.PAD_PAGE0:E.T.PAD_PAGE0 + len(E.PADMAP)]) == [0 if i is None else want for i in E.PADMAP])
         E.check('pad 32 flashes three times only after press', feedback == [E.clear_red(uc), 0] * 3, feedback)
         uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + 384))
         E.led(uc, E.LB['c_tmled'])

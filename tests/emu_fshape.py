@@ -136,6 +136,15 @@ def main():
         rep = json.loads((d / "manifest.json").read_text())["report"]
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))
+        if not rep["fshape"].get("filter", True):
+            stock=(HERE/"remix/stock/circuitrhythm-firmware-5706-STOCK.bin").read_bytes()
+            sites=(VF.P_HPIDX,VF.P_LPIDX,VF.P_RES,VF.P_HPSAVE)
+            check(f"{build}: removed Filter processing leaves stock filter hooks unchanged",
+                  all(img[rhdsp1.where(img,a):rhdsp1.where(img,a)+3*len(VF.OLD[a])]
+                      ==stock[rhdsp1.where(stock,a):rhdsp1.where(stock,a)+3*len(VF.OLD[a])] for a in sites))
+            check(f"{build}: archived Filter block routines absent",
+                  not any(k in rep["fshape"]["labels"] for k in ("c_flblk","c_flsum","c_flok","c_flreset")))
+            continue
         lpidx = int(rep["fshape"]["lpidx"], 16)
         caller = DP.jsr(lpidx) + DP.asm([f"move n5,y:>${KEEP:x}", f"move b1,y:>${KEEP + 1:x}"]) + [0x00000C]
         segs = segs + [("p", PM.P_EXP, [0x00000C]), ("p", STUB, caller)]

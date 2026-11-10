@@ -52,10 +52,12 @@ def regions(rep):
             add(1, "y", VX.Y_BASE + sh, 0x60, "voicefx: ring, filter, drive words")
             if not rep.get("nocomb"):
                 add(1, "y", VX.SHIFT_COMB if sh else VX.Y_COMB, 0x800, "voicefx: comb rings (8 x 256)")
-        add(1, "y", VX.Y_BASE + sh + 0x60, PM.OFF_PITCH - (VX.Y_BASE - PM.Y_BASE) - 0x60, "voicefilt: type, follow")
+        if not rep.get("scanonly"):
+            add(1, "y", VX.Y_BASE + sh + 0x60, PM.OFF_PITCH - (VX.Y_BASE - PM.Y_BASE) - 0x60, "voicefilt: type, follow")
         add(1, "y", yb + PM.OFF_PITCH, 0x20, "pitchmod: pitch, scan LFO")
         add(1, "y", VF.TMP, 7, "voicefilt: scratch")
-        add(1, "y", VF.STATE2, 0x80, "voicefilt: biquad states, kept coefficients")
+        if not rep.get("scanonly"):
+            add(1, "y", VF.STATE2, 0x80, "voicefilt: biquad states, kept coefficients")
         if pm.get("loopxf"):
             add(1, "p", XF.AT, XF.END - XF.AT, REUSE + "loopxf: XF")
             add(1, "p", XF.WC_AT, XF.WC_END - XF.WC_AT, REUSE + "loopxf: WC")
@@ -71,12 +73,13 @@ def regions(rep):
         if rep["pshape"].get("vol"):
             for s in range(PS.NG):
                 add(0 if c0 else 1, "y", PS.VOL_Y + PS.STRIDE * s, 1 + PS.NPT, f"pshape: gate {s}")
-        if c0:
+        if c0 and c0.get("mix", True):
             for s in range(PS.NL):
                 add(0, "y", PS.LFO_Y + PS.STRIDE * s, 1 + PS.NPT, f"pshape: LFO {s} (c0fx's copy)")
     fs = rep.get("fshape")
     if fs:
-        add(1, "y", FS.FB, FS.O_M + 8, "fshape: filter LFO")
+        if fs.get("filter", True):
+            add(1, "y", FS.FB, FS.O_M + 8, "fshape: filter LFO")
         if fs.get("vol"):
             add(0 if c0 else 1, "y", FS.VB, FS.O_VX + 8, "fshape: volume LFO")
             if not c0:
@@ -111,6 +114,7 @@ def regions(rep):
     add(0, "p", 0, 0x1FED, "stock program")
     add(0, "x", 0, 0x1400, "stock: state, mixer")
     add(0, "x", 0x1600, 0xE00, "stock: tables, effect words")
+    add(0, "x", 0x3000, 0x1000, "stock: Grid FX runtime workspace (AD007 hardware)")
     add(0, "x", 0x4400, 0x900, "stock: tables, effect words")
     add(0, "x", 0x4F80, 0x10, "stock: words at $4F85 / $4F87")
     add(0, "y", 0, 0x1400, "stock: state, mixer")
@@ -125,9 +129,26 @@ def regions(rep):
         import core0
         add(0, "p", int(c0["at"], 16), c0["words"], "c0fx: the LFOs and the ring mod")
         add(0, "p", core0.LD, rep["core0"]["ld_words"], "core0: Remix's loader")
-        add(0, "y", C0.MP, 8, "c0fx: move phase")
+        if c0.get("mix", True):
+            add(0, "y", C0.MP, 8, "c0fx: move phase")
         add(0, "y", C0.SAVE, 24, "c0fx: the stock's registers")
         add(0, "y", C0.ring_y(), C0.VX_RAM + 8, "c0fx: ring phase, step, amount (voicefx's)")
+    if rep.get("dsdiag"):
+        for region in rep["dsdiag"]["regions"]:
+            add(region["core"], region["space"], int(region["start"], 16), region["words"], "dsdiag: opt-in diagnostic window")
+    if "autoprot" in rep:
+        for region in rep["autoprot"]["regions"]:
+            add(region["core"], region["space"], int(region["start"], 16), region["words"], "autoprot: volatile independent lane")
+    if "autobank" in rep:
+        for region in rep["autobank"]["regions"]:
+            add(region["core"], region["space"], int(region["start"], 16), region["words"], "autobank: opt-in candidate-bank proof")
+    granular=rep.get('granular')
+    if granular and granular.get('integration_version')==1:
+        for region in granular['regions']:
+            if region['core']>=0:
+                add(region['core'],region['space'],int(region['start'],16),region['words'],region['owner'])
+        for region in granular['core0_segments']:
+            add(0,'p',int(region['start'],16),region['words'],'granular: DSP0 program')
     return out
 
 

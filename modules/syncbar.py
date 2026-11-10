@@ -82,10 +82,12 @@ def arm_code(base, L):
     return a.assemble()
 
 
-def install(img, report, base_addr, move=False):
+def install(img, report, base_addr, move=False, soundonly=False):
     """After stockplus_rp (k3sync, k8sync, no ui) and fshape; move: the move rate mirrored too."""
     import rhbuild
     global RATES
+    if soundonly:
+        RATES = (2, 7)
     if move:
         assert report["fshape"].get("move")
         RATES = RATES + (MOVE_RATE,)
@@ -101,7 +103,7 @@ def install(img, report, base_addr, move=False):
     while i >= 0:
         at.append(i)
         i = b.find(old, i + 1)
-    assert len(at) == 2, f"the sync tables: Stock+'s and fshape's ({len(at)} found)"
+    assert len(at) == (1 if soundonly else 2), f"the sync tables ({len(at)} found)"
     for o in at:
         img[o:o + len(old)] = new
     L = {k: int(report["fshape"]["labels"][k], 16) for k in ("c_fsval", "c_fsput")}

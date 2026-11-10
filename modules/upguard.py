@@ -98,6 +98,9 @@ def install(img, report, base_addr, route=None):
         rhbuild.patch(img, at, f"bl #{UPLOAD:#x}", bl(at, labels["c_upw"]))
     sites = []
     for mod, lab, off in WRITERS:
+        if lab not in report[mod]["labels"]:
+            assert mod == "fshape" and not report[mod].get("move"), "missing DSP writer"
+            continue
         at = int(report[mod]["labels"][lab], 16) + off
         rhbuild.patch(img, at, f"bl #{WR16:#x}", bl(at, labels["c_dspw"]))
         sites.append(hex(at))

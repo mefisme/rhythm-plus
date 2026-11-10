@@ -1,5 +1,6 @@
 """A0040: protected two-press track reset, snapshot lifecycle and pattern boundaries."""
 from pathlib import Path
+import os
 import sys
 import struct
 import emu_tmenu as E
@@ -83,7 +84,11 @@ def main():
     clear(True); tap(target); E.press(uc, target)
     E.check('second released-and-pressed track confirms', armed() == 0 and uc.mem_read(slot + 3, 1)[0] == target + 1)
     actual = vals(target)
-    E.check('non-knob settings restored to project-load snapshot', actual[:6] + actual[16:] == baseline[:6] + baseline[16:], (actual, baseline))
+    expected = list(baseline)
+    if os.environ.get('RH_GRANULAR') == '1':
+        expected[1] = before[1]
+        E.check('sample mode stays as the user set it', actual[1] == before[1] != baseline[1], (actual[1], before[1], baseline[1]))
+    E.check('non-knob settings restored to project-load snapshot', actual[:6] + actual[16:] == expected[:6] + expected[16:], (actual, expected))
     defaults = list(fw[0x0806900C - 0x08010000 + 6:0x0806900C - 0x08010000 + 16])
     E.check('stock knobs and fine values use normal defaults', actual[6:16] == defaults, (actual[6:16], defaults))
     E.check('sample selection restored to project-load snapshot', smp(target) == baseline_sample)

@@ -247,7 +247,6 @@ def lvl_part():
     """LVL (in place of the stock's level ramp, after RR's lk): the volume LFO of voice v = y:$1405 (phase += R, VX = D x (1 - shape) / 2),
     then the stock's ramp toward the target x (1 - VX); r0 kept; r1, n1 changed.  (c0fx) no LVL: the voice loop keeps the stock's ramp"""
     import c0fx
-    import mixmove as MM
     if c0fx.STRIPPED[0]:
         assert not DECLICK[0], "c0fx: the de-click's code sits in the stock's ramp"
         return [*(drone_items() if DRONE[0] else []),
@@ -255,6 +254,7 @@ def lvl_part():
                    *([f"move #>${SMF:x},r5", "move y:>$1405,n5", "lua (r5)+n5,r5", f"btst #{SM_EF.bit_length() - 1},y:(r5)", f"jcs ${EF_RTS:x}"]
                      if SMON[0] else []),
                    f"jset #0,y1,${EF_REV:x}", f"jmp ${EF_FWD:x}"] if LOOPF[0] and not DECLICK[0] else [])]
+    import mixmove as MM
     mv = ["move y:>$1405,n1", f"move #>${MB:x},r1", "lua (r1)+n1,r1",
           "move y:(r1),x0", "move y:(r1+$8),r0",                                         # MR, the table
           f"move #>${MM.SH:x},r1", "lua (r1)+n1,r1",
@@ -365,7 +365,7 @@ def low_code():
 
 
 def strip(vol=False, move=False, px=False, glide=False, fade=False, loopfade=False, sm=False, declick=False, loopxf=False, drone=False,
-          nfollow=False):
+          nfollow=False, filt=True, aux=False):
     """from now on pshape's RR / TRIG carry the filter's half and voicefilt's LPIDX adds FM; vol: LVL after RR; move: the move LFO in LVL;
     px: the random pitch in TRIG and RR; glide: the glide in RR; fade: the pitch LFO's fade-in in TRIG and RR; loopfade: no end fade
     in loop mode (its jump in LVL's block); sm: the end fade per track (value 29); declick: the retrigger de-click (1: D from
@@ -374,11 +374,10 @@ def strip(vol=False, move=False, px=False, glide=False, fade=False, loopfade=Fal
     offset), not the stock's"""
     import voicefilt as F
     assert vol or not move
-    assert move or not px
     assert px or not glide
     assert PS.ENV_Y + PS.NPT + 1 <= GK and GP + 8 <= PS.ENV_Y + PS.STRIDE
     assert px or not fade
-    assert vol or not loopfade
+    assert vol or aux or not loopfade
     LOOPF[0] = loopfade
     assert loopfade or not sm
     assert PS.ENV_Y + 2 * PS.STRIDE + PS.NPT + 1 <= SMF and SMF + 8 <= PS.ENV_Y + 3 * PS.STRIDE
@@ -405,7 +404,12 @@ def strip(vol=False, move=False, px=False, glide=False, fade=False, loopfade=Fal
     assert F.TMP + 7 <= RSEED and RD + 8 <= F.TMP and RO + 8 <= F.STATE2
     MOVE[0], PX[0] = move, px
     PS.PADD = px_part if px else None
-    PS.FILT = (rr_part, trig_part, lvl_part) if vol else (rr_part, trig_part)
+    def trigger():
+        out = trig_part()
+        return out if filt else out[2:]  # Remove only the filter timeline reset.
+    PS.FILT = ((rr_part if filt else lambda: []), trigger, lvl_part) if vol or aux else ((rr_part if filt else lambda: []), trigger)
+    if not filt:
+        return
     items0 = F.items
 
     def items():
@@ -424,7 +428,7 @@ def strip(vol=False, move=False, px=False, glide=False, fade=False, loopfade=Fal
 
 
 # ---------------------------------------------------------------- the ARM
-def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, sm=False):
+def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, sm=False, filt=True):
     a = Asm(base)
     E = a.emit
     O = rhstate.OFF["fshape"][0]
@@ -435,228 +439,246 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, 
         E(movw, rd, v & 0xFFFF)
         E(movt, rd, (v >> 16) & 0xFFFF)
     t_def = base
-    E(raw, b"".join(v.to_bytes(2, "little") for v in DEF))
-    t_tabs = base + 2 * NV
-    E(raw, b"".join(x.to_bytes(4, "little") for x in DIVS + KQ + PHQ))
+    E(raw, b"".join(v.to_bytes(2, "little") for v in DEF) if filt else b"")
+    t_tabs = base + (2 * NV if filt else 0)
+    E(raw, b"".join(x.to_bytes(4, "little") for x in DIVS + KQ + PHQ) if filt or vol or move else b"")
     t_divs, t_kq, t_phq = t_tabs, t_tabs + 4 * len(DIVS), t_tabs + 8 * len(DIVS)
-    t_vdef = t_tabs + 12 * len(DIVS)
+    t_vdef = t_tabs + (12 * len(DIVS) if filt or vol or move else 0)
     if vol:
         E(raw, b"".join(v.to_bytes(2, "little") for v in (VDEF_M if move else VDEF)))
-    t_pxdef = t_vdef + 2 * NV2
+    t_pxdef = t_vdef + (2 * NV2 if vol else 0)
     if px:
         E(raw, b"".join(v.to_bytes(2, "little") for v in PXDEF))
-    t_glide = t_pxdef + 2 * NPX
+    t_glide = t_pxdef + (2 * NPX if px else 0)
     if glide:
         assert t_glide % 4 == 0
         E(raw, b"".join(v.to_bytes(4, "little") for v in glide_table()))
-    t_fade = t_glide + 4 * 129
-    t_fidef = t_fade + 4 * 129
+    t_fade = t_glide + (4 * 129 if glide else 0)
+    t_fidef = t_fade + (4 * 129 if fade else 0)
     if fade:
         assert glide
         E(raw, b"".join(v.to_bytes(4, "little") for v in fade_table()))
         E(raw, b"".join(v.to_bytes(2, "little") for v in FIDEF))
-    t_smdef = t_fidef + 2 * NFI
+    t_smdef = t_fidef + (2 * NFI if fade else 0)
     if sm:
         assert fade
         E(raw, b"".join(v.to_bytes(2, "little") for v in SMDEF))
 
-    # ---- c_flblk() -> r0 = the block in the record's tail, 0 without the record; clobbers r1, r2
-    a.label("c_flblk")
-    E(push_list, [], lr=True)
-    E(bl, L["c_rrt"])
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fb_x", "eq")
-    E(movw, 1, BLK_OFF)
-    E(adds_reg, 0, 0, 1)
-    a.label("fb_x")
-    E(pop_list, [], pc=True)
+    if filt:
+        # ---- c_flblk() -> r0 = the block in the record's tail, 0 without the record; clobbers r1, r2
+        a.label("c_flblk")
+        E(push_list, [], lr=True)
+        E(bl, L["c_rrt"])
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fb_x", "eq")
+        E(movw, 1, BLK_OFF)
+        E(adds_reg, 0, 0, 1)
+        a.label("fb_x")
+        E(pop_list, [], pc=True)
 
-    # ---- c_flsum(r0 = block) -> r0 = its check byte; clobbers r1-r3
-    a.label("c_flsum")
-    E(movs_imm, 1, 4)
-    E(movs_imm, 2, 0)
-    a.label("fs_l")
-    E(raw, h(0x5C43))                                      # ldrb r3, [r0, r1]
-    E(adds_reg, 2, 2, 3)
-    E(adds_imm8, 1, 1)
-    E(cmp_imm, 1, BLK_LEN)
-    E(b_cond, "fs_l", "lo")
-    E(movs_imm, 0, 0xFF)
-    E(raw, h(0x4010))                                      # ands r0, r2
-    E(movs_imm, 1, CHECK)
-    E(eors_reg, 0, 1)
-    E(raw, h(0x4770))
+        # ---- c_flsum(r0 = block) -> r0 = its check byte; clobbers r1-r3
+        a.label("c_flsum")
+        E(movs_imm, 1, 4)
+        E(movs_imm, 2, 0)
+        a.label("fs_l")
+        E(raw, h(0x5C43))                                      # ldrb r3, [r0, r1]
+        E(adds_reg, 2, 2, 3)
+        E(adds_imm8, 1, 1)
+        E(cmp_imm, 1, BLK_LEN)
+        E(b_cond, "fs_l", "lo")
+        E(movs_imm, 0, 0xFF)
+        E(raw, h(0x4010))                                      # ands r0, r2
+        E(movs_imm, 1, CHECK)
+        E(eors_reg, 0, 1)
+        E(raw, h(0x4770))
 
-    # ---- c_flok(r0 = block) -> r0 = 1 when its mark and check byte hold; clobbers r1-r3
-    a.label("c_flok")
-    E(push_list, [4], lr=True)
-    E(mov_reg, 4, 0)
-    E(ldrb_imm, 1, 4, 0)
-    E(cmp_imm, 1, MARK0)
-    E(b_cond, "fo_n", "ne")
-    E(ldrb_imm, 1, 4, 1)
-    E(cmp_imm, 1, MARK1)
-    E(b_cond, "fo_n", "ne")
-    E(bl, "c_flsum")
-    E(ldrb_imm, 1, 4, 2)
-    E(cmp_reg, 0, 1)
-    E(b_cond, "fo_n", "ne")
-    E(movs_imm, 0, 1)
-    E(pop_list, [4], pc=True)
-    a.label("fo_n")
-    E(movs_imm, 0, 0)
-    E(pop_list, [4], pc=True)
+        # ---- c_flok(r0 = block) -> r0 = 1 when its mark and check byte hold; clobbers r1-r3
+        a.label("c_flok")
+        E(push_list, [4], lr=True)
+        E(mov_reg, 4, 0)
+        E(ldrb_imm, 1, 4, 0)
+        E(cmp_imm, 1, MARK0)
+        E(b_cond, "fo_n", "ne")
+        E(ldrb_imm, 1, 4, 1)
+        E(cmp_imm, 1, MARK1)
+        E(b_cond, "fo_n", "ne")
+        E(bl, "c_flsum")
+        E(ldrb_imm, 1, 4, 2)
+        E(cmp_reg, 0, 1)
+        E(b_cond, "fo_n", "ne")
+        E(movs_imm, 0, 1)
+        E(pop_list, [4], pc=True)
+        a.label("fo_n")
+        E(movs_imm, 0, 0)
+        E(pop_list, [4], pc=True)
 
-    def slot_off(rt, rtrack, rk):                          # rt = 4 + 12 t + 2 k (rk = k)
-        E(movs_imm, rt, 12)
-        E(muls, rt, rtrack)
-        E(adds_reg, rt, rt, rk)
-        E(adds_reg, rt, rt, rk)
-        E(adds_imm8, rt, 4)
+        def slot_off(rt, rtrack, rk):                          # rt = 4 + 12 t + 2 k (rk = k)
+            E(movs_imm, rt, 12)
+            E(muls, rt, rtrack)
+            E(adds_reg, rt, rt, rk)
+            E(adds_reg, rt, rt, rk)
+            E(adds_imm8, rt, 4)
 
-    # ---- c_fsval(r0 = track, r1 = value 0..17) -> r0 = the value (0..11 Stock+'s, 12..17 ours: their defaults without a good block)
-    a.label("c_fsval")
-    E(cmp_imm, 1, V0)
-    E(b_cond, "fv_o", "hs")
-    E(b_w, L["c_shval"])
-    a.label("fv_o")
-    if vol:
-        if sm:
-            E(cmp_imm, 1, SM0)
-            E(b_cond, "fv_s", "lo")
-            E(b_w, "c_smval")
-            a.label("fv_s")
-        if fade:
-            E(cmp_imm, 1, FI0)
-            E(b_cond, "fv_p", "lo")
-            E(b_w, "c_fival")
-            a.label("fv_p")
-        if px:
-            E(cmp_imm, 1, PX0)
-            E(b_cond, "fv_v", "lo")
-            E(b_w, "c_pxval")
-            a.label("fv_v")
-        E(cmp_imm, 1, V1)
-        E(b_cond, "fv_f", "lo")
-        E(b_w, "c_vlval")
-        a.label("fv_f")
-    E(push_list, [4, 5, 6], lr=True)
-    E(mov_reg, 4, 0)
-    E(subs_imm8, 1, V0)
-    E(mov_reg, 5, 1)                                       # r5 = k
-    E(bl, "c_flblk")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fv_d", "eq")
-    E(mov_reg, 6, 0)
-    E(bl, "c_flok")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fv_d", "eq")
-    slot_off(1, 4, 5)
-    E(ldrh_reg, 0, 6, 1)
-    imm32(2, t_def)
-    E(lsls_imm, 3, 5, 1)
-    E(adds_reg, 2, 2, 3)
-    E(raw, h(0x8812))                                      # ldrh r2, [r2]
-    E(eors_reg, 0, 2)
-    E(pop_list, [4, 5, 6], pc=True)
-    a.label("fv_d")
-    imm32(2, t_def)
-    E(lsls_imm, 3, 5, 1)
-    E(adds_reg, 2, 2, 3)
-    E(raw, h(0x8810))                                      # ldrh r0, [r2]
-    E(pop_list, [4, 5, 6], pc=True)
+        # ---- c_fsval(r0 = track, r1 = value 0..17) -> r0 = the value (0..11 Stock+'s, 12..17 ours: their defaults without a good block)
+        a.label("c_fsval")
+        E(cmp_imm, 1, V0)
+        E(b_cond, "fv_o", "hs")
+        E(b_w, L["c_shval"])
+        a.label("fv_o")
+        if vol:
+            if sm:
+                E(cmp_imm, 1, SM0)
+                E(b_cond, "fv_s", "lo")
+                E(b_w, "c_smval")
+                a.label("fv_s")
+            if fade:
+                E(cmp_imm, 1, FI0)
+                E(b_cond, "fv_p", "lo")
+                E(b_w, "c_fival")
+                a.label("fv_p")
+            if px:
+                E(cmp_imm, 1, PX0)
+                E(b_cond, "fv_v", "lo")
+                E(b_w, "c_pxval")
+                a.label("fv_v")
+            E(cmp_imm, 1, V1)
+            E(b_cond, "fv_f", "lo")
+            E(b_w, "c_vlval")
+            a.label("fv_f")
+        E(push_list, [4, 5, 6], lr=True)
+        E(mov_reg, 4, 0)
+        E(subs_imm8, 1, V0)
+        E(mov_reg, 5, 1)                                       # r5 = k
+        E(bl, "c_flblk")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fv_d", "eq")
+        E(mov_reg, 6, 0)
+        E(bl, "c_flok")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fv_d", "eq")
+        slot_off(1, 4, 5)
+        E(ldrh_reg, 0, 6, 1)
+        imm32(2, t_def)
+        E(lsls_imm, 3, 5, 1)
+        E(adds_reg, 2, 2, 3)
+        E(raw, h(0x8812))                                      # ldrh r2, [r2]
+        E(eors_reg, 0, 2)
+        E(pop_list, [4, 5, 6], pc=True)
+        a.label("fv_d")
+        imm32(2, t_def)
+        E(lsls_imm, 3, 5, 1)
+        E(adds_reg, 2, 2, 3)
+        E(raw, h(0x8810))                                      # ldrh r0, [r2]
+        E(pop_list, [4, 5, 6], pc=True)
 
-    # ---- c_fsput(r0 = track, r1 = value 0..17, r2 = v): ours into the block (a bad block first made the defaults), the track to write
-    a.label("c_fsput")
-    E(cmp_imm, 1, V0)
-    E(b_cond, "fp_o", "hs")
-    E(b_w, L["c_shput"])
-    a.label("fp_o")
-    if vol:
-        if sm:
-            E(cmp_imm, 1, SM0)
-            E(b_cond, "fp_s", "lo")
-            E(b_w, "c_smput")
-            a.label("fp_s")
-        if fade:
-            E(cmp_imm, 1, FI0)
-            E(b_cond, "fp_p", "lo")
-            E(b_w, "c_fiput")
-            a.label("fp_p")
-        if px:
-            E(cmp_imm, 1, PX0)
-            E(b_cond, "fp_v", "lo")
-            E(b_w, "c_pxput")
-            a.label("fp_v")
-        E(cmp_imm, 1, V1)
-        E(b_cond, "fp_f", "lo")
-        E(b_w, "c_vlput")
-        a.label("fp_f")
-    E(push_list, [4, 5, 6, 7], lr=True)
-    E(mov_reg, 4, 0)
-    E(subs_imm8, 1, V0)
-    E(mov_reg, 5, 1)
-    E(mov_reg, 6, 2)
-    E(bl, "c_flblk")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fp_x", "eq")
-    E(mov_reg, 7, 0)                                       # r7 = the block
-    E(bl, "c_flok")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fp_k", "ne")
-    E(movs_imm, 0, 0)
-    E(movs_imm, 1, 0)
-    a.label("fp_z")
-    E(raw, h(0x5478))                                      # strb r0, [r7, r1]
-    E(adds_imm8, 1, 1)
-    E(cmp_imm, 1, BLK_LEN)
-    E(b_cond, "fp_z", "lo")
-    E(movs_imm, 0, MARK0)
-    E(strb_imm, 0, 7, 0)
-    E(movs_imm, 0, MARK1)
-    E(strb_imm, 0, 7, 1)
-    a.label("fp_k")
-    imm32(2, t_def)
-    E(lsls_imm, 3, 5, 1)
-    E(adds_reg, 2, 2, 3)
-    E(raw, h(0x8812))                                      # ldrh r2, [r2]
-    E(eors_reg, 2, 6)
-    slot_off(1, 4, 5)
-    E(strh_reg, 2, 7, 1)
-    E(mov_reg, 0, 7)
-    E(bl, "c_flsum")
-    E(strb_imm, 0, 7, 2)
-    E(bl, L["c_rst"])
-    E(cmp_imm, 0, 0)
-    E(b_cond, "fp_x", "eq")
-    E(movw, 1, O)
-    E(adds_reg, 0, 0, 1)
-    E(ldrb_imm, 1, 0, 0)
-    E(movs_imm, 2, 1)
-    E(lsls_reg, 2, 4)
-    E(orrs_reg, 1, 2)
-    E(strb_imm, 1, 0, 0)
-    a.label("fp_x")
-    E(pop_list, [4, 5, 6, 7], pc=True)
+        # ---- c_fsput(r0 = track, r1 = value 0..17, r2 = v): ours into the block (a bad block first made the defaults), the track to write
+        a.label("c_fsput")
+        E(cmp_imm, 1, V0)
+        E(b_cond, "fp_o", "hs")
+        E(b_w, L["c_shput"])
+        a.label("fp_o")
+        if vol:
+            if sm:
+                E(cmp_imm, 1, SM0)
+                E(b_cond, "fp_s", "lo")
+                E(b_w, "c_smput")
+                a.label("fp_s")
+            if fade:
+                E(cmp_imm, 1, FI0)
+                E(b_cond, "fp_p", "lo")
+                E(b_w, "c_fiput")
+                a.label("fp_p")
+            if px:
+                E(cmp_imm, 1, PX0)
+                E(b_cond, "fp_v", "lo")
+                E(b_w, "c_pxput")
+                a.label("fp_v")
+            E(cmp_imm, 1, V1)
+            E(b_cond, "fp_f", "lo")
+            E(b_w, "c_vlput")
+            a.label("fp_f")
+        E(push_list, [4, 5, 6, 7], lr=True)
+        E(mov_reg, 4, 0)
+        E(subs_imm8, 1, V0)
+        E(mov_reg, 5, 1)
+        E(mov_reg, 6, 2)
+        E(bl, "c_flblk")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fp_x", "eq")
+        E(mov_reg, 7, 0)                                       # r7 = the block
+        E(bl, "c_flok")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fp_k", "ne")
+        E(movs_imm, 0, 0)
+        E(movs_imm, 1, 0)
+        a.label("fp_z")
+        E(raw, h(0x5478))                                      # strb r0, [r7, r1]
+        E(adds_imm8, 1, 1)
+        E(cmp_imm, 1, BLK_LEN)
+        E(b_cond, "fp_z", "lo")
+        E(movs_imm, 0, MARK0)
+        E(strb_imm, 0, 7, 0)
+        E(movs_imm, 0, MARK1)
+        E(strb_imm, 0, 7, 1)
+        a.label("fp_k")
+        imm32(2, t_def)
+        E(lsls_imm, 3, 5, 1)
+        E(adds_reg, 2, 2, 3)
+        E(raw, h(0x8812))                                      # ldrh r2, [r2]
+        E(eors_reg, 2, 6)
+        slot_off(1, 4, 5)
+        E(strh_reg, 2, 7, 1)
+        E(mov_reg, 0, 7)
+        E(bl, "c_flsum")
+        E(strb_imm, 0, 7, 2)
+        E(bl, L["c_rst"])
+        E(cmp_imm, 0, 0)
+        E(b_cond, "fp_x", "eq")
+        E(movw, 1, O)
+        E(adds_reg, 0, 0, 1)
+        E(ldrb_imm, 1, 0, 0)
+        E(movs_imm, 2, 1)
+        E(lsls_reg, 2, 4)
+        E(orrs_reg, 1, 2)
+        E(strb_imm, 1, 0, 0)
+        a.label("fp_x")
+        E(pop_list, [4, 5, 6, 7], pc=True)
 
-    # ---- c_flreset(r0 = track): its 6 values to their defaults
-    a.label("c_flreset")
-    E(push_list, [4, 5], lr=True)
-    E(mov_reg, 4, 0)
-    E(movs_imm, 5, 0)
-    a.label("fr_l")
-    E(mov_reg, 0, 4)
-    E(mov_reg, 1, 5)
-    E(adds_imm8, 1, V0)
-    imm32(2, t_def)
-    E(lsls_imm, 3, 5, 1)
-    E(adds_reg, 2, 2, 3)
-    E(raw, h(0x8812))                                      # ldrh r2, [r2]
-    E(bl, "c_fsput")
-    E(adds_imm8, 5, 1)
-    E(cmp_imm, 5, NV)
-    E(b_cond, "fr_l", "lo")
-    E(pop_list, [4, 5], pc=True)
+        # ---- c_flreset(r0 = track): its 6 values to their defaults
+        a.label("c_flreset")
+        E(push_list, [4, 5], lr=True)
+        E(mov_reg, 4, 0)
+        E(movs_imm, 5, 0)
+        a.label("fr_l")
+        E(mov_reg, 0, 4)
+        E(mov_reg, 1, 5)
+        E(adds_imm8, 1, V0)
+        imm32(2, t_def)
+        E(lsls_imm, 3, 5, 1)
+        E(adds_reg, 2, 2, 3)
+        E(raw, h(0x8812))                                      # ldrh r2, [r2]
+        E(bl, "c_fsput")
+        E(adds_imm8, 5, 1)
+        E(cmp_imm, 5, NV)
+        E(b_cond, "fr_l", "lo")
+        E(pop_list, [4, 5], pc=True)
+
+    else:
+        for op in ("val", "put"):
+            a.label(f"c_fs{op}")
+            E(cmp_imm, 1, V0)
+            E(b_cond, f"fs{op}_own", "hs")
+            E(b_w, L[f"c_sh{op}"])
+            a.label(f"fs{op}_own")
+            for enabled, first, prefix in ((sm, SM0, "sm"), (fade, FI0, "fi"), (px, PX0, "px")):
+                if enabled:
+                    E(cmp_imm, 1, first)
+                    E(b_cond, f"fs{op}_{prefix}", "lo")
+                    E(b_w, f"c_{prefix}{op}")
+                    a.label(f"fs{op}_{prefix}")
+            if op == "val":
+                E(movs_imm, 0, 0)
+            E(raw, h(0x4770))
 
     if vol:
         vl_code(a, E, imm32, L, O, t_vdef)
@@ -667,49 +689,50 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, 
     if sm:
         vl_code(a, E, imm32, L, O, t_smdef, "sm", SMBLK_OFF, SMBLK_LEN, (SMMARK0, SMMARK1), SM0, NSM)
 
-    # ---- c_flr(r0 = the rate's value) -> r0 = R: 0 in the middle, Stock+'s rate table right of it, BPM x KQ[i] >> 8 left; clobbers r1-r3
-    a.label("c_flr")
-    E(push_list, [4], lr=True)
-    E(movw, 1, X7)
-    E(subs_reg, 0, 0, 1)
-    E(b_cond, "rt_l", "lt")
-    E(cmp_imm, 0, DEAD)
-    E(b_cond, "rt_0", "lt")
-    E(lsls_imm, 1, 0, 1)
-    imm32(0, L["t_rate"])
-    E(bl, L["c_spint"])
-    E(pop_list, [4], pc=True)
-    a.label("rt_l")
-    E(raw, h(0x4240))                                      # rsbs r0, r0, #0
-    E(cmp_imm, 0, DEAD)
-    E(b_cond, "rt_0", "lt")
+    if filt or vol or move:
+        # ---- c_flr(r0 = the rate's value) -> r0 = R: 0 in the middle, Stock+'s rate table right of it, BPM x KQ[i] >> 8 left; clobbers r1-r3
+        a.label("c_flr")
+        E(push_list, [4], lr=True)
+        E(movw, 1, X7)
+        E(subs_reg, 0, 0, 1)
+        E(b_cond, "rt_l", "lt")
+        E(cmp_imm, 0, DEAD)
+        E(b_cond, "rt_0", "lt")
+        E(lsls_imm, 1, 0, 1)
+        imm32(0, L["t_rate"])
+        E(bl, L["c_spint"])
+        E(pop_list, [4], pc=True)
+        a.label("rt_l")
+        E(raw, h(0x4240))                                      # rsbs r0, r0, #0
+        E(cmp_imm, 0, DEAD)
+        E(b_cond, "rt_0", "lt")
 
-    def div_index(tag):                                    # r0 = -(v - 8192) >= DEAD -> r0 = its division's index
-        E(subs_imm8, 0, DEAD)
-        E(lsrs_imm, 0, 0, DIV_SHIFT)
-        E(cmp_imm, 0, 15)
-        E(b_cond, f"dv_{tag}", "le")
-        E(movs_imm, 0, 15)
-        a.label(f"dv_{tag}")
-    div_index("r")
-    E(lsls_imm, 4, 0, 2)
-    imm32(0, TEMPO)
-    E(movs_imm, 1, 0)
-    E(bl, CI.PARAM_NEW)
-    E(ldrb_imm, 0, 0, 0)                                   # the BPM
-    E(cmp_imm, 0, 30)
-    E(b_cond, "rt_b", "hs")
-    E(movs_imm, 0, 120)
-    a.label("rt_b")
-    imm32(1, t_kq)
-    E(adds_reg, 1, 1, 4)
-    E(ldr_imm, 1, 1, 0)
-    E(muls, 0, 1)
-    E(lsrs_imm, 0, 0, 8)
-    E(pop_list, [4], pc=True)
-    a.label("rt_0")
-    E(movs_imm, 0, 0)
-    E(pop_list, [4], pc=True)
+        def div_index(tag):                                    # r0 = -(v - 8192) >= DEAD -> r0 = its division's index
+            E(subs_imm8, 0, DEAD)
+            E(lsrs_imm, 0, 0, DIV_SHIFT)
+            E(cmp_imm, 0, 15)
+            E(b_cond, f"dv_{tag}", "le")
+            E(movs_imm, 0, 15)
+            a.label(f"dv_{tag}")
+        div_index("r")
+        E(lsls_imm, 4, 0, 2)
+        imm32(0, TEMPO)
+        E(movs_imm, 1, 0)
+        E(bl, CI.PARAM_NEW)
+        E(ldrb_imm, 0, 0, 0)                                   # the BPM
+        E(cmp_imm, 0, 30)
+        E(b_cond, "rt_b", "hs")
+        E(movs_imm, 0, 120)
+        a.label("rt_b")
+        imm32(1, t_kq)
+        E(adds_reg, 1, 1, 4)
+        E(ldr_imm, 1, 1, 0)
+        E(muls, 0, 1)
+        E(lsrs_imm, 0, 0, 8)
+        E(pop_list, [4], pc=True)
+        a.label("rt_0")
+        E(movs_imm, 0, 0)
+        E(pop_list, [4], pc=True)
 
     # ---- c_fldsp(r0 = track): its words into core 1; clobbers r0-r3, r12
     a.label("c_fldsp")
@@ -725,39 +748,40 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, 
         E(movw, 1, FB + off)
         E(adds_reg, 1, 1, 4)
         E(bl, L["c_spw"])
-    val(2)
-    E(mov_reg, 1, 0)
-    imm32(0, L["t_steps"])
-    E(bl, L["c_spint"])
-    put(O_S)
-    val(1)
-    E(movw, 1, 8192)
-    E(subs_reg, 0, 0, 1)
-    E(movw, 1, A_SCALE)
-    E(muls, 0, 1)
-    put(O_A)
-    val(0)
-    E(lsls_imm, 0, 0, 4)
-    E(lsrs_imm, 0, 0, 14)
-    put(O_E)
-    val(3)
-    E(movs_imm, 1, PS.NL)
-    E(muls, 0, 1)
-    E(lsrs_imm, 0, 0, 14)
-    put(O_Q)
-    val(5)
-    E(movw, 1, L_SCALE)
-    E(muls, 0, 1)
-    put(O_L)
-    val(4)
-    E(bl, "c_flr")
-    E(mov_reg, 5, 0)
-    put(O_R)
-    E(cmp_imm, 5, 0)
-    E(b_cond, "fd_x", "ne")
-    imm32(0, K3_MIDPH)                                     # off: the LFO at its centre
-    put(O_P)
-    a.label("fd_x")
+    if filt:
+        val(2)
+        E(mov_reg, 1, 0)
+        imm32(0, L["t_steps"])
+        E(bl, L["c_spint"])
+        put(O_S)
+        val(1)
+        E(movw, 1, 8192)
+        E(subs_reg, 0, 0, 1)
+        E(movw, 1, A_SCALE)
+        E(muls, 0, 1)
+        put(O_A)
+        val(0)
+        E(lsls_imm, 0, 0, 4)
+        E(lsrs_imm, 0, 0, 14)
+        put(O_E)
+        val(3)
+        E(movs_imm, 1, PS.NL)
+        E(muls, 0, 1)
+        E(lsrs_imm, 0, 0, 14)
+        put(O_Q)
+        val(5)
+        E(movw, 1, L_SCALE)
+        E(muls, 0, 1)
+        put(O_L)
+        val(4)
+        E(bl, "c_flr")
+        E(mov_reg, 5, 0)
+        put(O_R)
+        E(cmp_imm, 5, 0)
+        E(b_cond, "fd_x", "ne")
+        imm32(0, K3_MIDPH)                                     # off: the LFO at its centre
+        put(O_P)
+        a.label("fd_x")
     if vol:
         def vval(k):
             E(mov_reg, 0, 4)
@@ -959,71 +983,72 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, 
     E(raw, h(0x4008))                                      # ands r0, r1
     E(bl, "c_fldsp")
     a.label("ff_s")
-    imm32(0, SEQ + 0x90)
-    E(ldr_imm, 0, 0, 0)
-    E(movs_imm, 1, 0)
-    E(bl, CI.PARAM_NEW)
-    E(ldr_imm, 5, 0, 0)                                    # r5 = the global tick
-    E(ldr_imm, 0, 6, 4)
-    E(cmp_reg, 0, 5)
-    to_x("eq")
-    E(str_imm, 5, 6, 4)
-    E(movs_imm, 4, 0)
-    a.label("ff_t")
+    if filt or vol or move:
+        imm32(0, SEQ + 0x90)
+        E(ldr_imm, 0, 0, 0)
+        E(movs_imm, 1, 0)
+        E(bl, CI.PARAM_NEW)
+        E(ldr_imm, 5, 0, 0)                                    # r5 = the global tick
+        E(ldr_imm, 0, 6, 4)
+        E(cmp_reg, 0, 5)
+        to_x("eq")
+        E(str_imm, 5, 6, 4)
+        E(movs_imm, 4, 0)
+        a.label("ff_t")
 
-    def sync(vi, off, tag, shared=None, core0=None):       # track r4's LFO of rate value vi, synced: its phase at Y:off + r4 (or shared / core 0's + r4)
-        E(mov_reg, 0, 4)
-        E(movs_imm, 1, vi)
-        E(bl, "c_fsval")
-        E(movw, 1, X7)
-        E(subs_reg, 0, 0, 1)
-        E(b_cond, f"f{tag}_n", "ge")                       # the middle or free: not synced
-        E(raw, h(0x4240))                                  # rsbs r0, r0, #0
-        E(cmp_imm, 0, DEAD)
-        E(b_cond, f"f{tag}_n", "lt")
-        div_index(tag)
-        E(lsls_imm, 7, 0, 2)
-        imm32(1, t_divs)
-        E(adds_reg, 1, 1, 7)
-        E(ldr_imm, 1, 1, 0)                                # D
-        E(raw, CI.udiv(0, 5, 1))
-        E(muls, 0, 1)
-        E(subs_reg, 0, 5, 0)                               # tick mod D
-        imm32(1, t_phq)
-        E(adds_reg, 1, 1, 7)
-        E(ldr_imm, 1, 1, 0)
-        E(muls, 0, 1)
-        imm32(1, K3_MIDPH)
-        E(adds_reg, 0, 0, 1)
-        if core0 is not None:
-            E(movw, 1, core0)
-            E(adds_reg, 1, 1, 4)
-            E(bl, "c_fl0w")
-        elif shared is None:
-            put(off)
+        def sync(vi, off, tag, shared=None, core0=None):       # track r4's LFO of rate value vi, synced: its phase at Y:off + r4 (or shared / core 0's + r4)
+            E(mov_reg, 0, 4)
+            E(movs_imm, 1, vi)
+            E(bl, "c_fsval")
+            E(movw, 1, X7)
+            E(subs_reg, 0, 0, 1)
+            E(b_cond, f"f{tag}_n", "ge")                       # the middle or free: not synced
+            E(raw, h(0x4240))                                  # rsbs r0, r0, #0
+            E(cmp_imm, 0, DEAD)
+            E(b_cond, f"f{tag}_n", "lt")
+            div_index(tag)
+            E(lsls_imm, 7, 0, 2)
+            imm32(1, t_divs)
+            E(adds_reg, 1, 1, 7)
+            E(ldr_imm, 1, 1, 0)                                # D
+            E(raw, CI.udiv(0, 5, 1))
+            E(muls, 0, 1)
+            E(subs_reg, 0, 5, 0)                               # tick mod D
+            imm32(1, t_phq)
+            E(adds_reg, 1, 1, 7)
+            E(ldr_imm, 1, 1, 0)
+            E(muls, 0, 1)
+            imm32(1, K3_MIDPH)
+            E(adds_reg, 0, 0, 1)
+            if core0 is not None:
+                E(movw, 1, core0)
+                E(adds_reg, 1, 1, 4)
+                E(bl, "c_fl0w")
+            elif shared is None:
+                put(off)
+            else:
+                imm32(1, shared)
+                E(adds_reg, 1, 1, 4)
+                E(bl, "c_flsw")
+            a.label(f"f{tag}_n")
+        sync(V0 + 4, O_P, "f")
+        if vol:
+            sync(V1 + 1, VB - FB + O_VP, "v")
+        if move:
+            import c0fx
+            import mixmove as MM
+            if c0fx.STRIPPED[0]:
+                sync(V1 + 4, 0, "m", core0=c0fx.MP)
+            else:
+                sync(V1 + 4, 0, "m", shared=MM.SH + 8)
+        E(adds_imm8, 4, 1)
+        E(cmp_imm, 4, 8)
+        if move:
+            E(b_cond, "ff_tx", "hs")
+            E(b, "ff_t")
+            a.label("ff_tx")
         else:
-            imm32(1, shared)
-            E(adds_reg, 1, 1, 4)
-            E(bl, "c_flsw")
-        a.label(f"f{tag}_n")
-    sync(V0 + 4, O_P, "f")
-    if vol:
-        sync(V1 + 1, VB - FB + O_VP, "v")
-    if move:
-        import c0fx
-        import mixmove as MM
-        if c0fx.STRIPPED[0]:
-            sync(V1 + 4, 0, "m", core0=c0fx.MP)
-        else:
-            sync(V1 + 4, 0, "m", shared=MM.SH + 8)
-    E(adds_imm8, 4, 1)
-    E(cmp_imm, 4, 8)
-    if move:
-        E(b_cond, "ff_tx", "hs")
-        E(b, "ff_t")
-        a.label("ff_tx")
-    else:
-        E(b_cond, "ff_t", "lo")
+            E(b_cond, "ff_t", "lo")
     a.label("ff_x")
     E(pop_list, [4, 5, 6, 7], pc=True)
     return a.assemble()
@@ -1175,7 +1200,7 @@ def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, mar
     E(pop_list, [4, 5], pc=True)
 
 
-def install(img, report, base_addr, vol=False, move=False, px=False, glide=False, fade=False, sm=False):
+def install(img, report, base_addr, vol=False, move=False, px=False, glide=False, fade=False, sm=False, filt=True, aux=False):
     """After pshape (FILT through strip()), stockplus_rp, rhrec, countin, dspready and rhstate; with ourram's slot (RH_FSHAPE=1).
     vol: strip(vol=True), pshape with vol; LVL in place of the stock's level ramp."""
     import rhbuild
@@ -1198,20 +1223,20 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
              c_shval=lab("pshape", "c_shval"), c_shput=lab("pshape", "c_shput"),
              t_rate=int(sp["tables"], 16) + 4 * 129, t_steps=int(report["pshape"]["steps"], 16))
     assert not move or (vol and MOVE[0] and "mixmove" in report), "move: strip(move=True) and mixmove's hooks"
-    assert not px or (move and PX[0] and VBLK_OFF + VBLK_LEN <= PXBLK_OFF and PXBLK_OFF + PXBLK_LEN <= BLK_OFF), "px: strip(px=True)"
+    assert not px or (PX[0] and VBLK_OFF + VBLK_LEN <= PXBLK_OFF and PXBLK_OFF + PXBLK_LEN <= BLK_OFF), "px: strip(px=True)"
     assert not glide or (px and GLIDE[0]), "glide: strip(glide=True)"
     if fade:
         pc = rhrec.OFF["patchain"]
         assert glide and FADE[0] and PXBLK_OFF + PXBLK_LEN <= FIBLK_OFF and FIBLK_OFF + FIBLK_LEN <= pc[0] + pc[1] and FIBLK_OFF < 256, "fade: strip(fade=True)"
     if sm:
         assert fade and SMON[0] and all(o + n <= SMBLK_OFF for o, n in rhrec.OFF54.values()) and SMBLK_OFF + SMBLK_LEN <= BLK_OFF, "sm: strip(sm=True)"
-    code, labels = arm_code(base_addr, L, vol, move, px, glide, fade, sm)
+    code, labels = arm_code(base_addr, L, vol, move, px, glide, fade, sm, filt=filt)
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4:
         img += bytes([0xFF])
-    assert DSP_LABELS, "pitchmod built voicefilt after fshape.strip()"
+    assert not filt or DSP_LABELS, "pitchmod built voicefilt after fshape.strip()"
     extra = {}
-    if vol:
+    if vol or aux:
         import c0fx
         if c0fx.STRIPPED[0]:
             lvl = STOCK_LVL                                # the stock's ramp keeps its call
@@ -1219,7 +1244,7 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
             lvl = PS.LABELS["lvl"]
             assert lvl < 0x1000, "LVL in the short jsr's reach"
             rhdsp1.patch_p(img, LVL_CALL, 0x0D0000 | STOCK_LVL, 0x0D0000 | lvl)
-        extra = dict(vol=True, vb=hex(VB), lvl=hex(lvl), vblk_off=VBLK_OFF, vdefs=list(VDEF_M if move else VDEF))
+        extra = dict(vol=True, vb=hex(VB), lvl=hex(lvl), vblk_off=VBLK_OFF, vdefs=list(VDEF_M if move else VDEF)) if vol else dict(aux=True, lvl=hex(lvl))
         if move:
             extra.update(move=True, mb=hex(MB))
         if px:
@@ -1266,6 +1291,6 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
             extra.update(loopxf=True, xfb=hex(XFB), xfs=hex(XFS), xf_n=XF_N, xf_words={k: hex(getattr(XF, k)) for k in XF_SCRATCH})
     if NFOLLOW[0]:
         extra.update(nfollow=True, pitch=hex(PS.YB + PS.PM.OFF_PITCH))
-    report["fshape"] = dict(fb=hex(FB), blk_off=BLK_OFF, lpidx=hex(DSP_LABELS["lpidx"]), defs=list(DEF), slot=hex(rhstate.ST + rhstate.OFF["fshape"][0]),
+    report["fshape"] = dict(fb=hex(FB), blk_off=BLK_OFF, **(dict(lpidx=hex(DSP_LABELS["lpidx"]), defs=list(DEF)) if filt else dict(filter=False)), slot=hex(rhstate.ST + rhstate.OFF["fshape"][0]),
                             labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")}, **extra)
     return labels, code

@@ -15,7 +15,7 @@ def main():
             ptr=E.ptr(u,store,E.T.P_DIM)
             value=E.u32(u,ptr)
             u.mem_write(ptr,struct.pack('<I',value|(1<<10) if dim else value&~(1<<10)))
-        # Ghidra 0x0804B51E assigns palette 0x55 to held Clear. Run the stock RGB conversion.
+        # The stock at 0x0804B51E gives held Clear palette 0x55. Run the stock RGB conversion.
         ref.mem_write(E.FRAME,bytes(138))
         ref.mem_write(E.FRAME+2*E.C.LED_CLEAR,struct.pack('<H',0x55))
         red=E.out(ref,E.rhbuild.bl_target(bytearray(stock),E.T.OUT_CALL))[E.C.LED_CLEAR]
@@ -26,7 +26,7 @@ def main():
         E.pad(uc,31);E.unpad(uc,31);E.led(uc,head)
         outfn=E.rhbuild.bl_target(bytearray(fw),E.T.OUT_CALL)
         rgb=E.out(uc,outfn)
-        E.check(f'LED dim {dim}: Clear All matches held Clear red',all(rgb[p]==red for p in range(25,32) if not (E.T.PAD_PAGE0<=p<E.T.PAD_PAGE0+E.NP and E.PADMAP[p-E.T.PAD_PAGE0] is None)),(hex(rgb[31]),hex(red)))
+        E.check(f'LED dim {dim}: Clear All matches held Clear red',all(rgb[p]==red for p in range(25,32) if not (E.T.PAD_PAGE0<=p<E.T.PAD_PAGE0+len(E.PADMAP) and E.PADMAP[p-E.T.PAD_PAGE0] is None)),(hex(rgb[31]),hex(red)))
         E.tick(uc,384);E.led(uc,head);rgb=E.out(uc,outfn)
         E.check(f'LED dim {dim}: available pad stays dimmer than reset',0<rgb[31]<red,(hex(rgb[31]),hex(red)))
         E.pad(uc,25);E.unpad(uc,25);E.led(uc,head)

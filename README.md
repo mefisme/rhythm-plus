@@ -12,7 +12,7 @@ Rhythm Plus is built on the work of **Ghillermo**, the author of **Circuit Remix
 
 Rhythm Plus is a separate project. It is not Circuit Remix, and it does not include the Circuit Remix features.
 
-> **Status: in development, no release yet.**
+> **Status: in development, no release yet.** A0122 removes the custom error reporter after A0121 removed the Filter and Mix pages; Normal, Pitch and FX stay in place. It is locally tested and has not been flashed for hardware validation. Automation development is on hold; granular synthesis is the next design discussion.
 
 Legal note: the firmware from Novation is proprietary. This repository does not contain Novation's firmware or any file made from it. You supply the official firmware, and the build checks it. Do not install the result on any device other than a Circuit Rhythm.
 
@@ -39,13 +39,13 @@ Tap the selected track's button to open Track +. Tap it again to close it. While
 | Pad | Page | Knobs |
 |---|---|---|
 | 26 | Parameter Editor (white) | The stock's eight knobs of the track |
-| 27 | Filter (lime) | Filter envelope and LFO; the stock's low-pass and resonance; Shift: filter type, pitch follow |
-| 28 | Mix (mint) | Volume movement; pan, reverb send and delay send movement |
+| 27 | Reserved (dark) | Filter page archived |
+| 28 | Reserved (dark) | Mix page archived |
 | 29 | Pitch (sky blue) | Pitch envelope and LFO, random pitch, glide; Shift + K7: LFO fade-in |
 | 30 | (none yet) | |
 | 31 | FX (amber) | Ring modulation, sample start scan |
 
-- **Shapes:** 16 envelope shapes and 10 LFO shapes; the volume movement also has 6 gates.
+- **Shapes:** 16 pitch-envelope shapes and 10 pitch-LFO shapes.
 - **Rates:** right of the middle locks to the tempo (8 bars to 1/16, then the triplets); left of the middle is free. Hold Shift and turn to change between the two sweeps.
 - **Clear + knob:** turn right until it stops: the knob goes back to its default (blue). Turn left until it stops: the knob's automation is deleted (red).
 - **Clear + page pad:** reset that page for the track.
@@ -61,7 +61,7 @@ On the Patterns page, hold Shift and tap Duplicate: each track gets a new play l
 - **Settings:** hold Shift and hold Duplicate. Page 1: Length, Length type, Pool, When. Page 2 (Down): Length 5-8, Amount, Repeats, Keep slot 1. The track buttons choose which tracks mutate.
 - **Scenes** keep each track's mutate. View Lock works with a mutate.
 
-The manual for Pattern Mutate and Track +, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf).
+The historical A0120 manual for Pattern Mutate and Track +, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf). Its Filter/Mix pages are archived in A0121; use the parameter reference above for the current layout.
 
 ### More
 
@@ -71,7 +71,6 @@ The manual for Pattern Mutate and Track +, with drawings of the pads: [`manual/r
 - **Faster start:** the first steps load faster when you press Play.
 - **Track reset:** hold Clear, press a track button, let go of it and press it again (Clear still held): the track's sound knobs and extra values go back to their defaults and its automation in the current pattern is deleted (three red flashes). The notes stay.
 - **Sample mode:** hold Clear and tap pad 1 or 2: the pitch goes back to the sample's own pitch.
-- **Clear LED:** it blinks red if a feature cannot run.
 
 ## Install
 

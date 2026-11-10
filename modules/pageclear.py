@@ -34,7 +34,7 @@ VOL_PAGE = 4                                    # (vol) pad 30: the movement pag
 PADMAP_ORDER = (0, FILT_PAGE, VOL_PAGE, 1, None, 2)  # (pageorder) the page on pads 26-31; None = no page
 
 
-def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, shapes=False, filt=False, vol=False, scanfx=False, pageorder=False, px=False, fade=False):
+def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, shapes=False, filt=False, vol=False, scanfx=False, pageorder=False, px=False, fade=False, soundonly=False):
     import rhbuild
     assert rhstate.OFF['pageclear'][1] == 8
     default_table = struct.unpack_from('<I', img, 0x0805884C - rhbuild.BASE)[0]
@@ -130,7 +130,8 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
         E(mov_reg, 0, 4); E(bl, lab('c_spdirty'))
         E(pop_list, [], pc=True)
         a.label('pc_nf')
-    assert not px or (vol and report['fshape'].get('px'))
+    fl = lambda k: int(report['fshape']['labels'][k], 16)
+    assert not px or ((vol or soundonly) and report['fshape'].get('px'))
     assert not fade or (px and report['fshape'].get('fade'))
     if vol:
         assert filt and report['fshape'].get('vol')
@@ -152,7 +153,9 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
         assert shapes and 'fshape' in report
         page_values = (page_values[0], FX_RING)
     if scanfx:
-        assert filt
+        assert filt or soundonly
+        if soundonly:
+            page_values = (tuple(i for i in page_values[0] if i not in FILT_SP), FX_RING)
         scan = (11, 7)
         page_values = (tuple(i for i in page_values[0] if i not in scan), page_values[1] + scan)
     for page, indices in enumerate(page_values, 1):
@@ -194,8 +197,8 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
     from thumb import subs_imm8
     E(subs_imm8, 1, FIRST)
     if pageorder:
-        assert filt and vol and scanfx
-        for j, pg in enumerate(PADMAP_ORDER):
+        assert (filt and vol or soundonly) and scanfx
+        for j, pg in enumerate((0, None, None, 1, None, 2) if soundonly else PADMAP_ORDER):
             if pg == j:
                 continue
             E(cmp_imm, 1, j); E(b_cond, f'pp_pm{j}', 'ne')
@@ -215,6 +218,6 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
     code, labels = a.assemble()
     img += bytes([255]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4: img.append(255)
-    report['pageclear'] = dict(viewsync=viewsync, gran=gran, shapes=shapes, filt=filt, vol=vol, scanfx=scanfx, padmap=list(PADMAP_ORDER) if pageorder else None, px=px, fade=fade, page_values=[list(v) for v in page_values], slot=hex(rhstate.ST + OFF), default_table=hex(default_table),
+    report['pageclear'] = dict(viewsync=viewsync, gran=gran, shapes=shapes, filt=filt, vol=vol, scanfx=scanfx, padmap=[0,None,None,1,None,2] if soundonly else list(PADMAP_ORDER) if pageorder else None, px=px, fade=fade, page_values=[list(v) for v in page_values], slot=hex(rhstate.ST + OFF), default_table=hex(default_table),
         labels={k: hex(v) for k, v in labels.items() if k.startswith('c_')})
     return labels, code

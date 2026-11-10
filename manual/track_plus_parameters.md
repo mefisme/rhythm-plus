@@ -2,7 +2,7 @@
 
 This section defines the parameters that you can see and change in Track +. It also tells you which of them you can automate or lock to a step.
 
-Firmware: Rhythm Plus A0120.
+Firmware: Rhythm Plus A0121 (local development build; not yet tested on hardware).
 
 ## Terms
 
@@ -11,7 +11,7 @@ Firmware: Rhythm Plus A0120.
 | **Track +** | The track menu. Tap the selected track's button to open it. Tap the button again to close it. |
 | **Page** | A set of eight knobs for the selected track. Pads 26-31 select the page. Each track keeps its own page. |
 | **Parameter Editor** | The page on pad 26 (white). Its knobs are the stock's own eight knobs of the track. |
-| **Extra parameter** | A parameter that Rhythm Plus adds. Extra parameters are on the pages on pads 27-31. |
+| **Extra parameter** | A parameter that Rhythm Plus adds. Extra parameters are on Pitch (pad 29) and FX (pad 31). |
 | **Bar** | Pads 17-24. The bar shows the value of the shown knob. |
 | **Shown knob** | The last knob that you turned, or the knob that you selected with pad 25. Its light is in the track's colour. |
 | **View** | The bar shows the value of the parameter. |
@@ -48,7 +48,7 @@ These are the stock's parameters. You can view, edit, automate, lock, reset and 
 - **Lock:** arm Record, hold a step, turn the knob. The value goes into the held step, also while the pattern plays.
 - While Record is armed and you turn a knob, the bar is red. While you hold a step with Record armed, the step's pad is red.
 
-## Extra parameters (pads 27-31)
+## Extra parameters (Pitch and FX)
 
 The extra parameters are kept for each track and saved with the project.
 
@@ -63,39 +63,15 @@ For all extra parameters:
 | Reset (Clear + turn right) | yes |
 | Delete automation (Clear + turn left) | no (an extra parameter has no automation) |
 
-Exception: K7 and K8 on the Filter page are the stock's low-pass and resonance. They are the same parameters as K7 and K8 on the Parameter Editor, so you can automate and lock them.
-
 ### Shift on the extra pages
 
 - **Shape knobs and rate knobs in their synced half:** hold Shift and turn right to go to the same pad on the second sweep. Turn left to go back to the first sweep.
 - **Other knobs:** Shift + turn moves the value in fine steps.
-- **Exceptions:** Filter page Shift + K7 / K8 and Pitch page Shift + K7 are separate parameters. They move in normal steps.
+- **Exception:** Pitch page Shift + K7 is a separate parameter. It moves in normal steps.
 
-### Filter (pad 27, lime)
+### Pads 27 and 28
 
-| Knob | Parameter | Shift + knob |
-|---|---|---|
-| K1 | Filter envelope amount, from the middle | fine |
-| K2 | Filter envelope shape | second sweep |
-| K3 | Filter envelope decay | fine |
-| K4 | Filter LFO depth | fine |
-| K5 | Filter LFO shape | second sweep |
-| K6 | Filter LFO rate: right of the middle = synced to the tempo, left = free | second sweep (synced half), fine (free half) |
-| K7 | Low-pass filter (stock) | Filter type: stock or 24 dB |
-| K8 | Resonance (stock) | Pitch follow: the low-pass follows the note's pitch |
-
-### Mix (pad 28, mint)
-
-| Knob | Parameter | Shift + knob |
-|---|---|---|
-| K1 | Volume movement depth | fine |
-| K2 | Volume movement shape: 10 LFO shapes, 6 gates | second sweep |
-| K3 | Volume movement rate: right of the middle = synced, left = free | second sweep (synced half), fine (free half) |
-| K4 | Pan movement depth | fine |
-| K5 | Move shape (for pan and the sends) | second sweep |
-| K6 | Move rate: right of the middle = synced, left = free, middle = off | second sweep (synced half), fine (free half) |
-| K7 | Reverb send movement depth, from the middle | fine |
-| K8 | Delay send movement depth, from the middle | fine |
+The Filter and Mix pages are archived. These pads are dark and do nothing.
 
 ### Pitch (pad 29, sky blue)
 
@@ -131,8 +107,10 @@ No page. The pad is dark.
 | Action | Result |
 |---|---|
 | Hold Clear, tap pad 26 | The eight stock parameters go back to their defaults, and their automation in the current pattern is deleted (also with a step held). |
-| Hold Clear, tap a page pad (27-31) | All extra parameters of that page go back to their defaults. |
+| Hold Clear, tap Pitch (29) or FX (31) | All extra parameters of that page go back to their defaults. |
 | Hold Clear, tap pad 32 | All of the above: the stock parameters, their automation in the current pattern, and the extra parameters of all pages. |
 
 All page resets work on the selected track only. They do not change the sample, the mixer or the FX page's sends.
-The stock's low-pass and resonance (Filter page K7 / K8) change only with pad 26 and pad 32, not with pad 27.
+The stock's filters and resonance remain on the Parameter Editor. Clear + pads 27, 28 or 30 does nothing.
+
+Projects saved on an archived Filter or Mix page open in the Parameter Editor. Old Filter/Mix settings remain in the project for compatibility and do not affect this build.

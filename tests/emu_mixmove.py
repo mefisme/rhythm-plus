@@ -74,6 +74,12 @@ def main():
             d = HERE / "firmware" / b
             img = (d / f"rhythmplus-{b.upper()}.bin").read_bytes()
             rep = json.loads((d / "manifest.json").read_text())["report"]
+        if "mixmove" not in rep:
+            _,_,words=core0.block_words(bytearray(img))
+            _,_,stock_words=core0.block_words(bytearray(STOCK.read_bytes()))
+            check(f"{b}: removed Mix leaves all three stock gain/send hooks and vectors unchanged",
+                  all(words[a]==stock_words[a]==M.OLD for a in M.SITES) and words[0x50:0x100]==stock_words[0x50:0x100])
+            continue
         mm = rep["mixmove"]
         n, at, ws = core0.block_words(bytearray(img))
         hooks = {k: int(v, 16) for k, v in mm["hooks"].items()}

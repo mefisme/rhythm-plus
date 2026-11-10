@@ -59,7 +59,17 @@ def main():
         rep = json.loads((d / "manifest.json").read_text())["report"]
         regs = M.regions(rep)
         bad = M.overlaps(regs)
-        check(f"{build}: no two regions share a word ({len(regs)} regions)", not bad,
+        # AD007 deliberately probed an unverified bank. Hardware then disproved
+        # X3000..3FFF ownership. Keep that historical diagnostic collision visible,
+        # never exempt a production allocation or a future diagnostic build.
+        if build == "ad007" and rep.get("autobank", {}).get("proof_only"):
+            quarantined = [(a,b) for a,b in bad
+                           if {a.owner,b.owner} == {
+                               "stock: Grid FX runtime workspace (AD007 hardware)",
+                               "autobank: opt-in candidate-bank proof"}]
+            check("ad007: known Grid FX diagnostic collision quarantined; NOT usable storage", len(quarantined)==1)
+            bad = [pair for pair in bad if pair not in quarantined]
+        check(f"{build}: no production ownership overlaps ({len(regs)} regions)", not bad,
               [f"core {a.core} {a.space.upper()}:${max(a.start, b.start):X}..: {a.owner} / {b.owner}" for a, b in bad])
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))
