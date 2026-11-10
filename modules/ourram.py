@@ -25,7 +25,7 @@ PSHAPE = os.environ.get("RH_PSHAPE") == "1"          # RH_PSHAPE=1: pshape's slo
 FSHAPE = os.environ.get("RH_FSHAPE") == "1"          # RH_FSHAPE=1: fshape's slot (the filter's tracks to write, the round, the tick)
 GRAIN = os.environ.get("RH_GRAIN") == "1"            # RH_GRAIN=1: grain_rp's slot (the granular's words to core 0)
 UPGUARD = os.environ.get("RH_UPGUARD") == "1"        # RH_UPGUARD=1: upguard's slot (set while the stock uploads a sample)
-MUTSET = {"1": 20, "2": 32}.get(os.environ.get("RH_MUTSET"), 0)   # mutset's slot: 1 the settings page, 2 with the mutate
+MUTSET = {"1": 20, "2": 32, "3": 136, "4": 168, "5": 168, "6": 168, "7": 176, "8": 176, "9": 176, "10": 176, "11": 176}.get(os.environ.get("RH_MUTSET"), 0)   # mutset's slot: 1 the settings page, 2 with the mutate, 3 its seeds, 4 and the next keys, 5 and the scene chain fixes, 6 and Live on column 1, the other views, 7 and the page back after a held button, 8 and Shift + a track over the page, 9 and its look, 10 and Down / Up in the Clear preview, 11 and Shift + Duplicate on the page
 SLOTS = (("mutset", MUTSET),) * (MUTSET > 0) + (("upguard", 4),) * UPGUARD + (("trackreset", 220),) * TRACKRESET + (("pageclear", 8),) * PAGECLEAR + (("plog", PLOG),) * PROBES + SP_SLOTS * STOCKPLUS + (("grain", 4),) * GRAIN + (("pshape", 4),) * PSHAPE + (("fshape", 8),) * FSHAPE + (("tmenu", 32 + 4 * (TMCLICK > 0) + 16 * (TMCLICK > 1) + 4 * (TMCLICK > 2)), ("clkci", 52), ("playfix", 16), ("countin", 8), ("vismet", 4), ("srcount", 8)) + (("srprobe", 8),) * PROBES
 if os.environ.get("RH_GRANULAR") == "1":
     # Prefix keeps all existing short offsets unchanged; the new adapter uses

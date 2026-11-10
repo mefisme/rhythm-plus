@@ -3,7 +3,7 @@ Print it to PDF with:  chrome --headless --print-to-pdf=manual/rhythm_plus_manua
 from html import escape
 from pathlib import Path
 
-FIRMWARE = "AG015"
+FIRMWARE = "AG026"
 OUT = Path(__file__).resolve().parents[1] / "manual" / "rhythm_plus_manual.html"
 
 GRAD = ["ffc866", "ffd966", "fff766", "e5ff66", "c7ff66", "a6ff66", "87ff66", "66ff66"]   # the probability page's colours
@@ -131,8 +131,9 @@ def mutate_page1():
         cells[8 * r + 4] = lit(GRAD[4], FULL if on else DIM)  # Pool: With steps
     for r, on in enumerate((1, 0)):
         cells[8 * r + 5] = lit(GRAD[5], FULL if on else DIM)  # When: On the tap
+    cells[0], cells[8] = lit(GREEN, FULL), lit(GREEN, DIM)   # Live Off
     marks = {2: "1", 10: "2", 18: "3", 26: "4"}
-    return grid(cells, cols={2: "Length", 3: "Type", 4: "Pool", 5: "When"}, rows={0: "1", 1: "2", 2: "3", 3: "4"},
+    return grid(cells, cols={0: "Live", 2: "Length", 3: "Type", 4: "Pool", 5: "When"}, rows={0: "1", 1: "2", 2: "3", 3: "4"},
                 marks=marks, buttons=[("Up", lit("444448")), ("Down", "#ffffff"), ("Duplicate", lit(GREEN, 0.6))])
 
 
@@ -145,8 +146,9 @@ def mutate_page2():
         cells[8 * r + 3] = lit(meter[r], FULL if r >= 2 else DIM)   # Amount: Some
     cells[5], cells[13] = lit(GREEN, FULL), lit(GREEN, DIM)  # Repeats On
     cells[6], cells[14] = lit(GREEN, DIM), lit(GREEN, FULL)  # Keep slot 1 On
+    cells[0], cells[8] = lit(GREEN, DIM), lit(GREEN, FULL)   # Live On
     marks = {2: "5", 10: "6", 18: "7", 26: "8"}
-    return grid(cells, cols={2: "Length", 3: "Amount", 4: "Repeats", 5: "Keep 1"}, rows={0: "1", 1: "2", 2: "3", 3: "4"},
+    return grid(cells, cols={0: "Live", 2: "Length", 3: "Amount", 4: "Repeats", 5: "Keep 1"}, rows={0: "1", 1: "2", 2: "3", 3: "4"},
                 marks=marks, buttons=[("Up", "#ffffff"), ("Down", lit("444448")), ("Duplicate", lit(GREEN, 0.6))])
 
 
@@ -368,7 +370,7 @@ in a loop in place of its chain. Your patterns do not change. You can go back to
 <li>Press {PA} to show the Patterns page. Press {PL}.</li>
 <li>Hold {SH} and tap {DU}. Each track gets a new list. The lists start at each track's next pattern end.</li>
 <li>Tap again for another mutate. Each tap makes new lists.</li>
-<li>To go back to the chains: hold {CL} and {SH}, and tap {DU}.</li>
+<li>To go back to the chains: hold {CL} and tap {DU}.</li>
 </ol>
 <h3>The Duplicate button</h3>
 <p>On the Patterns page, {DU} shows the state of the mutate:</p>
@@ -377,18 +379,23 @@ in a loop in place of its chain. Your patterns do not change. You can go back to
         [f'<span class="sw" style="background:{lit(GREEN, 0.4)}"></span> Dim green', f"{SH} is held: a tap mutates."],
         [f'<span class="sw" style="background:{lit(GREEN)}"></span> Full green', f"{SH} + {DU} is down."],
         [f'<span class="sw" style="background:{lit(GREEN, 0.6)}"></span> Green, pulsing', "The Mutate settings page is open."],
-        [f'<span class="sw" style="background:{lit(RED)}"></span> Red', f"{CL} and {SH} are held: a tap ends every mutate."]])}
+        [f'<span class="sw" style="background:{lit(RED)}"></span> Red', f"{CL} is held and a track has a mutate: a tap ends every mutate."]])}
 <h3>The settings</h3>
-<p>Hold {SH} and hold {DU} for a moment to open the Mutate settings page. Tap {DU} to close it. The settings are for all tracks and
+<p>Hold {SH} and hold {DU} for a moment to open the Mutate settings page. Tap {DU} to close it. {SH} + tap {DU} on the page makes a mutate and keeps the page open. The settings are for all tracks and
 are saved with the project. Chapters 2 and 3 show each setting.</p>
 <div class="note">A track's mutate stays until you end it, pick a pattern for that track, or change the scene (see chapter 5).</div>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 2</div><h2>The Mutate settings, page 1</h2>
-<p>Hold {SH} and hold {DU} to open the page. Columns 3 to 6 are the settings; each pad in a column is one value. The chosen value is
-full, the other values are dim. {DN} shows page 2, {UP} shows page 1 again.</p>
-{figure(mutate_page1(), "Page 1 with Length 4, Length type Exact, Pool With steps and When On the tap.")}
+<p>Hold {SH} and hold {DU} to open the page. It opens on the Patterns, Mixer, Grid FX, FX and Sidechain pages; the knobs keep their
+jobs. Columns 3 to 6 are the settings; each pad in a column is one value. The chosen value is full, the other values are dim.
+Column 1 is Live, on both pages. {DN} shows page 2, {UP} shows page 1 again. Hold {PA}, {MI} or FX to look at
+that page, or {SH} + a track button to look at that track (with {SH} held, the track buttons show the tracks' colours, the
+selected track bright); when you let go, the settings page comes back. A tap goes to that page
+and closes the settings.</p>
+{figure(mutate_page1(), "Page 1 with Live Off, Length 4, Length type Exact, Pool With steps and When On the tap.")}
 {table(["Column", "Setting", "Pads, top to bottom", "What it does"], [
+        ["1", "Live", "Off (default) · On", "The same setting on both pages. See chapter 3."],
         ["3", "Length", "1, 2, 3, 4 (5-8 on page 2)", "How many slots a list has, when Length type is Exact or Random. Tap the last pad of the bar."],
         ["4", "Length type", "Same as the chain (default) · Exact · Random", "Same as the chain: a list as long as the track's chain (the Length column is very dim, not used). Exact: always Length slots. Random: 1 to Length slots, new at each mutate."],
         ["5", "Pool", "With steps (default) · All", "With steps: only the patterns that have notes. All: all 8 patterns, also empty ones."],
@@ -401,14 +408,15 @@ full, the other values are dim. {DN} shows page 2, {UP} shows page 1 again.</p>
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 3</div><h2>The Mutate settings, page 2</h2>
-<p>Press {DN} on the settings page. Column 3 goes on with Length 5-8. Columns 4 to 6 are three more settings. The greener colours
-tell you that you are on page 2.</p>
-{figure(mutate_page2(), "Page 2 with Amount Some, Repeats On and Keep slot 1 On.")}
+<p>Press {DN} on the settings page. Column 1 is Live, as on page 1. Column 3 goes on with Length 5-8. Columns 4 to 6 are three more
+settings.</p>
+{figure(mutate_page2(), "Page 2 with Live On, Amount Some, Repeats On and Keep slot 1 On.")}
 {table(["Column", "Setting", "Pads, top to bottom", "What it does"], [
         ["3", "Length", "5, 6, 7, 8", "The Length bar goes on from page 1."],
         ["4", "Amount", "All (default) · Most · Some · A little", "How much of the chain a mutate changes. The meter fills from the bottom up: more light, more change."],
-        ["5", "Repeats", "On (default) · Off", "Off: a list never plays the same pattern twice in a row (also not from its last slot back to slot 1)."],
-        ["6", "Keep slot 1", "Off (default) · On", "On: each list starts on the chain's first pattern, a home beat. Only the slots after it change."]])}
+        ["5", "Repeats", "On (default) · Off", "Off: a list never plays the same pattern twice in a row (also not from its last slot back to slot 1). With only one pattern that has notes, it plays that one."],
+        ["6", "Keep slot 1", "Off (default) · On", "On: each list starts on the chain's first pattern, a home beat. Only the slots after it change."],
+        ["1", "Live", "Off (default) · On", "On: a setting change changes the lists that play, at once. It is the same mutation with the new setting."]])}
 <h3>Amount, step by step</h3>
 <p>Each slot of a list either keeps the chain's pattern at that place, or gets a random one. For a chain of 4 patterns:</p>
 {table(["Amount", "Slots that change", "Example: chain 1 · 2 · 3 · 4"], [
@@ -416,7 +424,10 @@ tell you that you are on page 2.</p>
         ["A little", "1 of 4", "1 · 2 · 7 · 4"]])}
 <p>For other lengths the number is rounded, and at least one slot changes. Slots past the end of the chain are always random. With
 Keep slot 1 On, Amount counts only the slots after slot 1.</p>
-<div class="note">With Repeats Off, a track that has only one pattern with notes still gets a list. It plays that pattern.</div>"""))
+<h3>Live</h3>
+<p>Each mutate gives each track a seed. With Live On, a change to Length, Length type, Pool, Amount, Repeats or Keep slot 1 makes
+each list again from its seed. Set it back and the list comes back. Tracks that do not mutate keep their lists. Every chain end
+starts at once, with no tap.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 4</div><h2>Playing a mutate</h2>
@@ -443,30 +454,36 @@ stay white.</p>
     pages.append(page(f"""
 <div class="eyebrow">Chapter 5</div><h2>Ending a mutate, scenes and saving</h2>
 <h3>See which tracks are mutated</h3>
-<p>Hold {CL} on the Patterns page. The track buttons of the mutated tracks are green; the other track buttons are dark.</p>
+<p>Hold {CL} on the Patterns page. The track buttons of the mutated tracks are green; the other track buttons are dark. {DU} is red when there is a mutate to end.</p>
 {figure(patterns_clear(), f"{CL} held: tracks 1, 3 and 6 are mutated.")}
 {table(["You do", "Result"], [
         [f"{CL} + a green track button", "That track's mutate ends. Its button flashes red, then goes dark. The track goes back to its chain."],
         [f"{CL} + a dark track button", "Nothing happens. The track is not selected."],
-        [f"{CL} + {SH} + {DU}", f"Every mutate ends. {DU} is red while {CL} and {SH} are held. The mutated tracks flash red."],
-        [f"{CL} held on the settings page", f"The pads show the Patterns page, so you can see each mutate. {DU} keeps pulsing green, so you know that you are still on the settings page. The pads do nothing. {CL} + a track button ends that track's mutate."]])}
+        [f"{CL} + {DU}", f"Every mutate ends. The mutated tracks flash red. This also works on the Mixer, Grid FX, FX and Sidechain pages."],
+        [f"{CL} held on the settings page", f"The pads show the Patterns page, so you can see each mutate. {DU} keeps pulsing green, so you know that you are still on the settings page. The pads do nothing. {DN} / {UP} show the other page of patterns, as on the Patterns page. {CL} + a track button ends that track's mutate."]])}
 <p>On a track page, {CL} + a track button is the track reset, as before.</p>
 <h3>Scenes</h3>
-<p>A scene keeps the mutate of each track, so a scene plays the exact lists that you heard when you saved it.</p>
+<p>A scene keeps the mutate of each track: its seed, the settings that made its list and its chain. So a scene plays the exact
+lists that you heard when you saved it, and Live goes on from them.</p>
 {table(["On the Mixer page", "Result"], [
         [f"{SH} + a scene pad", "Saves the scene with each track's mutate."],
-        ["A scene pad", "Plays the scene with its saved lists. Stopped: at once. Playing: when the scene starts."],
+        ["A scene pad", "Plays the scene with its saved lists. Stopped: at once. Playing: at the end of track 1's pattern. The mutate plays until then."],
         [f"{DU} + a scene pad, then another", "Copies the scene, its mutate too."],
         [f"{CL} + a scene pad", "Clears the scene, its mutate too."]])}
 <p>A scene saved without a mutate plays its chains: a scene change ends the mutate of the tracks with no list in that scene.</p>
+<p>In a scene chain, a track with a mutate is done when it plays the last slot of its list. The chain goes to the next scene when every
+track is done. With a scene chain set, {PL} starts on the chain's first scene, with that scene's own lists.</p>
+<div class="note">With Pool With steps, a list uses only the patterns that have notes. If you add notes to an empty pattern, or clear
+a pattern, a saved list can change.</div>
 <h3>Saving</h3>
 <p>When you save the project, it keeps the Mutate settings, each track's current mutate and the mutate of each scene. A project
-from an earlier firmware opens with the default settings.</p>"""))
+from an earlier firmware opens with the default settings and no mutate.</p>"""))
 
     ref = [
-        [f"{SH} + tap {DU}", "Patterns page", "Mutate (new lists with the settings)"],
-        [f"{SH} + hold {DU}", "Patterns page", "Open the Mutate settings page"],
+        [f"{SH} + tap {DU}", "Patterns, Mixer, Grid FX, FX, Sidechain", "Mutate (new lists with the settings)"],
+        [f"{SH} + hold {DU}", "Patterns, Mixer, Grid FX, FX, Sidechain", "Open the Mutate settings page"],
         [f"Tap {DU}", "Settings page", "Close the settings page"],
+        [f"{SH} + tap {DU}", "Settings page", "Mutate, the page stays open"],
         [f"{DN} / {UP}", "Settings page", "Page 2 / page 1"],
         ["A setting's pad", "Settings page", "Choose that value"],
         ["A track button", "Settings page", "That track mutates or not"],
@@ -474,7 +491,7 @@ from an earlier firmware opens with the default settings.</p>"""))
         [f"{CL} + a track button", "Settings page", "End that track's mutate"],
         [f"{CL} held", "Patterns page", "Mutated tracks' buttons green"],
         [f"{CL} + a green track button", "Patterns page", "End that track's mutate"],
-        [f"{CL} + {SH} + {DU}", "Patterns page", "End every mutate"],
+        [f"{CL} + {DU}", "Patterns, Mixer, Grid FX, FX, Sidechain", "End every mutate"],
         ["A pattern pad", "Patterns page", "End that track's mutate, pick the pattern"],
         [f"{SH} + a pad (View Lock on)", "Patterns page", "Move the white pad; the mutate stays"],
         [f"{PL}", "Any page", "Start the lists from slot 1"],
@@ -486,7 +503,7 @@ from an earlier firmware opens with the default settings.</p>"""))
 {table(["Control", "Where", "Result"], ref)}
 <h3>Defaults</h3>
 {table(["Setting", "Default"], [["Length", "4"], ["Length type", "Same as the chain"], ["Pool", "With steps"], ["When", "On the tap"],
-                              ["Amount", "All"], ["Repeats", "On"], ["Keep slot 1", "Off"], ["Tracks", "All on"]])}"""))
+                              ["Amount", "All"], ["Repeats", "On"], ["Keep slot 1", "Off"], ["Live", "Off"], ["Tracks", "All on"]])}"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 7</div><h2>Track +: overview and layout</h2>

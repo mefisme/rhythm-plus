@@ -27,7 +27,7 @@ os.environ["RH_GRAIN"] = "1" if "grain" in MAN["report"] else "0"
 os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"
 os.environ["RH_UPGUARD"] = "1" if "upguard" in MAN["report"] else "0"
-os.environ["RH_MUTSET"] = ("2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
+os.environ["RH_MUTSET"] = ("11" if MAN["report"]["mutset"].get("shmut") else "10" if MAN["report"]["mutset"].get("clrpage") else "9" if MAN["report"]["mutset"].get("shtrkled") else "8" if MAN["report"]["mutset"].get("shtrk") else "7" if MAN["report"]["mutset"].get("bounce") else "4" if MAN["report"]["mutset"].get("pending") else "3" if MAN["report"]["mutset"].get("seeds") else "2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
 import ourram  # noqa: E402,F401
 import countin as C  # noqa: E402
 import rhstate  # noqa: E402

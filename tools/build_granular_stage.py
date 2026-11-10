@@ -9,6 +9,8 @@ sys.path[:0]=[str(ROOT/p) for p in ('builds','modules','tools','remix/tools')]
 # One-core test builds keep the A0122 main-chip code, so they leave the Granular RAM slot out.
 CORE_ONLY={'AGC0':(0,),'AGC1':(1,)}
 os.environ['RH_GRANULAR']='0' if CORE_ONLY.keys()&set(sys.argv) else '1'
+SEEDS,PEND,SCN,VIEWS,BOUNCE,SHTRK,SHLED,CLRPG,SHMUT=('AG016','AG017','AG018'),('AG019',),('AG020',),('AG021',),('AG022',),('AG023',),('AG024',),('AG025',),('AG026',)
+os.environ['RH_MUTSET']='11' if set(SHMUT)&set(sys.argv) else '10' if set(CLRPG)&set(sys.argv) else '9' if set(SHLED)&set(sys.argv) else '8' if set(SHTRK)&set(sys.argv) else '7' if set(BOUNCE)&set(sys.argv) else '6' if set(VIEWS)&set(sys.argv) else '5' if set(SCN)&set(sys.argv) else '4' if set(PEND)&set(sys.argv) else '3' if set(SEEDS)&set(sys.argv) else '2'
 from build_a0121 import build as baseline
 import granular_layout as L
 import granular_bundle as B
@@ -19,7 +21,7 @@ import granular_lifecycle
 import crashlog
 
 
-FULL=('AG001','AG002','AG003','AG004','AG005','AG006','AG007','AG008','AG009','AG010','AG011','AG012','AG013','AG014','AG015')
+FULL=('AG001','AG002','AG003','AG004','AG005','AG006','AG007','AG008','AG009','AG010','AG011','AG012','AG013','AG014','AG015')+SEEDS+PEND+SCN+VIEWS+BOUNCE+SHTRK+SHLED+CLRPG+SHMUT
 DSP_ONLY,ARM_ONLY='AGDSP','AGARM'
 
 

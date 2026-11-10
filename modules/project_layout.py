@@ -24,16 +24,16 @@ class Block:
 
 
 BLOCKS=(
-    Block("volume/movement",2,132),
+    Block("free: archived Mix page",2,132,"free"),
     Block("random/glide",136,36),
     Block("pitch fade",172,20),
     Block("pattern mutation",192,84),
     Block("automation identity",276,20,"proposed"),
     Block("granular settings",296,32,"candidate"),
-    Block("future envelope/waveshape",328,56,"future reservation"),
+    Block("free",328,56,"free"),
     Block("sample switches",384,20),
     Block("granular continuation A",404,16,"candidate"),
-    Block("granular extension",420,100,"candidate"),
+    Block("free: archived Filter page",420,100,"free"),
     Block("granular continuation B",520,10,"candidate"),
     Block("track page",530,10),
     Block("master resonance",540,4,"future reservation"),

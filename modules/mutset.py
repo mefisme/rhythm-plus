@@ -33,6 +33,12 @@ The settings in the project's record (rhrec's tail + BLK_OFF): "MT", the check b
 + 4 Length - 1 XOR 3 (zero = 4), + 5 Length type, + 6 Pool, + 7 When, + 8 the tracks off (bit t); + 9 + 9 t: track t's list (its
 length, 0 = none, then 8 patterns); + 81 the tracks that renew (Every chain end). A block without the marks or with a wrong check byte
 reads as the defaults; the first change makes it ours. The record is written with interrupts off (the sequencer writes it too).
+(seeds) The block holds each track's key in place of its list (+ 9 renew, + 10 the page 2 byte, + 12 + 4 t the keys; check 0x5B); a
+scene holds the 8 keys (28 bits each; check 0xA6). The lists live in the slot (+ 32 + 9 t), each with the key it was made from
+(+ 104 + 4 t); any reader goes through c_mtls, which makes a list again when the block's key differs. (live) page 2, column 7: a
+setting change gives the keys of the tracks that are on the settings now; When to Every chain end mutates as a tap does. (clrdup) Clear + Duplicate, at the press: every list ends;
+Duplicate red with Clear held only while a track has a list. (pending) Every chain end makes the next list at the end it plays from
+(+ 136 + 4 t its key), so the pads show the list playing until then.
 RAM, slot "mutset": + 0 flags, + 1 the page (0 / 1), + 4 Duplicate's press (uwTick), + 8 the pads pressed on the page (bit p),
 + 12 .. 16 the settings as drawn; (mutate) + 17 the tracks whose list just ended (bit t), + 20 + t the slot playing (0xFF = before
 slot 1), + 28 the random state.
@@ -105,11 +111,38 @@ O_PV_PADS, PAD_LOCK = 0x44, 0x10                          # [PV + 0x44 + 4 t] ->
 O_PV_PAGE = 0x6C                                          # the byte [PV + 0x6C]: the Patterns view's page (0 / 1); pagebyte: read so
 O_PLAYING = 0x30                                          # [engine + 0x30 + 4 t]: track t's playing store (item 0: its pattern)
 O_RUN = 0x28                                              # [engine + 0x28]: item 0 = the clock running (0 = stopped)
+O_SCENE = 0x2C                                            # [engine + 0x2C]: item 0 = the scene playing
 O_SCASK = 0xA0                                            # [engine + 0xA0]: item 0 the scenes asked for (first, last), item 1 asked
 MIX_VT = 0x08067918                                       # the Mixer view's vtable: slots 0 / 1 = its pad press / release
 STEPS0, TRK_STRIDE, PAT_STRIDE = 0x2E4, 0x5140, 0xA28     # the patterns in the record: R + STEPS0 + TRK_STRIDE t + PAT_STRIDE p
 P_LAST, P_FIRST, MAX_STEP = 0x100, 0x101, 31              # a step: 8 B, its velocity at + 3 (0 = no hit)
 LCG_A, LCG_C = 1664525, 1013904223
+# (seeds) a track's key, a word in the block: seed (12 bits, 0 = no list) | the settings << 12 (Length - 1: 3, Length type: 2, Pool: 1,
+# the page 2 bits 0-3: 4) | the chain's first << 22 | last << 25; the lists themselves in RAM, made again from the keys when they differ
+K_SET = 0x3FF << 12
+O_LISTS, O_RKEY, SLOT_SEEDS = 32, 104, 136              # the slot: the lists (LIST_LEN B a track), the key each was made from
+LV_BIT, LV_COL = 4, 6                                     # (live) bit 4 of B_VAL2: Live On; page 2, column 7
+O_PEND, SLOT_PEND = 136, 168                              # (pending) the slot: each track's next key (0 none), made at the end it plays from
+PV_DRAW = 0x0804EB92                                      # (clrpage) the Patterns view's pads and arrows from its page byte (view)
+SELTRK = 0x0805800E                                       # (shtrkled) the stock's (container) -> its selected track
+BIT_SHIFT = 27                                            # (shkeep) the Shift button in [ctrl + 0xA0]
+O_SHIFTF = 0xC                                            # (shtrk) [ctrl + 0xC]: p0 = the stock's Shift flag
+O_BACK, O_BTICK, SLOT_BACK = 168, 172, 176                # (bounce) the button that closed the page + 1 (0 none), its press (HAL tick)
+MIX_VIEW, FX_VIEW = 0x2004E090, 0x2004DAA0                # (views) the Mixer (and Grid FX), the FX view
+CONT, O_CMODE, MODE_SC = 0x20048B9C, 0x264, 8             # (views) the Sidechain view: the track container in mode 8
+DONE_SITE = 0x080346FE                                    # (scchain) the scenes' done test: a track at its pattern end, no pick, its chain's last
+
+
+def use_livecol():
+    """(livecol) Live on column 1 of both pages"""
+    global LV_COL
+    LV_COL = 0
+
+
+def use_seeds():
+    """the block and scene layout of the seeds builds"""
+    global B_RENEW, B_VAL2, B_KEYS, BLK_LEN, CHECK, B_LISTS, SC_CHECK
+    B_RENEW, B_VAL2, B_KEYS, BLK_LEN, CHECK, B_LISTS, SC_CHECK = 9, 10, 12, 44, 0x5B, 0, 0xA6
 
 
 def ldrb_sp(rt, off): return h(0xF89D) + h(rt << 12 | off)
@@ -120,7 +153,15 @@ CPSID, CPSIE = h(0xB672), h(0xB662)
 def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=False, pagebyte=False, dimrest=False, clearall=False,
              liststart=False, scenesave=False, greendup=False, pageclr=False, shiftstock=False, shiftpads=False, pclrv=False,
              scenefix=False, stocktrk=False, cleardark=False, memlvl=MEMBER, clrnone=False, restlvl=VDIM, amount=False,
-             norep=False, keep1=False, hidepause=False, vlock=False):
+             norep=False, keep1=False, hidepause=False, vlock=False, seeds=False, live=False, clrdup=False, pending=False,
+             scchain=False, scplay=False, livecol=False, views=False, bounce=False, shtrk=False, shtrkled=False, clrpage=False,
+             shkeep=False, shmut=False):
+    if seeds:
+        use_seeds()
+    if livecol:
+        use_livecol()
+    LS = "c_mtls" if seeds else "c_mtblk"                 # r0 = the lists' base (+ B_LISTS + LIST_LEN t)
+    LVX = "mp_lv" if live else "mp_x"
     a = Asm(base)
     E = a.emit
     SLOT = rhstate.ST + rhstate.OFF["mutset"][0]
@@ -153,6 +194,58 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         imm32(1, PV)
         E(cmp_reg, 0, 1)
         far(no, "ne")
+
+    def on_xv(no):
+        """(views) branch to `no` unless the Mixer, Grid FX, FX or Sidechain view is on the screen; clobbers r0, r1"""
+        nfar[0] += 1
+        ok = f"mxv{nfar[0]}"
+        imm32(0, C.CTRL)
+        E(ldr_imm, 0, 0, O_VIEW)
+        for v in (MIX_VIEW, FX_VIEW):
+            imm32(1, v)
+            E(cmp_reg, 0, 1)
+            E(b_cond, ok, "eq")
+        imm32(1, CONT)
+        E(cmp_reg, 0, 1)
+        far(no, "ne")
+        E(raw, ldrb_w(0, 0, O_CMODE))
+        E(cmp_imm, 0, MODE_SC)
+        far(no, "ne")
+        a.label(ok)
+
+    def on_mv(no):
+        """the Patterns view, or (views) one of on_xv's; clobbers r0, r1"""
+        if not views:
+            on_pv(no)
+            return
+        nfar[0] += 1
+        ok = f"mmv{nfar[0]}"
+        imm32(0, C.CTRL)
+        E(ldr_imm, 0, 0, O_VIEW)
+        imm32(1, PV)
+        E(cmp_reg, 0, 1)
+        E(b_cond, ok, "eq")
+        on_xv(no)
+        a.label(ok)
+
+    def plain(prev, nargs, up=True):
+        """(shtrk) [sp] r0, [sp + 4] r1, [sp + 8] r2 of a push {r0-r4, lr}: L[prev] with the stock's Shift flag down, then (up) up;
+        returns"""
+        imm32(0, C.CTRL)
+        E(ldr_imm, 0, 0, O_SHIFTF)
+        E(movs_imm, 1, 0)
+        E(bl, PARAM_GET)
+        E(mov_reg, 4, 0)
+        E(movs_imm, 1, 0)
+        E(strb_imm, 1, 4, 0)
+        for r in range(nargs):
+            E(ldr_sp, r, 4 * r)
+        E(bl, L[prev])
+        if up:
+            E(movs_imm, 1, 1)
+            E(strb_imm, 1, 4, 0)
+        E(str_sp, 0, 0)
+        E(pop_list, [0, 1, 2, 3, 4], pc=True)
 
     def held_clear(rd):
         """flags: ne when Clear is held; clobbers rd"""
@@ -267,7 +360,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
 
     if mutate:
         mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenesave=scenesave, amount=amount, norep=norep,
-                    keep1=keep1, hidepause=hidepause)
+                    keep1=keep1, hidepause=hidepause, seeds=seeds, pending=pending, scchain=scchain)
     assert mutate or not (listpads or scenecut)
     assert listpads or not (pagebyte or dimrest)
     assert mutate or not (clearall or liststart or pageclr or shiftstock)
@@ -284,21 +377,83 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     assert norep or not keep1
     assert (mutate and listpads) or not hidepause
     assert (mutate and listpads and dimrest) or not vlock
+    assert (keep1 and scenesave and liststart and pclrv) or not seeds
+    assert seeds or not live
+    assert (seeds and live) or not pending
+    assert pclrv or not clrdup
+    assert (pending and scenefix) or not scchain
+    assert (scchain and liststart) or not scplay
+    assert live or not livecol
+    assert (greendup and shiftstock and pclrv) or not views
+    assert views or not bounce
+    assert bounce or not shtrk
+    assert shtrk or not shtrkled
+    assert (pclrv and pagebyte) or not clrpage
+    assert shtrk or not shkeep
+    assert (mutate and greendup) or not shmut
     if scenesave:
-        scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix)
+        scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix, seeds=seeds, pending=pending)
+    if scchain:
+        # ---- c_mtdone (the done test at 0x080346FE: r0 -> the track's chain (first, last), r7 = the track, r10 = picked, r11 = the
+        #      pattern playing): Z = done; a track playing a list is done at its last slot, else the stock's (the chain's last)
+        a.label("c_mtdone")
+        E(push_list, [4], lr=True)
+        E(mov_reg, 1, 10)
+        E(cmp_imm, 1, 0)
+        E(b_cond, "dn_x", "ne")
+        E(ldrb_imm, 4, 0, 1)
+        E(bl, "c_mtls")
+        E(movs_imm, 1, LIST_LEN)
+        E(muls, 1, 7)
+        E(ldrb_reg, 1, 0, 1)
+        E(cmp_imm, 1, 0)
+        E(b_cond, "dn_s", "eq")
+        imm32(2, SLOT)
+        E(adds_reg, 2, 2, 7)
+        E(ldrb_imm, 2, 2, O_POS)
+        E(cmp_imm, 2, 0xFF)
+        E(b_cond, "dn_s", "eq")
+        E(subs_imm8, 1, 1)
+        E(cmp_reg, 2, 1)
+        E(b, "dn_x")
+        a.label("dn_s")
+        E(cmp_reg, 11, 4)
+        a.label("dn_x")
+        E(pop_list, [4], pc=True)
     if liststart:
         # ---- c_mtseek (the seek at 0x08034330, for `ldrb r4, [r0]; ldr r0, [r5]`): r4 = the start pattern; at the chain's start
         # (Play) a track with a list starts on its slot 1; clobbers r0-r3
         a.label("c_mtseek")
         E(push_list, [6], lr=True)
         E(ldrb_imm, 4, 0, 0)
+        if scplay:                                        # a scene chain: the scene the play starts in, its own lists
+            E(mov_reg, 6, 8)
+            E(cmp_imm, 6, 8)
+            E(b_cond, "sk_x", "hs")
+            imm32(0, ENG + O_SCASK)
+            E(ldr_imm, 0, 0, 0)
+            E(movs_imm, 1, 0)
+            E(bl, PARAM_GET)
+            E(ldrb_imm, 1, 0, 0)
+            E(ldrb_imm, 0, 0, 1)
+            E(cmp_reg, 0, 1)
+            E(b_cond, "sk_n", "eq")
+            imm32(0, ENG + O_SCENE)
+            E(ldr_imm, 0, 0, 0)
+            E(movs_imm, 1, 0)
+            E(bl, PARAM_GET)
+            E(ldrb_imm, 0, 0, 0)
+            E(mov_reg, 1, 6)
+            E(movs_imm, 2, 0)
+            E(bl, "c_scget")
+            a.label("sk_n")
         E(mov_reg, 0, 9)
         E(cmp_imm, 0, 0)
         E(b_cond, "sk_x", "ne")
         E(mov_reg, 6, 8)
         E(cmp_imm, 6, 8)
         E(b_cond, "sk_x", "hs")
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(cmp_imm, 0, 0)
         E(b_cond, "sk_x", "eq")
         E(movs_imm, 1, LIST_LEN)
@@ -381,7 +536,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
                 E(bl, PARAM_GET)
                 E(ldrb_imm, 0, 0, 0)
                 E(cmp_imm, 0, 0)
-                E(b_cond, f"{name}_cl", "ne")
+                E(b_cond, f"{name}_x" if scchain else f"{name}_cl", "ne")
                 E(bl, "c_mxsig")
                 E(lsls_imm, 7, 0, 24)
                 E(lsrs_imm, 7, 7, 24)
@@ -394,15 +549,17 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
                 E(adds_imm8, 5, 1)
                 E(cmp_imm, 5, 8)
                 E(b_cond, f"{name}_ld", "lo")
-                E(b, f"{name}_x")
-                a.label(f"{name}_cl")
-            E(movs_imm, 5, 0)
-            a.label(f"{name}_l")
-            E(mov_reg, 0, 5)
-            E(bl, "c_mtcl")
-            E(adds_imm8, 5, 1)
-            E(cmp_imm, 5, 8)
-            E(b_cond, f"{name}_l", "lo")
+                if not scchain:
+                    E(b, f"{name}_x")
+                    a.label(f"{name}_cl")
+            if not scchain:
+                E(movs_imm, 5, 0)
+                a.label(f"{name}_l")
+                E(mov_reg, 0, 5)
+                E(bl, "c_mtcl")
+                E(adds_imm8, 5, 1)
+                E(cmp_imm, 5, 8)
+                E(b_cond, f"{name}_l", "lo")
             a.label(f"{name}_x")
             E(mov_reg, 0, 4)
             E(pop_list, [3, 4, 5, 6, 7], pc=True)
@@ -413,7 +570,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(bl, L["c_ciok"])
     E(cmp_imm, 0, 0)
     far("mb_go", "eq")
-    on_pv("mb_go")
+    on_mv("mb_go")
     imm32(4, SLOT)
     E(ldr_sp, 1, 4)
     E(ldrb_imm, 0, 4, O_FL)
@@ -421,6 +578,20 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(b_cond, "mb_nd", "ne")
     E(lsls_imm, 2, 0, 31)
     E(b_cond, "mb_dc", "pl")
+    if shmut:                                             # Shift + Duplicate on the page (no Clear): a mutate, the page kept open
+        E(bl, L["c_cishift"])
+        E(cmp_imm, 0, 0)
+        E(b_cond, "mb_dk", "eq")
+        held_clear(2)
+        E(b_cond, "mb_dk", "ne")
+        E(ldrb_imm, 0, 4, O_FL)
+        E(movs_imm, 1, FL_DUP | FL_HELD)
+        E(orrs_reg, 0, 1)
+        E(strb_imm, 0, 4, O_FL)
+        E(bl, "c_mtdo")
+        E(b, "mb_go")
+        a.label("mb_dk")
+        E(ldrb_imm, 0, 4, O_FL)
     E(movs_imm, 1, FL_OPEN)                               # Duplicate on the page: it closes; its release does nothing
     E(bics_reg, 0, 1)
     E(movs_imm, 1, FL_DUP | FL_HELD)
@@ -428,6 +599,12 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(strb_imm, 0, 4, O_FL)
     E(b, "mb_go")
     a.label("mb_dc")
+    if clrdup:                                            # Clear + Duplicate: every list ends
+        held_clear(2)
+        E(b_cond, "mb_ds", "eq")
+        E(bl, "c_mtclred")
+        E(b, "mb_go")
+        a.label("mb_ds")
     E(bl, L["c_cishift"])
     E(cmp_imm, 0, 0)
     far("mb_go", "eq")                                    # Duplicate without Shift: the stock's only
@@ -445,12 +622,15 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(lsls_imm, 2, 0, 31)
     if pclrv:
         E(b_cond, "mb_op", "mi")
+        if views:
+            on_pv("mb_go")
+            E(ldr_sp, 1, 4)
         E(cmp_imm, 1, 8)                                  # closed: Clear + the button of a track with a list ends the list
         far("mb_go", "hs")
         held_clear(2)
         far("mb_go", "eq")
         nolist = "mb_sw" if clrnone else "mb_go"          # clrnone: Clear + a track with no list does nothing
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(cmp_imm, 0, 0)
         far(nolist, "eq")
         E(ldr_sp, 1, 4)
@@ -471,7 +651,27 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     else:
         far("mb_go", "pl")                                # the page closed
     E(cmp_imm, 1, 8)
-    E(b_cond, "mb_trk", "lo")
+    if shtrk:                                             # Shift + a track: the page closes, the stock gets a plain press of it (as Track +)
+        E(b_cond, "mb_nt", "hs")
+        E(bl, L["c_cishift"])
+        E(cmp_imm, 0, 0)
+        E(ldr_sp, 1, 4)
+        far("mb_trk", "eq")
+        E(ldrb_imm, 0, 4, O_FL)
+        E(movs_imm, 2, FL_OPEN)
+        E(bics_reg, 0, 2)
+        E(strb_imm, 0, 4, O_FL)
+        E(mov_reg, 2, 4)
+        E(adds_imm8, 2, O_BACK)
+        E(adds_imm8, 1, 1)
+        E(strb_imm, 1, 2, 0)
+        imm32(0, C.HAL_TICK)
+        E(ldr_imm, 0, 0, 0)
+        E(str_imm, 0, 2, O_BTICK - O_BACK)
+        plain("prev_btn", 3, up=not shkeep)               # shkeep: Shift's flag down while the track is held (no Shift layer there)
+        a.label("mb_nt")
+    else:
+        E(b_cond, "mb_trk", "lo")
     E(movs_imm, 2, 1)
     E(cmp_imm, 1, ID_DOWN)
     E(b_cond, "mb_pg", "eq")
@@ -491,6 +691,15 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(movs_imm, 1, FL_OPEN)                               # another button: the page closes, the button does its job
     E(bics_reg, 0, 1)
     E(strb_imm, 0, 4, O_FL)
+    if bounce:                                            # held past HOLD_MS, the page again on its release (as Track +)
+        E(mov_reg, 2, 4)
+        E(adds_imm8, 2, O_BACK)
+        E(ldr_sp, 1, 4)
+        E(adds_imm8, 1, 1)
+        E(strb_imm, 1, 2, 0)
+        imm32(0, C.HAL_TICK)
+        E(ldr_imm, 0, 0, 0)
+        E(str_imm, 0, 2, O_BTICK - O_BACK)
     E(b, "mb_go")
     a.label("mb_trk")
     if pageclr:                                           # Clear + a track button: that track's list ends (its on / off kept)
@@ -525,6 +734,14 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(bl, "c_mtfix")
     E(b, "mb_sw")
     a.label("mb_pg")
+    if clrpage:                                           # Clear held (the preview): Down / Up page the Patterns view, as there
+        held_clear(0)
+        E(b_cond, "mb_pp", "eq")
+        imm32(0, PV)
+        E(raw, strb_w(2, 0, O_PV_PAGE))
+        E(bl, PV_DRAW)
+        E(b, "mb_sw")
+        a.label("mb_pp")
     E(strb_imm, 2, 4, O_PAGE)
     a.label("mb_sw")
     E(pop_list, [0, 1, 2, 3, 4], pc=True)
@@ -562,6 +779,39 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(strb_imm, 0, 4, O_FL)
     E(b, "mr_go")
     a.label("mr_nd")
+    if shtrk:                                             # the track pressed with Shift over the page: a plain release too
+        E(cmp_imm, 1, 8)
+        E(b_cond, "mr_nb", "hs")
+        E(mov_reg, 2, 4)
+        E(adds_imm8, 2, O_BACK)
+        E(ldrb_imm, 2, 2, 0)
+        E(subs_imm8, 2, 1)
+        E(cmp_reg, 2, 1)
+        E(b_cond, "mr_nb", "ne")
+        if shkeep:                                        # the stock's release, then Shift's flag as the Shift button is
+            E(ldr_sp, 0, 0)
+            E(ldr_sp, 1, 4)
+            E(bl, L["prev_rel"])
+            E(str_sp, 0, 0)
+            imm32(0, C.CTRL)
+            E(ldr_imm, 0, 0, O_SHIFTF)
+            E(movs_imm, 1, 0)
+            E(bl, PARAM_GET)
+            imm32(1, C.CTRL + O_HELD)
+            E(ldr_imm, 1, 1, 0)
+            E(lsrs_imm, 1, 1, BIT_SHIFT)
+            E(movs_imm, 2, 1)
+            E(ands_reg, 1, 2)
+            E(strb_imm, 1, 0, 0)
+            E(pop_list, [0, 1, 2, 3, 4], pc=True)
+        E(bl, L["c_cishift"])
+        E(cmp_imm, 0, 0)
+        E(b_cond, "mr_ns", "eq")
+        plain("prev_rel", 2)
+        a.label("mr_ns")
+        E(ldr_sp, 1, 4)
+        E(ldrb_imm, 0, 4, O_FL)
+        a.label("mr_nb")
     E(lsls_imm, 2, 0, 31)
     E(b_cond, "mr_go", "pl")
     E(cmp_imm, 1, 8)
@@ -575,6 +825,50 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     a.label("mr_go")
     E(raw, C.popw([0, 1, 2, 3, 4], lr=True))
     E(b_w, L["prev_rel"])
+
+    if views:
+        # ---- c_msgpad / c_msgrel (heads of the pad press / release: r0 = ctrl, r1 = pad, r2 = velocity): the page open on another
+        #      view: its pads are the page's (the Patterns view's go through its slots)
+        a.label("c_msgpad")
+        E(push_list, [0, 1, 2, 3, 4], lr=True)
+        imm32(4, SLOT)
+        E(ldrb_imm, 0, 4, O_FL)
+        E(lsls_imm, 0, 0, 31)
+        far("gp_go", "pl")
+        E(ldr_sp, 1, 4)
+        E(cmp_imm, 1, 32)
+        far("gp_go", "hs")
+        on_xv("gp_go")
+        E(ldr_sp, 1, 4)
+        E(ldr_sp, 2, 8)
+        E(bl, "c_mspad")
+        E(pop_list, [0, 1, 2, 3, 4], pc=True)
+        a.label("gp_go")
+        E(raw, C.popw([0, 1, 2, 3, 4], lr=True))
+        E(b_w, L["prev_ppad"])
+
+        a.label("c_msgrel")
+        E(push_list, [0, 1, 2, 3, 4], lr=True)
+        imm32(4, SLOT)
+        E(ldr_sp, 1, 4)
+        E(cmp_imm, 1, 32)
+        far("gr_go", "hs")
+        E(ldr_imm, 2, 4, O_PADS)
+        E(movs_imm, 3, 1)
+        E(lsls_reg, 3, 1)
+        E(tst_reg, 2, 3)
+        far("gr_go", "eq")
+        on_xv("gr_go")
+        E(ldr_sp, 1, 4)
+        E(ldr_imm, 2, 4, O_PADS)
+        E(movs_imm, 3, 1)
+        E(lsls_reg, 3, 1)
+        E(bics_reg, 2, 3)
+        E(str_imm, 2, 4, O_PADS)
+        E(pop_list, [0, 1, 2, 3, 4], pc=True)
+        a.label("gr_go")
+        E(raw, C.popw([0, 1, 2, 3, 4], lr=True))
+        E(b_w, L["prev_prel"])
 
     # ---- c_mspad (the Patterns view's slot 0: r0 = view, r1 = pad, r2 = velocity): on the page, a setting's pad picks its value
     a.label("c_mspad")
@@ -611,7 +905,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(ands_reg, 2, 6)
         E(movs_imm, 3, 0)
         E(bl, "c_mtbits")
-        E(b, "mp_x")
+        E(b, LVX)
         a.label("mp_p1")
     if norep:                                             # page 2, column 5: Repeats (row 1 On, row 2 Off)
         E(ldrb_imm, 2, 4, O_PAGE)
@@ -628,7 +922,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(lsls_imm, 2, 6, NR_BIT)
         E(movs_imm, 3, 0)
         E(bl, "c_mtbits")
-        E(b, "mp_x")
+        E(b, LVX)
         a.label("mp_q1")
     if keep1:                                             # page 2, column 6: Keep slot 1 (row 1 Off, row 2 On)
         E(ldrb_imm, 2, 4, O_PAGE)
@@ -645,8 +939,26 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(lsls_imm, 2, 6, K1_BIT)
         E(movs_imm, 3, 0)
         E(bl, "c_mtbits")
-        E(b, "mp_x")
+        E(b, LVX)
         a.label("mp_k1")
+    if live:                                              # page 2, column 7 (livecol: column 1 of both pages): Live (row 1 Off, row 2 On)
+        if not livecol:
+            E(ldrb_imm, 2, 4, O_PAGE)
+            E(cmp_imm, 2, 0)
+            E(b_cond, "mp_l1", "eq")
+        E(cmp_imm, 5, LV_COL)
+        E(b_cond, "mp_l1", "ne")
+        E(movs_imm, 2, 3)
+        E(ands_reg, 6, 2)
+        E(cmp_imm, 6, 2)
+        E(b_cond, "mp_x", "hs")
+        E(movs_imm, 0, B_VAL2)
+        E(movs_imm, 1, 1 << LV_BIT)
+        E(lsls_imm, 2, 6, LV_BIT)
+        E(movs_imm, 3, 0)
+        E(bl, "c_mtbits")
+        E(b, "mp_x")
+        a.label("mp_l1")
     for k, (c, n) in enumerate(zip(COLS, NVAL)):
         E(cmp_imm, 5, c)
         E(b_cond, f"mp_c{k}", "ne")
@@ -666,6 +978,23 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(mov_reg, 2, 6)
         E(movs_imm, 3, 0)
         E(bl, "c_mtbits")
+        if live:                                          # When: Live On and Every chain end start as a tap does
+            E(cmp_imm, 7, B_VAL + 3)
+            E(b_cond, "mp_lv", "ne")
+            E(cmp_imm, 6, 1)
+            E(b_cond, "mp_x", "ne")
+            E(bl, "c_mtvals")
+            E(ldrb_imm, 0, 4, O_VAL2)
+            E(lsrs_imm, 0, 0, LV_BIT + 1)
+            E(b_cond, "mp_x", "cc")
+            E(bl, "c_mtdo")
+            E(b, "mp_x")
+            a.label("mp_lv")                              # Live On: the lists of the tracks that are on follow the settings
+            E(bl, "c_mtvals")
+            E(ldrb_imm, 0, 4, O_VAL2)
+            E(lsrs_imm, 0, 0, LV_BIT + 1)
+            E(b_cond, "mp_x", "cc")
+            E(bl, "c_mtlive")
     else:
         E(bl, "c_mtw")
         E(cmp_imm, 0, 0)
@@ -741,7 +1070,34 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(cmp_imm, 0, 0)
     far("mo_x", "eq")
     imm32(4, SLOT)
-    on_pv("mo_off")
+    if bounce:                                            # the closing button released: after a hold, on a page's view, the page again
+        E(mov_reg, 2, 4)
+        E(adds_imm8, 2, O_BACK)
+        E(ldrb_imm, 0, 2, 0)
+        E(cmp_imm, 0, 0)
+        far("bo_n", "eq")
+        E(subs_imm8, 0, 1)
+        imm32(1, C.CTRL + O_HELD)
+        E(ldr_imm, 1, 1, 0)
+        E(lsrs_reg, 1, 0)
+        E(lsls_imm, 1, 1, 31)
+        far("bo_n", "mi")
+        E(movs_imm, 0, 0)
+        E(strb_imm, 0, 2, 0)
+        imm32(1, C.HAL_TICK)
+        E(ldr_imm, 1, 1, 0)
+        E(ldr_imm, 0, 2, O_BTICK - O_BACK)
+        E(subs_reg, 1, 1, 0)
+        E(movw, 0, HOLD_MS)
+        E(cmp_reg, 1, 0)
+        far("bo_n", "lo")
+        on_mv("bo_n")
+        E(ldrb_imm, 0, 4, O_FL)
+        E(movs_imm, 1, FL_OPEN)
+        E(orrs_reg, 0, 1)
+        E(strb_imm, 0, 4, O_FL)
+        a.label("bo_n")
+    on_mv("mo_off")
     E(ldrb_imm, 0, 4, O_FL)
     E(movs_imm, 1, FL_DUP | FL_HELD)
     E(ands_reg, 1, 0)
@@ -765,6 +1121,8 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(ldrb_imm, 0, 4, O_FL)
     E(lsls_imm, 0, 0, 31)
     E(b_cond, "mo_pg", "mi")
+    if views:                                             # closed on another view: only Duplicate's light with Shift held
+        on_pv("mo_nv")
     if shiftstock:                                        # Shift held: the stock's track buttons (shiftpads: the list pads kept); Duplicate ours
         E(bl, L["c_cishift"])
         E(cmp_imm, 0, 0)
@@ -777,6 +1135,16 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             held_clear(0)
             far("mo_x", "eq")
             E(bl, "c_mscltb")
+            if clrdup:                                    # Clear held, a track with a list: Duplicate red (a tap ends every list)
+                E(bl, "c_mtany")
+                E(cmp_imm, 0, 0)
+                E(b_cond, "mo_nr", "eq")
+                imm32(0, COLOURS + 4 * CLR_RED)
+                E(ldr_imm, 0, 0, 0)
+                E(mov_reg, 1, 5)
+                E(adds_imm8, 1, HI)
+                E(str_imm, 0, 1, 4 * LED_DUP - HI)
+                a.label("mo_nr")
         E(b, "mo_x")
         a.label("mo_sh")
         if shiftpads and listpads:
@@ -795,9 +1163,14 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(cmp_imm, 0, 0)
         E(b_cond, "mo_x", "eq")
     if greendup:                                          # closed, Shift held: Duplicate green, dim; down, full
-        if pclrv:                                         # Clear held too: red (a tap ends every list)
+        a.label("mo_gd")
+        if pclrv:                                         # Clear held too: red (a tap ends every list); clrdup: only with a list
             held_clear(0)
             E(b_cond, "mo_gr", "eq")
+            if clrdup:
+                E(bl, "c_mtany")
+                E(cmp_imm, 0, 0)
+                E(b_cond, "mo_gr", "eq")
             imm32(0, COLOURS + 4 * CLR_RED)
             E(ldr_imm, 0, 0, 0)
             E(b, "mo_dl")
@@ -825,6 +1198,22 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     E(adds_imm8, 1, HI)
     E(str_imm, 0, 1, 4 * LED_DUP - HI)
     E(b, "mo_x")
+    if views:                                             # another view, closed: Shift held as on the Patterns view; Clear held: red with a list
+        a.label("mo_nv")
+        E(bl, L["c_cishift"])
+        E(cmp_imm, 0, 0)
+        far("mo_gd", "ne")
+        held_clear(0)
+        far("mo_x", "eq")
+        E(bl, "c_mtany")
+        E(cmp_imm, 0, 0)
+        far("mo_x", "eq")
+        imm32(0, COLOURS + 4 * CLR_RED)
+        E(ldr_imm, 0, 0, 0)
+        E(mov_reg, 1, 5)
+        E(adds_imm8, 1, HI)
+        E(str_imm, 0, 1, 4 * LED_DUP - HI)
+        E(b, "mo_x")
     a.label("mo_off")                                     # off the Patterns view: the page closed
     E(ldrb_imm, 0, 4, O_FL)
     E(movs_imm, 1, FL_OPEN)
@@ -837,6 +1226,22 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(b_cond, "mo_pd", "eq")
         E(bl, "c_mslist")
         E(bl, "c_mscltb")
+        if clrpage:                                       # the arrows as the Patterns view's: the other page's arrow white
+            imm32(0, PV)
+            E(raw, ldrb_w(0, 0, O_PV_PAGE))
+            imm32(1, WHITE)
+            E(movs_imm, 2, 0)
+            E(mov_reg, 3, 5)
+            E(adds_imm8, 3, HI)
+            E(cmp_imm, 0, 0)
+            E(b_cond, "mo_a1", "ne")
+            E(str_imm, 1, 3, 4 * LED_DOWN - HI)
+            E(str_imm, 2, 3, 4 * LED_UP - HI)
+            E(b, "mo_ax")
+            a.label("mo_a1")
+            E(str_imm, 2, 3, 4 * LED_DOWN - HI)
+            E(str_imm, 1, 3, 4 * LED_UP - HI)
+            a.label("mo_ax")
         imm32(0, COLOURS + 4 * GREEN)                     # Duplicate: the page's green pulse (still on the page)
         E(ldr_imm, 7, 0, 0)
         E(mov_reg, 0, 7)
@@ -866,6 +1271,21 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(bl, "c_msred")
         a.label("mo_xx")
     E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+    if clrdup:
+        # ---- c_mtany() -> r0 = not 0 when a track has a list; clobbers r1-r3
+        a.label("c_mtany")
+        E(push_list, [4], lr=True)
+        E(bl, LS)
+        E(cmp_imm, 0, 0)
+        E(b_cond, "an_x", "eq")
+        E(movs_imm, 1, 0)
+        for t in range(8):
+            E(raw, ldrb_w(2, 0, B_LISTS + LIST_LEN * t))
+            E(orrs_reg, 1, 2)
+        E(mov_reg, 0, 1)
+        a.label("an_x")
+        E(pop_list, [4], pc=True)
 
     if pclrv:
         # ---- c_msmark(r0 = tracks, bit t): their lists just deleted, their buttons red for RED_MS; clobbers r0-r3
@@ -927,7 +1347,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         a.label("c_mtclred")
         E(push_list, [4], lr=True)
         E(movs_imm, 4, 0)
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(cmp_imm, 0, 0)
         E(b_cond, "mcr_c", "eq")
         for t in range(8):
@@ -954,7 +1374,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             E(movs_imm, 1, DIMW)
             E(bl, L["c_tmscl"])
             E(mov_reg, 4, 0)
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(mov_reg, 6, 0)
         imm32(0, COLOURS + 4 * GREEN)
         E(ldr_imm, 7, 0, 0)
@@ -982,7 +1402,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         # ---- c_msgreen (r5 = the out RGB words): the track buttons of the tracks with a list soft green; clobbers r0-r3, r6, r7
         a.label("c_msgreen")
         E(push_list, [3], lr=True)
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(cmp_imm, 0, 0)
         E(b_cond, "mg_x", "eq")
         E(mov_reg, 6, 0)
@@ -1029,7 +1449,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             E(bics_reg, 0, 2)
             E(strb_imm, 0, 1, O_FL)
             a.label("ml2_h")
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(cmp_imm, 0, 0)
         (farw if vlock else far)("ml2_x", "eq")
         E(mov_reg, 6, 0)
@@ -1135,7 +1555,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     if pageclr:                                           # Clear held: the tracks with a list green, the others dark
         held_clear(0)
         E(b_cond, "md_cx", "eq")
-        E(bl, "c_mtblk")
+        E(bl, LS)
         E(mov_reg, 6, 0)
         imm32(0, COLOURS + 4 * GREEN)
         E(ldr_imm, 7, 0, 0)
@@ -1152,6 +1572,25 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             a.label(f"md_c{t}")
             E(str_imm, 1, 2, 4 * t)
         a.label("md_cx")
+    if shtrkled:                                          # Shift held: the track buttons go to the tracks, so a track view's look
+        E(bl, L["c_cishift"])                             # (each track's colour dim, the selected one full)
+        E(cmp_imm, 0, 0)
+        far("md_sx", "eq")
+        imm32(0, CONT)
+        E(bl, SELTRK)
+        E(mov_reg, 6, 0)
+        for t in range(8):
+            imm32(0, COLOURS + 4 * TRK_SLOTS[t])
+            E(ldr_imm, 7, 0, 0)
+            E(cmp_imm, 6, t)
+            E(b_cond, f"md_s{t}", "eq")
+            scl(DIM)
+            E(mov_reg, 7, 0)
+            a.label(f"md_s{t}")
+            E(mov_reg, 0, 5)
+            E(adds_imm8, 0, 4 * LED_TRK0)
+            E(str_imm, 7, 0, 4 * t)
+        a.label("md_sx")
     E(movs_imm, 0, 0)
     for c in range(8):                                    # the columns without a setting: dark
         if c in COLS:
@@ -1242,7 +1681,35 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             a.label("md_k1")
             E(str_imm, 0, 5, 4 * (8 * 0 + K1_COL))
             E(str_imm, 2, 5, 4 * (8 * 1 + K1_COL))
+        if live and not livecol:                          # column 7: Live Off / On, the chosen full
+            E(ldrb_imm, 1, 4, O_VAL2)
+            E(lsrs_imm, 1, 1, LV_BIT)
+            E(lsls_imm, 1, 1, 31)                         # mi: On
+            E(mov_reg, 0, 7)
+            E(mov_reg, 2, 6)
+            E(b_cond, "md_lv", "pl")
+            E(mov_reg, 0, 6)
+            E(mov_reg, 2, 7)
+            a.label("md_lv")
+            E(str_imm, 0, 5, 4 * (8 * 0 + LV_COL))
+            E(str_imm, 2, 5, 4 * (8 * 1 + LV_COL))
         a.label("md_am")
+    if livecol:                                           # column 1 of both pages: Live Off / On, the chosen full
+        imm32(0, COLOURS + 4 * GREEN)
+        E(ldr_imm, 7, 0, 0)
+        scl(DIM)
+        E(mov_reg, 6, 0)
+        E(ldrb_imm, 1, 4, O_VAL2)
+        E(lsrs_imm, 1, 1, LV_BIT)
+        E(lsls_imm, 1, 1, 31)                             # mi: On
+        E(mov_reg, 0, 7)
+        E(mov_reg, 2, 6)
+        E(b_cond, "md_lc", "pl")
+        E(mov_reg, 0, 6)
+        E(mov_reg, 2, 7)
+        a.label("md_lc")
+        E(str_imm, 0, 5, 4 * (8 * 0 + LV_COL))
+        E(str_imm, 2, 5, 4 * (8 * 1 + LV_COL))
     imm32(1, WHITE)
     E(movs_imm, 2, 0)
     E(mov_reg, 3, 5)
@@ -1288,20 +1755,26 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
     return a.assemble()
 
 
-def keep1_on(E, imm32, SLOT, skip, reg=1):
+def keep1_on(E, imm32, SLOT, skip, reg=1, seeds=False):
     """on to `skip` unless Keep slot 1 is On; clobbers r<reg>"""
-    imm32(reg, SLOT)
-    E(ldrb_imm, reg, reg, O_VAL2)
+    if seeds:
+        E(raw, ldrb_sp(reg, G_VAL2))
+    else:
+        imm32(reg, SLOT)
+        E(ldrb_imm, reg, reg, O_VAL2)
     E(lsrs_imm, reg, reg, K1_BIT + 1)
     E(b_cond, skip, "cc")
 
 
-def norep_check(a, E, imm32, SLOT):
+def norep_check(a, E, imm32, SLOT, seeds=False):
     """(c_mtgen's pick, r0 = the pattern, r3 = picks left, r6 = the slot, r5 = the list's length, the stack as c_mtgen's) Repeats
     Off: the pick again (mg2_rt) when it is the slot before's, the next slot's (a kept chain slot) or, for the last slot, slot 1's;
     after NR_TRIES picks the pick stays; clobbers r1, r2"""
-    imm32(1, SLOT)
-    E(ldrb_imm, 1, 1, O_VAL2)
+    if seeds:
+        E(raw, ldrb_sp(1, G_VAL2))
+    else:
+        imm32(1, SLOT)
+        E(ldrb_imm, 1, 1, O_VAL2)
     E(lsrs_imm, 1, 1, NR_BIT + 1)
     E(b_cond, "nr_ok", "cc")                              # Repeats On
     E(subs_imm8, 3, 1)
@@ -1358,13 +1831,29 @@ def norep_check(a, E, imm32, SLOT):
     a.label("nr_ok")
 
 
-def amount_mask(a, E, imm32, SLOT, keep1=False):
+G_LEN, G_TYPE, G_POOL, G_VAL2, G_RNG, G_OUT, G_FRAME = 12, 13, 14, 15, 16, 20, 24   # (seeds) c_mtgen's frame past + 11
+
+
+def rand(a, E, seeds, pushed=0):
+    """r0 = the next random word: (seeds) c_mtgen's own state, `pushed` B on the stack past its frame; clobbers r1, r2"""
+    if seeds:
+        E(mov_reg, 0, 13)
+        E(adds_imm8, 0, G_RNG + pushed)
+        E(bl, "c_mtrs")
+    else:
+        E(bl, "c_mtrand")
+
+
+def amount_mask(a, E, imm32, SLOT, keep1=False, seeds=False):
     """(c_mtgen, r5 = the list's length, r6 = the slot, the stack as c_mtgen's) [sp + 11] = the slots that change: Amount All, every
     slot; else (c x k + 2) / 4 of the c = min(length, chain's length) chain slots (k = 3 Most, 2 Some, 1 A little; at least 1), at random;
     clobbers r0-r3, r6"""
     E(movs_imm, 1, 0xFF)
     E(raw, strb_sp(1, 11))
-    E(ldrb_imm, 0, 6, O_VAL2)
+    if seeds:
+        E(raw, ldrb_sp(0, G_VAL2))
+    else:
+        E(ldrb_imm, 0, 6, O_VAL2)
     E(lsls_imm, 0, 0, 30)
     E(lsrs_imm, 0, 0, 30)
     E(cmp_imm, 0, 0)
@@ -1379,7 +1868,7 @@ def amount_mask(a, E, imm32, SLOT, keep1=False):
     if keep1:                                             # Keep slot 1 (a list of 2 or more): the chain slots after slot 1
         E(cmp_imm, 5, 2)
         E(b_cond, "am_k", "lo")
-        keep1_on(E, imm32, SLOT, "am_k", reg=1)
+        keep1_on(E, imm32, SLOT, "am_k", reg=1, seeds=seeds)
         E(subs_imm8, 3, 1)
         a.label("am_k")
     E(muls, 0, 3)
@@ -1397,7 +1886,7 @@ def amount_mask(a, E, imm32, SLOT, keep1=False):
     E(movs_imm, 6, 0)
     E(movs_imm, 3, 0)
     a.label("am_l")
-    E(bl, "c_mtrand")
+    rand(a, E, seeds, 8)
     E(lsrs_imm, 0, 0, 16)
     E(muls, 0, 5)
     E(lsrs_imm, 0, 0, 16)
@@ -1413,15 +1902,373 @@ def amount_mask(a, E, imm32, SLOT, keep1=False):
     if keep1:
         E(cmp_imm, 5, 2)
         E(b_cond, "am_s", "lo")
-        keep1_on(E, imm32, SLOT, "am_s", reg=1)
+        keep1_on(E, imm32, SLOT, "am_s", reg=1, seeds=seeds)
         E(lsls_imm, 6, 6, 1)
         a.label("am_s")
     E(raw, strb_sp(6, 11))
     a.label("am_x")
 
 
+def pend_clear(E, imm32, SLOT, t, r1=1, r2=2):
+    """(pending) track t's next key gone; clobbers r1, r2"""
+    imm32(r1, SLOT + O_PEND)
+    E(lsls_imm, r2, t, 2)
+    E(adds_reg, r1, r1, r2)
+    E(movs_imm, r2, 0)
+    E(str_imm, r2, r1, 0)
+
+
+def seeds_code(a, E, L, SLOT, imm32, crit_in, crit_out, pending=False):
+    def track_word(rd, base, t):
+        """rd = base + 4 t; clobbers r0 when rd != r0"""
+        E(lsls_imm, rd, t, 2)
+        E(adds_reg, rd, rd, base)
+
+    # ---- c_mtls() -> r0 = the lists in RAM (+ LIST_LEN t), each made again when the block's key differs from the one it was made from;
+    #      clobbers nothing else
+    a.label("c_mtls")
+    E(push_list, [1, 2, 3, 4, 5, 6, 7], lr=True)
+    E(bl, "c_mtblk")
+    E(mov_reg, 6, 0)
+    E(movs_imm, 4, 0)
+    a.label("ls_l")
+    E(movs_imm, 5, 0)
+    E(cmp_imm, 6, 0)
+    E(b_cond, "ls_k", "eq")
+    track_word(1, 6, 4)
+    E(ldr_imm, 5, 1, B_KEYS)
+    a.label("ls_k")
+    imm32(1, SLOT + O_RKEY)
+    E(lsls_imm, 2, 4, 2)
+    E(adds_reg, 1, 1, 2)
+    E(ldr_imm, 1, 1, 0)
+    E(cmp_reg, 1, 5)
+    E(b_cond, "ls_n", "eq")
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 5)
+    E(bl, "c_mtmake")
+    a.label("ls_n")
+    E(adds_imm8, 4, 1)
+    E(cmp_imm, 4, 8)
+    E(b_cond, "ls_l", "lo")
+    imm32(0, SLOT + O_LISTS)
+    E(pop_list, [1, 2, 3, 4, 5, 6, 7], pc=True)
+
+    # ---- c_mtmake(r0 = the track, r1 = a key, 0 = none): its list in RAM, made by the key; clobbers r0-r3
+    a.label("c_mtmake")
+    E(push_list, [3, 4, 5, 6, 7], lr=True)
+    E(sub_sp_imm, 12)
+    E(mov_reg, 4, 0)
+    E(mov_reg, 5, 1)
+    E(movs_imm, 0, 0)
+    for o in (0, 4, 8):
+        E(str_sp, 0, o)
+    E(cmp_imm, 5, 0)
+    E(b_cond, "mk2_s", "eq")
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 5)
+    E(mov_reg, 2, 13)
+    E(bl, "c_mtgen")
+    a.label("mk2_s")
+    imm32(6, SLOT + O_LISTS)
+    E(movs_imm, 0, LIST_LEN)
+    E(muls, 0, 4)
+    E(adds_reg, 6, 6, 0)
+    imm32(7, SLOT + O_RKEY)
+    E(lsls_imm, 0, 4, 2)
+    E(adds_reg, 7, 7, 0)
+    crit_in()
+    E(movs_imm, 2, 0)
+    a.label("mk2_c")
+    E(mov_reg, 1, 13)
+    E(ldrb_reg, 3, 1, 2)
+    E(strb_reg, 3, 6, 2)
+    E(adds_imm8, 2, 1)
+    E(cmp_imm, 2, LIST_LEN)
+    E(b_cond, "mk2_c", "lo")
+    E(str_imm, 5, 7, 0)
+    crit_out()
+    E(add_sp_imm, 12)
+    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+    # ---- c_mtsb() -> r0 = the settings now, in a key's bits 12-21; clobbers r1-r3
+    a.label("c_mtsb")
+    E(push_list, [4], lr=True)
+    E(bl, "c_mtblk")
+    E(movs_imm, 1, LEN_X)                                 # a block not ours: the defaults
+    E(cmp_imm, 0, 0)
+    E(b_cond, "sb2_x", "eq")
+    E(ldrb_imm, 1, 0, B_VAL)
+    E(movs_imm, 2, LEN_X)
+    E(eors_reg, 1, 2)
+    for off, sh in ((B_VAL + 1, 3), (B_VAL + 2, 5)):
+        E(ldrb_imm, 2, 0, off)
+        E(lsls_imm, 2, 2, sh)
+        E(orrs_reg, 1, 2)
+    E(ldrb_imm, 2, 0, B_VAL2)
+    E(movs_imm, 3, 15)
+    E(ands_reg, 2, 3)
+    E(lsls_imm, 2, 2, 6)
+    E(orrs_reg, 1, 2)
+    a.label("sb2_x")
+    E(lsls_imm, 0, 1, 12)
+    E(pop_list, [4], pc=True)
+
+    # ---- c_mtnew(r1 = the chain's first, r2 = last) -> r0 = a key with a new seed and the settings now; clobbers r1-r3
+    a.label("c_mtnew")
+    E(push_list, [4, 5], lr=True)
+    E(cmp_reg, 2, 1)
+    E(b_cond, "nw_o", "hs")
+    E(mov_reg, 3, 1)
+    E(mov_reg, 1, 2)
+    E(mov_reg, 2, 3)
+    a.label("nw_o")
+    E(lsls_imm, 4, 1, 22)
+    E(lsls_imm, 1, 2, 25)
+    E(orrs_reg, 4, 1)
+    E(bl, "c_mtrand")
+    E(lsrs_imm, 0, 0, 20)
+    E(b_cond, "nw_s", "ne")
+    E(movs_imm, 0, 1)                                     # seed 0: no list
+    a.label("nw_s")
+    E(orrs_reg, 4, 0)
+    E(bl, "c_mtsb")
+    E(orrs_reg, 0, 4)
+    E(pop_list, [4, 5], pc=True)
+
+    # ---- c_mtsetkey(r0 = the track, r1 = its key): into the block, made ours; clobbers r0-r3
+    a.label("c_mtsetkey")
+    E(push_list, [3, 4, 5, 6, 7], lr=True)
+    E(mov_reg, 4, 0)
+    E(mov_reg, 5, 1)
+    crit_in()
+    E(bl, "c_mtw")
+    E(cmp_imm, 0, 0)
+    E(b_cond, "sk2_x", "eq")
+    track_word(1, 0, 4)
+    E(str_imm, 5, 1, B_KEYS)
+    E(bl, "c_mtfix")
+    a.label("sk2_x")
+    crit_out()
+    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+    # ---- c_mtgx(r0 = the track, r1 = its chain's first, r2 = last): its slot before slot 1, a new key and its list (no pattern to pick:
+    #      no key); clobbers r0-r3. (pending) c_mtgk(r0 = the track, r1 = a key): the same with that key, its next key gone
+    if pending:
+        a.label("c_mtgx")
+        E(push_list, [4], lr=True)
+        E(mov_reg, 4, 0)
+        E(bl, "c_mtnew")
+        E(mov_reg, 1, 0)
+        E(mov_reg, 0, 4)
+        E(bl, "c_mtgk")
+        E(pop_list, [4], pc=True)
+        a.label("c_mtgk")
+    else:
+        a.label("c_mtgx")
+    E(push_list, [3, 4, 5, 6, 7], lr=True)
+    E(mov_reg, 4, 0)
+    if pending:
+        E(mov_reg, 5, 1)
+        pend_clear(E, imm32, SLOT, 4)
+    imm32(3, SLOT)
+    E(adds_reg, 3, 3, 4)
+    E(movs_imm, 0, 0xFF)
+    E(strb_imm, 0, 3, O_POS)
+    if not pending:
+        E(bl, "c_mtnew")
+        E(mov_reg, 5, 0)
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 5)
+    E(bl, "c_mtsetkey")
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 5)
+    E(bl, "c_mtmake")
+    imm32(0, SLOT + O_LISTS)
+    E(movs_imm, 1, LIST_LEN)
+    E(muls, 1, 4)
+    E(adds_reg, 0, 0, 1)
+    E(ldrb_imm, 0, 0, 0)
+    E(cmp_imm, 0, 0)
+    E(b_cond, "gx_x", "ne")
+    E(mov_reg, 0, 4)
+    E(movs_imm, 1, 0)
+    E(bl, "c_mtsetkey")
+    a.label("gx_x")
+    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+    if pending:
+        # ---- c_mtpk(r0 = the track, r1 = its chain's first, r2 = last) -> r0 = its next key, made now when it has none; clobbers r1-r3
+        a.label("c_mtpk")
+        E(push_list, [3, 4, 5, 6, 7], lr=True)
+        E(mov_reg, 4, 0)
+        imm32(5, SLOT + O_PEND)
+        E(lsls_imm, 3, 4, 2)
+        E(adds_reg, 5, 5, 3)
+        E(ldr_imm, 0, 5, 0)
+        E(cmp_imm, 0, 0)
+        E(b_cond, "pk_x", "ne")
+        E(bl, "c_mtnew")
+        E(str_imm, 0, 5, 0)
+        a.label("pk_x")
+        E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+        # ---- c_mtcommit(r0 = the track): its next key becomes its key, the list made; clobbers r0-r3
+        a.label("c_mtcommit")
+        E(push_list, [4], lr=True)
+        E(mov_reg, 4, 0)
+        imm32(1, SLOT + O_PEND)
+        E(lsls_imm, 2, 4, 2)
+        E(adds_reg, 1, 1, 2)
+        E(ldr_imm, 1, 1, 0)
+        E(mov_reg, 0, 4)
+        E(bl, "c_mtgk")
+        E(pop_list, [4], pc=True)
+
+    # ---- c_mtlive(): the keys of the tracks that are on, with a list, take the settings now (their seeds and chains kept); clobbers r0-r3
+    a.label("c_mtlive")
+    E(push_list, [3, 4, 5, 6, 7], lr=True)
+    E(bl, "c_mtsb")
+    E(mov_reg, 7, 0)
+    E(movs_imm, 4, 0)
+    a.label("lv_l")
+    E(bl, "c_mtblk")
+    E(cmp_imm, 0, 0)
+    E(b_cond, "lv_x", "eq")
+    E(ldrb_imm, 1, 0, B_OFF)
+    E(lsrs_reg, 1, 4)
+    E(lsls_imm, 1, 1, 31)
+    E(b_cond, "lv_n", "mi")                               # the track is off
+    if pending:
+        imm32(2, SLOT + O_PEND)
+        E(lsls_imm, 3, 4, 2)
+        E(adds_reg, 2, 2, 3)
+        E(ldr_imm, 3, 2, 0)
+        E(cmp_imm, 3, 0)
+        E(b_cond, "lv_k", "eq")
+        imm32(1, K_SET)
+        E(bics_reg, 3, 1)
+        E(orrs_reg, 3, 7)
+        E(str_imm, 3, 2, 0)
+        a.label("lv_k")
+    track_word(1, 0, 4)
+    E(ldr_imm, 5, 1, B_KEYS)
+    E(cmp_imm, 5, 0)
+    E(b_cond, "lv_n", "eq")
+    imm32(0, K_SET)
+    E(bics_reg, 5, 0)
+    E(orrs_reg, 5, 7)
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 5)
+    E(bl, "c_mtsetkey")
+    a.label("lv_n")
+    E(adds_imm8, 4, 1)
+    E(cmp_imm, 4, 8)
+    E(b_cond, "lv_l", "lo")
+    E(bl, "c_mtls")
+    a.label("lv_x")
+    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+
+
+def scene_seeds(a, E, L, SLOT, imm32, pending=False):
+    """(seeds) a scene holds the tracks' keys, 28 bits each, in place of their lists"""
+    # ---- c_scsave(r0 = scene): the tracks' keys into the scene; clobbers r0-r3
+    a.label("c_scsave")
+    E(push_list, [4, 5, 6, 7], lr=True)
+    E(sub_sp_imm, 32)
+    E(mov_reg, 4, 0)
+    E(movs_imm, 0, 0)
+    for o in range(0, 32, 4):
+        E(str_sp, 0, o)
+    E(movs_imm, 7, 0)
+    E(bl, "c_mtblk")
+    E(cmp_imm, 0, 0)
+    E(b_cond, "sv_w", "eq")
+    E(mov_reg, 6, 0)
+    E(movs_imm, 5, 0)
+    a.label("sv_t")
+    E(lsls_imm, 0, 5, 2)
+    E(adds_reg, 0, 0, 6)
+    E(ldr_imm, 3, 0, B_KEYS)
+    E(orrs_reg, 7, 3)
+    E(movs_imm, 1, 28)
+    E(muls, 1, 5)
+    E(movs_imm, 2, 28)
+    E(mov_reg, 0, 13)
+    E(bl, "c_scput")
+    E(adds_imm8, 5, 1)
+    E(cmp_imm, 5, 8)
+    E(b_cond, "sv_t", "lo")
+    a.label("sv_w")
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 13)
+    E(mov_reg, 2, 7)
+    E(bl, "c_scwr")
+    E(add_sp_imm, 32)
+    E(pop_list, [4, 5, 6, 7], pc=True)
+
+    # ---- c_scget(r0 = scene, r1 = track, r2 = peek) -> r0 = the scene's slot 1 for the track, 0xFF = none; not peek: the scene's key
+    #      becomes the track's (slot 1 playing), none ends the track's list; clobbers r1-r3
+    a.label("c_scget")
+    E(push_list, [4, 5, 6, 7], lr=True)
+    E(sub_sp_imm, 32)
+    E(mov_reg, 4, 0)
+    E(mov_reg, 5, 1)
+    E(mov_reg, 6, 2)
+    E(mov_reg, 1, 13)
+    E(bl, "c_scrd")
+    E(cmp_imm, 0, 0)
+    E(b_cond, "sg_no", "eq")
+    E(mov_reg, 0, 13)
+    E(movs_imm, 1, 28)
+    E(muls, 1, 5)
+    E(movs_imm, 2, 28)
+    E(bl, "c_scbits")
+    E(mov_reg, 7, 0)
+    E(cmp_imm, 7, 0)
+    E(b_cond, "sg_no", "eq")
+    E(cmp_imm, 6, 0)
+    E(b_cond, "sg_ld", "eq")
+    E(mov_reg, 0, 5)                                      # peek: the list the key makes, here
+    E(mov_reg, 1, 7)
+    E(mov_reg, 2, 13)
+    E(bl, "c_mtgen")
+    E(mov_reg, 0, 13)
+    E(b, "sg_s1")
+    a.label("sg_ld")
+    if pending:
+        pend_clear(E, imm32, SLOT, 5)
+    E(mov_reg, 0, 5)
+    E(mov_reg, 1, 7)
+    E(bl, "c_mtsetkey")
+    imm32(1, SLOT)
+    E(adds_reg, 1, 1, 5)
+    E(movs_imm, 2, 0)
+    E(strb_imm, 2, 1, O_POS)
+    E(bl, "c_mtls")
+    E(movs_imm, 1, LIST_LEN)
+    E(muls, 1, 5)
+    E(adds_reg, 0, 0, 1)
+    a.label("sg_s1")                                      # r0 = the list
+    E(ldrb_imm, 1, 0, 0)
+    E(cmp_imm, 1, 0)
+    E(b_cond, "sg_ff", "eq")
+    E(ldrb_imm, 0, 0, 1)
+    E(b, "sg_x")
+    a.label("sg_no")
+    E(cmp_imm, 6, 0)
+    E(b_cond, "sg_ff", "ne")
+    E(mov_reg, 0, 5)
+    E(bl, "c_mtcl")
+    a.label("sg_ff")
+    E(movs_imm, 0, 0xFF)
+    a.label("sg_x")
+    E(add_sp_imm, 32)
+    E(pop_list, [4, 5, 6, 7], pc=True)
+
+
 def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenesave=False, amount=False, norep=False,
-                keep1=False, hidepause=False):
+                keep1=False, hidepause=False, seeds=False, pending=False, scchain=False):
     # ---- c_mtbits(r0 = offset in the block, r1 = bits cleared, r2 = bits set, r3 = bits flipped): the block made ours; clobbers r0-r3
     a.label("c_mtbits")
     E(push_list, [3, 4, 5, 6, 7], lr=True)
@@ -1443,49 +2290,62 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     crit_out()
     E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
+    if seeds:
+        seeds_code(a, E, L, SLOT, imm32, crit_in, crit_out, pending)
+    if not seeds:
     # ---- c_mtlist(r0 = the track, r1 = its list, LIST_LEN B): into the block; clobbers r0-r3
-    a.label("c_mtlist")
-    E(push_list, [3, 4, 5, 6, 7], lr=True)
-    E(mov_reg, 4, 0)
-    E(mov_reg, 5, 1)
-    crit_in()
-    E(bl, "c_mtw")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "ml_x", "eq")
-    E(mov_reg, 6, 0)
-    E(movs_imm, 1, LIST_LEN)
-    E(muls, 1, 4)
-    E(adds_imm8, 1, B_LISTS)
-    E(adds_reg, 1, 6, 1)
-    E(movs_imm, 2, 0)
-    a.label("ml_l")
-    E(ldrb_reg, 3, 5, 2)
-    E(strb_reg, 3, 1, 2)
-    E(adds_imm8, 2, 1)
-    E(cmp_imm, 2, LIST_LEN)
-    E(b_cond, "ml_l", "lo")
-    E(mov_reg, 0, 6)
-    E(bl, "c_mtfix")
-    a.label("ml_x")
-    crit_out()
-    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+        a.label("c_mtlist")
+        E(push_list, [3, 4, 5, 6, 7], lr=True)
+        E(mov_reg, 4, 0)
+        E(mov_reg, 5, 1)
+        crit_in()
+        E(bl, "c_mtw")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "ml_x", "eq")
+        E(mov_reg, 6, 0)
+        E(movs_imm, 1, LIST_LEN)
+        E(muls, 1, 4)
+        E(adds_imm8, 1, B_LISTS)
+        E(adds_reg, 1, 6, 1)
+        E(movs_imm, 2, 0)
+        a.label("ml_l")
+        E(ldrb_reg, 3, 5, 2)
+        E(strb_reg, 3, 1, 2)
+        E(adds_imm8, 2, 1)
+        E(cmp_imm, 2, LIST_LEN)
+        E(b_cond, "ml_l", "lo")
+        E(mov_reg, 0, 6)
+        E(bl, "c_mtfix")
+        a.label("ml_x")
+        crit_out()
+        E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
     # ---- c_mtcl(r0 = the track): its list and its renew bit gone (a block that is ours only); clobbers r0-r3
     a.label("c_mtcl")
     E(push_list, [3, 4, 5, 6, 7], lr=True)
     E(mov_reg, 4, 0)
+    if pending:
+        pend_clear(E, imm32, SLOT, 4)
     crit_in()
     E(bl, "c_mtblk")
     E(cmp_imm, 0, 0)
     E(b_cond, "mc_x", "eq")
     E(mov_reg, 6, 0)
-    E(movs_imm, 1, LIST_LEN)
-    E(muls, 1, 4)
-    E(adds_imm8, 1, B_LISTS)
-    E(adds_reg, 5, 6, 1)
-    E(ldrb_imm, 2, 5, 0)
-    E(movs_imm, 3, 0)
-    E(strb_imm, 3, 5, 0)
+    if seeds:
+        E(lsls_imm, 1, 4, 2)
+        E(adds_imm8, 1, B_KEYS)
+        E(adds_reg, 5, 6, 1)
+        E(ldr_imm, 2, 5, 0)
+        E(movs_imm, 3, 0)
+        E(str_imm, 3, 5, 0)
+    else:
+        E(movs_imm, 1, LIST_LEN)
+        E(muls, 1, 4)
+        E(adds_imm8, 1, B_LISTS)
+        E(adds_reg, 5, 6, 1)
+        E(ldrb_imm, 2, 5, 0)
+        E(movs_imm, 3, 0)
+        E(strb_imm, 3, 5, 0)
     E(movs_imm, 7, 1)
     E(lsls_reg, 7, 4)
     E(raw, ldrb_w(3, 6, B_RENEW))
@@ -1515,6 +2375,17 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(str_imm, 1, 0, O_RNG)
     E(mov_reg, 0, 1)
     E(raw, bytes([0x70, 0x47]))
+    if seeds:
+        # ---- c_mtrs(r0 = a random state) -> r0 = its next word; clobbers r1, r2
+        a.label("c_mtrs")
+        E(ldr_imm, 1, 0, 0)
+        imm32(2, LCG_A)
+        E(muls, 1, 2)
+        imm32(2, LCG_C)
+        E(adds_reg, 1, 1, 2)
+        E(str_imm, 1, 0, 0)
+        E(mov_reg, 0, 1)
+        E(raw, bytes([0x70, 0x47]))
 
     # ---- c_mtpool(r0 = the track) -> r0 = its patterns with a hit from the first to the last step (bit p); clobbers r1-r3
     a.label("c_mtpool")
@@ -1567,22 +2438,44 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
     # ---- c_mtgen(r0 = the track, r1 = its chain's length, (amount) r2 = its chain's first): a new list by the settings into the block;
-    #      clobbers r0-r3. The stack: + 0 the list, + 9 the chain's length, + 10 its first, + 11 (amount) the slots that change (bit i)
+    #      (seeds: r1 = a key, r2 = the list's room, LIST_LEN B: the list the key makes); clobbers r0-r3.
+    #      The stack: + 0 the list, + 9 the chain's length, + 10 its first, + 11 (amount) the slots that change (bit i); (seeds) G_*
     a.label("c_mtgen")
     E(push_list, [3, 4, 5, 6, 7], lr=True)
-    E(sub_sp_imm, 12)
+    E(sub_sp_imm, G_FRAME if seeds else 12)
     E(mov_reg, 4, 0)
-    E(mov_reg, 5, 1)
+    if not seeds:
+        E(mov_reg, 5, 1)
     E(movs_imm, 0, 0)
-    for o in (0, 4, 8):
+    for o in ((0, 4, 8, 12) if seeds else (0, 4, 8)):
         E(str_sp, 0, o)
-    if amount:
-        E(raw, strb_sp(1, 9))
-        E(raw, strb_sp(2, 10))
-    E(bl, "c_mtvals")
-    imm32(6, SLOT)
+    if seeds:
+        E(str_sp, 2, G_OUT)
+        E(lsls_imm, 0, 1, 20)
+        E(lsrs_imm, 0, 0, 20)
+        E(str_sp, 0, G_RNG)                               # the seed
+        for off, sh, n in ((G_LEN, 12, 3), (G_TYPE, 15, 2), (G_POOL, 17, 1), (G_VAL2, 18, 4), (10, 22, 3)):
+            E(lsls_imm, 0, 1, 32 - sh - n)
+            E(lsrs_imm, 0, 0, 32 - n)
+            E(raw, strb_sp(0, off))
+        E(lsls_imm, 0, 1, 4)
+        E(lsrs_imm, 0, 0, 29)                             # the chain's last
+        E(raw, ldrb_sp(2, 10))
+        E(subs_reg, 0, 0, 2)
+        E(adds_imm8, 0, 1)
+        E(raw, strb_sp(0, 9))
+        E(mov_reg, 5, 0)
+    else:
+        if amount:
+            E(raw, strb_sp(1, 9))
+            E(raw, strb_sp(2, 10))
+        E(bl, "c_mtvals")
+        imm32(6, SLOT)
     E(movs_imm, 7, 0xFF)
-    E(ldrb_imm, 0, 6, O_VALS + 2)
+    if seeds:
+        E(raw, ldrb_sp(0, G_POOL))
+    else:
+        E(ldrb_imm, 0, 6, O_VALS + 2)
     E(cmp_imm, 0, 0)
     E(b_cond, "mg2_pl", "ne")                             # Pool All
     E(mov_reg, 0, 4)
@@ -1594,8 +2487,12 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
         far("mg2_w", "eq")                                # no pattern with a hit: no list
     else:
         E(b_cond, "mg2_w", "eq")
-    E(ldrb_imm, 1, 6, O_VALS + 1)
-    E(ldrb_imm, 0, 6, O_VALS)
+    if seeds:
+        E(raw, ldrb_sp(1, G_TYPE))
+        E(raw, ldrb_sp(0, G_LEN))
+    else:
+        E(ldrb_imm, 1, 6, O_VALS + 1)
+        E(ldrb_imm, 0, 6, O_VALS)
     E(adds_imm8, 0, 1)                                    # r0 = Length
     E(cmp_imm, 1, 0)
     E(b_cond, "mg2_c", "eq")
@@ -1606,7 +2503,7 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     a.label("mg2_r")
     E(push_list, [4], lr=False)
     E(mov_reg, 4, 0)
-    E(bl, "c_mtrand")
+    rand(a, E, seeds, 4)
     E(lsrs_imm, 0, 0, 16)
     E(muls, 0, 4)
     E(lsrs_imm, 0, 0, 16)
@@ -1623,7 +2520,7 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(movs_imm, 5, 8)
     a.label("mg2_c8")
     if amount:
-        amount_mask(a, E, imm32, SLOT, keep1)
+        amount_mask(a, E, imm32, SLOT, keep1, seeds)
     E(mov_reg, 0, 13)
     E(strb_imm, 5, 0, 0)
     E(movs_imm, 6, 0)
@@ -1633,7 +2530,7 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
         E(b_cond, "mg2_k1", "ne")
         E(cmp_imm, 5, 2)
         E(b_cond, "mg2_k1", "lo")
-        keep1_on(E, imm32, SLOT, "mg2_k1")
+        keep1_on(E, imm32, SLOT, "mg2_k1", seeds=seeds)
         E(raw, ldrb_sp(0, 10))
         E(b, "mg2_st")
         a.label("mg2_k1")
@@ -1652,14 +2549,14 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     if norep:
         E(movs_imm, 3, NR_TRIES)
         a.label("mg2_rt")
-    E(bl, "c_mtrand")
+    rand(a, E, seeds)
     E(lsrs_imm, 0, 0, 29)
     E(movs_imm, 1, 1)
     E(lsls_reg, 1, 0)
     E(tst_reg, 1, 7)
     E(b_cond, "mg2_rt" if norep else "mg2_rn", "eq")
     if norep:
-        norep_check(a, E, imm32, SLOT)
+        norep_check(a, E, imm32, SLOT, seeds)
     a.label("mg2_st")
     E(mov_reg, 1, 13)
     E(adds_reg, 1, 1, 6)
@@ -1668,35 +2565,48 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(cmp_reg, 6, 5)
     E(b_cond, "mg2_l", "lo")
     a.label("mg2_w")
-    E(mov_reg, 0, 4)
-    E(mov_reg, 1, 13)
-    E(bl, "c_mtlist")
-    E(add_sp_imm, 12)
+    if seeds:
+        E(ldr_sp, 1, G_OUT)
+        E(movs_imm, 2, 0)
+        a.label("mg2_cp")
+        E(mov_reg, 0, 13)
+        E(ldrb_reg, 3, 0, 2)
+        E(strb_reg, 3, 1, 2)
+        E(adds_imm8, 2, 1)
+        E(cmp_imm, 2, LIST_LEN)
+        E(b_cond, "mg2_cp", "lo")
+        E(add_sp_imm, G_FRAME)
+    else:
+        E(mov_reg, 0, 4)
+        E(mov_reg, 1, 13)
+        E(bl, "c_mtlist")
+        E(add_sp_imm, 12)
     E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
+    if not seeds:
     # ---- c_mtgx(r0 = the track, r1 = its chain's first, r2 = last): its slot before slot 1, a new list; clobbers r0-r3
-    a.label("c_mtgx")
-    E(push_list, [4], lr=True)
-    E(mov_reg, 4, 0)
-    imm32(3, SLOT)
-    E(adds_reg, 3, 3, 4)
-    E(movs_imm, 0, 0xFF)
-    E(strb_imm, 0, 3, O_POS)
-    E(cmp_reg, 2, 1)
-    E(b_cond, "mx_o", "hs")
-    E(mov_reg, 3, 1)
-    E(mov_reg, 1, 2)
-    E(mov_reg, 2, 3)
-    a.label("mx_o")
-    if amount:
+        a.label("c_mtgx")
+        E(push_list, [4], lr=True)
+        E(mov_reg, 4, 0)
+        imm32(3, SLOT)
+        E(adds_reg, 3, 3, 4)
+        E(movs_imm, 0, 0xFF)
+        E(strb_imm, 0, 3, O_POS)
+        E(cmp_reg, 2, 1)
+        E(b_cond, "mx_o", "hs")
         E(mov_reg, 3, 1)
-    E(subs_reg, 1, 2, 1)
-    E(adds_imm8, 1, 1)
-    if amount:
+        E(mov_reg, 1, 2)
         E(mov_reg, 2, 3)
-    E(mov_reg, 0, 4)
-    E(bl, "c_mtgen")
-    E(pop_list, [4], pc=True)
+        a.label("mx_o")
+        if amount:
+            E(mov_reg, 3, 1)
+        E(subs_reg, 1, 2, 1)
+        E(adds_imm8, 1, 1)
+        if amount:
+            E(mov_reg, 2, 3)
+        E(mov_reg, 0, 4)
+        E(bl, "c_mtgen")
+        E(pop_list, [4], pc=True)
 
     # ---- c_mtdo(): the mutate: On the tap, a list now for each track that is on; Every chain end, their renew bits; clobbers r0-r3
     a.label("c_mtdo")
@@ -1792,6 +2702,28 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(raw, ldrb_sp(0, F + 0x44))
     E(cmp_imm, 0, 0)
     E(b_cond, "nx_ns", "eq")
+    if scchain:                                           # the look-ahead: a change only to another scene or one asked for
+        E(mov_reg, 0, 11)
+        E(cmp_imm, 0, 0)
+        E(b_cond, "nx_sc", "eq")
+        imm32(0, ENG + O_SCASK)
+        E(ldr_imm, 0, 0, 0)
+        E(movs_imm, 1, 1)
+        E(bl, PARAM_GET)
+        E(ldrb_imm, 0, 0, 0)
+        E(cmp_imm, 0, 0)
+        E(b_cond, "nx_sc", "ne")
+        imm32(0, ENG + O_SCENE)
+        E(ldr_imm, 0, 0, 0)
+        E(movs_imm, 1, 0)
+        E(bl, PARAM_GET)
+        E(ldrb_imm, 0, 0, 0)
+        E(ldr_sp, 1, F + 0x48)
+        E(lsls_imm, 1, 1, 24)
+        E(lsrs_imm, 1, 1, 24)
+        E(cmp_reg, 0, 1)
+        E(b_cond, "nx_ns", "eq")
+        a.label("nx_sc")
     if scenesave:                                         # a scene change: the new scene's list (the look-ahead only peeks), else the chain
         E(ldr_sp, 0, F + 0x48)
         E(mov_reg, 1, 4)
@@ -1809,10 +2741,16 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
         E(bl, "c_mtcl")
         E(b, "nx_x")
     a.label("nx_ns")
-    E(movs_imm, 0, LIST_LEN)
-    E(muls, 0, 4)
-    E(adds_imm8, 0, B_LISTS)
-    E(adds_reg, 7, 6, 0)                                  # r7 = the track's list
+    if seeds:
+        E(bl, "c_mtls")
+        E(movs_imm, 1, LIST_LEN)
+        E(muls, 1, 4)
+        E(adds_reg, 7, 0, 1)                              # r7 = the track's list
+    else:
+        E(movs_imm, 0, LIST_LEN)
+        E(muls, 0, 4)
+        E(adds_imm8, 0, B_LISTS)
+        E(adds_reg, 7, 6, 0)                              # r7 = the track's list
     E(ldrb_imm, 0, 7, 0)
     E(cmp_imm, 0, 0)
     far("nx_has", "ne")
@@ -1852,6 +2790,9 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     far("nx_x", "ne")
     E(mov_reg, 0, 8)
     E(cmp_reg, 5, 0)
+    if pending:                                           # the chain's end: the next list (made now if none), shown when it plays
+        far("nx_x", "ne")
+        E(b, "nx_pw")
     E(b_cond, "nx_ce", "eq")
     E(mov_reg, 0, 11)
     E(cmp_imm, 0, 0)
@@ -1882,6 +2823,8 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(adds_imm8, 2, 1)
     E(cmp_reg, 2, 0)
     E(b_cond, "nx_ch", "lo")
+    if pending:
+        E(b, "nx_wr")
     a.label("nx_rs")
     E(movs_imm, 2, 0)
     a.label("nx_ch")
@@ -1893,10 +2836,23 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(cmp_imm, 3, 0)
     E(b_cond, "nx_x", "ne")                               # the look-ahead: nothing changed
     E(strb_imm, 2, 1, O_POS)
+    if not pending:
+        nx_last(a, E)
+    a.label("nx_x")
+    E(raw, strb_sp(5, F + 1))
+    E(mov_reg, 2, 5)
+    E(pop_list, [3, 4, 5, 6, 7], pc=True)
+    if pending:
+        nx_pend(a, E, imm32, far, SLOT, F)
+
+
+def nx_last(a, E):
+    """(c_mtnext, r2 = the slot playing, r0 = the list's length) the list's last slot, Every chain end, renewing: the next list now"""
+    F = 24
     E(adds_imm8, 2, 1)
     E(cmp_reg, 2, 0)
     E(b_cond, "nx_x", "ne")
-    E(ldrb_imm, 0, 6, B_VAL + 3)                          # the list's last slot, Every chain end, renewing: the next list now
+    E(ldrb_imm, 0, 6, B_VAL + 3)
     E(cmp_imm, 0, 0)
     E(b_cond, "nx_x", "eq")
     E(raw, ldrb_w(0, 6, B_RENEW))
@@ -1907,13 +2863,62 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(mov_reg, 1, 8)
     E(raw, ldrb_sp(2, F + 2))
     E(bl, "c_mtgx")
-    a.label("nx_x")
-    E(raw, strb_sp(5, F + 1))
-    E(mov_reg, 2, 5)
-    E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
 
-def scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix=False):
+def nx_pend(a, E, imm32, far, SLOT, F):
+    """(c_mtnext, pending) a list's end: with a next key, or renewing, the look-ahead answers the next list's slot 1 (not shown) and the
+    play makes it the track's list, slot 1 playing; r4 = the track, r6 = the block, r7 = its list in RAM"""
+    a.label("nx_wr")
+    imm32(2, SLOT + O_PEND)
+    E(lsls_imm, 3, 4, 2)
+    E(adds_reg, 2, 2, 3)
+    E(ldr_imm, 2, 2, 0)
+    E(cmp_imm, 2, 0)
+    E(b_cond, "nx_pw", "ne")
+    E(ldrb_imm, 0, 6, B_VAL + 3)
+    E(cmp_imm, 0, 0)
+    E(b_cond, "nx_w0", "eq")
+    E(raw, ldrb_w(0, 6, B_RENEW))
+    E(lsrs_reg, 0, 4)
+    E(lsls_imm, 0, 0, 31)
+    E(b_cond, "nx_pw", "mi")
+    a.label("nx_w0")                                      # the list loops
+    imm32(1, SLOT)
+    E(adds_reg, 1, 1, 4)
+    E(b, "nx_rs")
+    a.label("nx_pw")
+    E(mov_reg, 0, 4)
+    E(mov_reg, 1, 8)
+    E(raw, ldrb_sp(2, F + 2))
+    E(bl, "c_mtpk")
+    E(mov_reg, 3, 11)
+    E(cmp_imm, 3, 0)
+    E(b_cond, "nx_cm", "eq")
+    E(sub_sp_imm, 12)                                     # the look-ahead: the next list's slot 1
+    E(mov_reg, 1, 0)
+    E(mov_reg, 0, 4)
+    E(mov_reg, 2, 13)
+    E(bl, "c_mtgen")
+    E(mov_reg, 0, 13)
+    E(ldrb_imm, 1, 0, 0)
+    E(cmp_imm, 1, 0)
+    E(b_cond, "nx_pe", "eq")
+    E(ldrb_imm, 5, 0, 1)
+    a.label("nx_pe")
+    E(add_sp_imm, 12)
+    E(b, "nx_x")
+    a.label("nx_cm")                                      # the play: the next list now, slot 1 playing
+    E(mov_reg, 0, 4)
+    E(bl, "c_mtcommit")
+    E(ldrb_imm, 0, 7, 0)
+    E(cmp_imm, 0, 0)
+    far("nx_x", "eq")
+    imm32(1, SLOT)
+    E(adds_reg, 1, 1, 4)
+    E(b, "nx_rs")
+
+
+def scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix=False, seeds=False, pending=False):
     """a mutate a scene: its 8 lists packed in 29 B, 22 in the scene's record (spare bytes), 7 in the tail"""
     # ---- c_scad(r0 = scene, r1 = byte 0..28, r2 = the tail) -> r0 = its address; clobbers r3
     a.label("c_scad")
@@ -2087,67 +3092,70 @@ def scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix=False):
     a.label("sw_x")
     E(pop_list, [4, 5, 6, 7], pc=True)
 
-    # ---- c_scsave(r0 = scene): the tracks' lists into the scene; clobbers r0-r3
-    a.label("c_scsave")
-    E(push_list, [4, 5, 6, 7], lr=True)
-    E(sub_sp_imm, 32)
-    E(mov_reg, 4, 0)
-    E(movs_imm, 0, 0)
-    for o in range(0, 32, 4):
-        E(str_sp, 0, o)
-    E(movs_imm, 7, 0)
-    E(bl, "c_mtblk")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "sv_w", "eq")
-    E(mov_reg, 6, 0)
-    E(movs_imm, 5, 0)
-    a.label("sv_t")
-    E(movs_imm, 0, LIST_LEN)
-    E(muls, 0, 5)
-    E(adds_reg, 0, 0, 6)
-    E(ldrb_imm, 3, 0, B_LISTS)                            # the length
-    E(cmp_imm, 3, 8)
-    E(b_cond, "sv_n", "hi")
-    E(orrs_reg, 7, 3)
-    E(push_list, [0, 3])
-    E(movs_imm, 1, 28)
-    E(muls, 1, 5)
-    E(movs_imm, 2, 4)
-    E(raw, h(0xA802))                                     # add r0, sp, #8
-    E(bl, "c_scput")
-    E(pop_list, [0, 3])
-    E(movs_imm, 1, 0)                                     # slot j (r1) of r3
-    a.label("sv_j")
-    E(cmp_reg, 1, 3)
-    E(b_cond, "sv_n", "hs")
-    E(push_list, [0, 1, 3])
-    E(adds_reg, 2, 0, 1)
-    E(ldrb_imm, 3, 2, B_LISTS + 1)
-    E(movs_imm, 2, 7)
-    E(ands_reg, 3, 2)
-    E(movs_imm, 2, 3)
-    E(muls, 2, 1)
-    E(movs_imm, 1, 28)
-    E(muls, 1, 5)
-    E(adds_reg, 1, 1, 2)
-    E(adds_imm8, 1, 4)
-    E(movs_imm, 2, 3)
-    E(raw, h(0xA803))                                     # add r0, sp, #12
-    E(bl, "c_scput")
-    E(pop_list, [0, 1, 3])
-    E(adds_imm8, 1, 1)
-    E(b, "sv_j")
-    a.label("sv_n")
-    E(adds_imm8, 5, 1)
-    E(cmp_imm, 5, 8)
-    E(b_cond, "sv_t", "lo")
-    a.label("sv_w")
-    E(mov_reg, 0, 4)
-    E(mov_reg, 1, 13)
-    E(mov_reg, 2, 7)
-    E(bl, "c_scwr")
-    E(add_sp_imm, 32)
-    E(pop_list, [4, 5, 6, 7], pc=True)
+    if seeds:
+        scene_seeds(a, E, L, SLOT, imm32, pending)
+    if not seeds:
+        # ---- c_scsave(r0 = scene): the tracks' lists into the scene; clobbers r0-r3
+        a.label("c_scsave")
+        E(push_list, [4, 5, 6, 7], lr=True)
+        E(sub_sp_imm, 32)
+        E(mov_reg, 4, 0)
+        E(movs_imm, 0, 0)
+        for o in range(0, 32, 4):
+            E(str_sp, 0, o)
+        E(movs_imm, 7, 0)
+        E(bl, "c_mtblk")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "sv_w", "eq")
+        E(mov_reg, 6, 0)
+        E(movs_imm, 5, 0)
+        a.label("sv_t")
+        E(movs_imm, 0, LIST_LEN)
+        E(muls, 0, 5)
+        E(adds_reg, 0, 0, 6)
+        E(ldrb_imm, 3, 0, B_LISTS)                            # the length
+        E(cmp_imm, 3, 8)
+        E(b_cond, "sv_n", "hi")
+        E(orrs_reg, 7, 3)
+        E(push_list, [0, 3])
+        E(movs_imm, 1, 28)
+        E(muls, 1, 5)
+        E(movs_imm, 2, 4)
+        E(raw, h(0xA802))                                     # add r0, sp, #8
+        E(bl, "c_scput")
+        E(pop_list, [0, 3])
+        E(movs_imm, 1, 0)                                     # slot j (r1) of r3
+        a.label("sv_j")
+        E(cmp_reg, 1, 3)
+        E(b_cond, "sv_n", "hs")
+        E(push_list, [0, 1, 3])
+        E(adds_reg, 2, 0, 1)
+        E(ldrb_imm, 3, 2, B_LISTS + 1)
+        E(movs_imm, 2, 7)
+        E(ands_reg, 3, 2)
+        E(movs_imm, 2, 3)
+        E(muls, 2, 1)
+        E(movs_imm, 1, 28)
+        E(muls, 1, 5)
+        E(adds_reg, 1, 1, 2)
+        E(adds_imm8, 1, 4)
+        E(movs_imm, 2, 3)
+        E(raw, h(0xA803))                                     # add r0, sp, #12
+        E(bl, "c_scput")
+        E(pop_list, [0, 1, 3])
+        E(adds_imm8, 1, 1)
+        E(b, "sv_j")
+        a.label("sv_n")
+        E(adds_imm8, 5, 1)
+        E(cmp_imm, 5, 8)
+        E(b_cond, "sv_t", "lo")
+        a.label("sv_w")
+        E(mov_reg, 0, 4)
+        E(mov_reg, 1, 13)
+        E(mov_reg, 2, 7)
+        E(bl, "c_scwr")
+        E(add_sp_imm, 32)
+        E(pop_list, [4, 5, 6, 7], pc=True)
 
     # ---- c_sccopy(r0 = from, r1 = to): a scene's lists into another (none: none); clobbers r0-r3
     a.label("c_sccopy")
@@ -2177,83 +3185,84 @@ def scene_code(a, E, L, SLOT, imm32, far, crit_in, crit_out, scenefix=False):
     E(add_sp_imm, 32)
     E(pop_list, [4], pc=True)
 
-    # ---- c_scget(r0 = scene, r1 = track, r2 = peek) -> r0 = the scene's slot 1 for the track, 0xFF = none (no lists in the scene, or
-    #      none for the track); not peek: the list becomes the track's (slot 1 playing), none ends the track's list; clobbers r1-r3
-    a.label("c_scget")
-    E(push_list, [4, 5, 6, 7], lr=True)
-    E(sub_sp_imm, 32)
-    E(mov_reg, 4, 0)
-    E(mov_reg, 5, 1)
-    E(mov_reg, 6, 2)
-    E(mov_reg, 1, 13)
-    E(bl, "c_scrd")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "sg_no", "eq")
-    E(mov_reg, 0, 13)
-    E(movs_imm, 1, 28)
-    E(muls, 1, 5)
-    E(movs_imm, 2, 4)
-    E(bl, "c_scbits")
-    E(mov_reg, 7, 0)
-    E(cmp_imm, 7, 0)
-    E(b_cond, "sg_no", "eq")
-    E(cmp_imm, 7, 8)
-    E(b_cond, "sg_no", "hi")
-    E(mov_reg, 0, 13)
-    E(movs_imm, 1, 28)
-    E(muls, 1, 5)
-    E(adds_imm8, 1, 4)
-    E(movs_imm, 2, 3)
-    E(cmp_imm, 6, 0)
-    E(b_cond, "sg_ld", "eq")
-    E(bl, "c_scbits")
-    E(b, "sg_x")
-    a.label("sg_ld")
-    E(bl, "c_mtw")
-    E(cmp_imm, 0, 0)
-    E(b_cond, "sg_ff", "eq")
-    E(mov_reg, 6, 0)                                      # r6 = the block, r4 = the track's list
-    E(movs_imm, 4, LIST_LEN)
-    E(muls, 4, 5)
-    E(adds_imm8, 4, B_LISTS)
-    E(adds_reg, 4, 4, 6)
-    crit_in()
-    E(strb_imm, 7, 4, 0)
-    E(movs_imm, 7, 0)
-    a.label("sg_j")
-    E(movs_imm, 2, 3)
-    E(muls, 2, 7)
-    E(movs_imm, 1, 28)
-    E(muls, 1, 5)
-    E(adds_reg, 1, 1, 2)
-    E(adds_imm8, 1, 4)
-    E(movs_imm, 2, 3)
-    E(mov_reg, 0, 13)
-    E(bl, "c_scbits")
-    E(adds_reg, 3, 4, 7)
-    E(strb_imm, 0, 3, 1)
-    E(adds_imm8, 7, 1)
-    E(cmp_imm, 7, 8)
-    E(b_cond, "sg_j", "lo")
-    E(mov_reg, 0, 6)
-    E(bl, "c_mtfix")
-    crit_out()
-    imm32(1, SLOT)
-    E(adds_reg, 1, 1, 5)
-    E(movs_imm, 2, 0)
-    E(strb_imm, 2, 1, O_POS)
-    E(ldrb_imm, 0, 4, 1)
-    E(b, "sg_x")
-    a.label("sg_no")
-    E(cmp_imm, 6, 0)
-    E(b_cond, "sg_ff", "ne")
-    E(mov_reg, 0, 5)
-    E(bl, "c_mtcl")
-    a.label("sg_ff")
-    E(movs_imm, 0, 0xFF)
-    a.label("sg_x")
-    E(add_sp_imm, 32)
-    E(pop_list, [4, 5, 6, 7], pc=True)
+    if not seeds:
+        # ---- c_scget(r0 = scene, r1 = track, r2 = peek) -> r0 = the scene's slot 1 for the track, 0xFF = none (no lists in the scene, or
+        #      none for the track); not peek: the list becomes the track's (slot 1 playing), none ends the track's list; clobbers r1-r3
+        a.label("c_scget")
+        E(push_list, [4, 5, 6, 7], lr=True)
+        E(sub_sp_imm, 32)
+        E(mov_reg, 4, 0)
+        E(mov_reg, 5, 1)
+        E(mov_reg, 6, 2)
+        E(mov_reg, 1, 13)
+        E(bl, "c_scrd")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "sg_no", "eq")
+        E(mov_reg, 0, 13)
+        E(movs_imm, 1, 28)
+        E(muls, 1, 5)
+        E(movs_imm, 2, 4)
+        E(bl, "c_scbits")
+        E(mov_reg, 7, 0)
+        E(cmp_imm, 7, 0)
+        E(b_cond, "sg_no", "eq")
+        E(cmp_imm, 7, 8)
+        E(b_cond, "sg_no", "hi")
+        E(mov_reg, 0, 13)
+        E(movs_imm, 1, 28)
+        E(muls, 1, 5)
+        E(adds_imm8, 1, 4)
+        E(movs_imm, 2, 3)
+        E(cmp_imm, 6, 0)
+        E(b_cond, "sg_ld", "eq")
+        E(bl, "c_scbits")
+        E(b, "sg_x")
+        a.label("sg_ld")
+        E(bl, "c_mtw")
+        E(cmp_imm, 0, 0)
+        E(b_cond, "sg_ff", "eq")
+        E(mov_reg, 6, 0)                                      # r6 = the block, r4 = the track's list
+        E(movs_imm, 4, LIST_LEN)
+        E(muls, 4, 5)
+        E(adds_imm8, 4, B_LISTS)
+        E(adds_reg, 4, 4, 6)
+        crit_in()
+        E(strb_imm, 7, 4, 0)
+        E(movs_imm, 7, 0)
+        a.label("sg_j")
+        E(movs_imm, 2, 3)
+        E(muls, 2, 7)
+        E(movs_imm, 1, 28)
+        E(muls, 1, 5)
+        E(adds_reg, 1, 1, 2)
+        E(adds_imm8, 1, 4)
+        E(movs_imm, 2, 3)
+        E(mov_reg, 0, 13)
+        E(bl, "c_scbits")
+        E(adds_reg, 3, 4, 7)
+        E(strb_imm, 0, 3, 1)
+        E(adds_imm8, 7, 1)
+        E(cmp_imm, 7, 8)
+        E(b_cond, "sg_j", "lo")
+        E(mov_reg, 0, 6)
+        E(bl, "c_mtfix")
+        crit_out()
+        imm32(1, SLOT)
+        E(adds_reg, 1, 1, 5)
+        E(movs_imm, 2, 0)
+        E(strb_imm, 2, 1, O_POS)
+        E(ldrb_imm, 0, 4, 1)
+        E(b, "sg_x")
+        a.label("sg_no")
+        E(cmp_imm, 6, 0)
+        E(b_cond, "sg_ff", "ne")
+        E(mov_reg, 0, 5)
+        E(bl, "c_mtcl")
+        a.label("sg_ff")
+        E(movs_imm, 0, 0xFF)
+        a.label("sg_x")
+        E(add_sp_imm, 32)
+        E(pop_list, [4, 5, 6, 7], pc=True)
 
     # ---- c_scmsg (the scene commands' handler, slot 1 of 0x08068B14: r0 = obj, r1 = the command, r2, r3, [sp]): ours, then the stock's
     if scenefix:
@@ -2309,17 +3318,28 @@ def rhrec_tail():
 def install(img, report, base_addr, randfill=False, mutate=False, listpads=False, scenecut=False, pagebyte=False, dimrest=False,
             clearall=False, liststart=False, scenesave=False, greendup=False, pageclr=False, shiftstock=False, shiftpads=False,
             pclrv=False, scenefix=False, stocktrk=False, cleardark=False, memlvl=MEMBER, clrnone=False, restlvl=VDIM,
-            amount=False, norep=False, keep1=False, hidepause=False, vlock=False):
+            amount=False, norep=False, keep1=False, hidepause=False, vlock=False, seeds=False, live=False, clrdup=False,
+            pending=False, scchain=False, scplay=False, livecol=False, views=False, bounce=False, shtrk=False, shtrkled=False, clrpage=False,
+             shkeep=False, shmut=False):
     import rhbuild
     import rhrec
     import tmenu as T
     BASE = rhbuild.BASE
     u32 = lambda a: int.from_bytes(img[a - BASE:a - BASE + 4], "little")
-    need = SLOT_MUT if mutate else SLOT_LEN
+    if seeds:
+        use_seeds()
+    if livecol:
+        use_livecol()
+    need = SLOT_BACK if bounce else SLOT_PEND if pending else SLOT_SEEDS if seeds else SLOT_MUT if mutate else SLOT_LEN
     assert "tmenu" in report and "mutset" in rhstate.OFF and rhstate.OFF["mutset"][1] >= need, "mutset: after tmenu, ourram's slot"
     used = ((2, 132), (136, 36), (172, 20), (384, 20), (420, 100), (530, 10), (548, 200))   # the tail blocks of fshape, tmenu, Stock+
     assert all(BLK_OFF + BLK_LEN <= o or o + n <= BLK_OFF for o, n in used) and BLK_OFF + BLK_LEN <= rhrec.FREE_LEN
-    assert B_LISTS + LIST_LEN * 8 <= B_RENEW < B_VAL2 < BLK_LEN
+    if seeds:
+        assert B_VAL + 5 <= B_RENEW < B_VAL2 < B_KEYS and B_KEYS % 4 == 0 and B_KEYS + 4 * 8 == BLK_LEN
+        assert O_LISTS + LIST_LEN * 8 <= O_RKEY and O_RKEY + 4 * 8 <= SLOT_SEEDS <= O_PEND and O_PEND + 4 * 8 <= SLOT_PEND
+        assert O_RNG + 4 <= O_LISTS
+    else:
+        assert B_LISTS + LIST_LEN * 8 <= B_RENEW < B_VAL2 < BLK_LEN
     assert all(SC_TOFF + 16 * SC_TLEN <= o or o + n <= SC_TOFF for o, n in used + ((BLK_OFF, BLK_LEN),))
     assert SC_TOFF + 16 * SC_TLEN <= rhrec.FREE_LEN and 16 + 6 + SC_TLEN == SC_LEN
     ci = {k: int(v, 16) for k, v in report["countin"]["labels"].items()}
@@ -2327,16 +3347,19 @@ def install(img, report, base_addr, randfill=False, mutate=False, listpads=False
              c_rrt=int(report["rhrec"]["labels"]["c_rrt"], 16),
              prev_btn=rhbuild.bw_target(img, C.BTN_ENTRY), prev_rel=rhbuild.bw_target(img, C.BTN_RELEASE),
              prev_out=rhbuild.bl_target(img, T.OUT_CALL), prev_pad=u32(PV_VT) & ~1, prev_pr=u32(PV_VT + 4) & ~1,
-             prev_mix=u32(MIX_VT) & ~1, prev_mixr=u32(MIX_VT + 4) & ~1, prev_scmsg=u32(SCMSG_VT) & ~1)
+             prev_mix=u32(MIX_VT) & ~1, prev_mixr=u32(MIX_VT + 4) & ~1, prev_scmsg=u32(SCMSG_VT) & ~1,
+             **(dict(prev_ppad=rhbuild.bw_target(img, T.PP_ENTRY), prev_prel=rhbuild.bw_target(img, T.PR_ENTRY)) if views else {}))
     base_addr = (base_addr + 3) & ~3
     code, labels = arm_code(base_addr, L, randfill=randfill, mutate=mutate, listpads=listpads, scenecut=scenecut, pagebyte=pagebyte,
                             dimrest=dimrest, clearall=clearall, liststart=liststart, scenesave=scenesave, greendup=greendup,
                             pageclr=pageclr, shiftstock=shiftstock, shiftpads=shiftpads, pclrv=pclrv, scenefix=scenefix, stocktrk=stocktrk, cleardark=cleardark, memlvl=memlvl, clrnone=clrnone, restlvl=restlvl, amount=amount, norep=norep, keep1=keep1,
-                            hidepause=hidepause, vlock=vlock)
+                            hidepause=hidepause, vlock=vlock, seeds=seeds, live=live, clrdup=clrdup,
+                            pending=pending, scchain=scchain, scplay=scplay, livecol=livecol, views=views, bounce=bounce, shtrk=shtrk,
+                            shtrkled=shtrkled, clrpage=clrpage, shkeep=shkeep, shmut=shmut)
     img += bytes([0xFF]) * (base_addr - BASE - len(img)) + code
     while len(img) % 4:
         img += bytes([0xFF])
-    from thumb import bl as bl_ins, b_w as bw_ins
+    from thumb import bl as bl_ins, b_w as bw_ins, nop
     rhbuild.patch(img, C.BTN_ENTRY, f"b.w #{L['prev_btn']:#x}", bw_ins(C.BTN_ENTRY, labels["c_msbtn"]))
     rhbuild.patch(img, C.BTN_RELEASE, f"b.w #{L['prev_rel']:#x}", bw_ins(C.BTN_RELEASE, labels["c_msrel"]))
     rhbuild.patch(img, T.OUT_CALL, f"bl #{L['prev_out']:#x}", bl_ins(T.OUT_CALL, labels["c_msout"]))
@@ -2348,12 +3371,19 @@ def install(img, report, base_addr, randfill=False, mutate=False, listpads=False
         rhbuild.patch_word(img, SCMSG_VT, L["prev_scmsg"] | 1, labels["c_scmsg"] | 1)
     if scenefix:
         rhbuild.patch_word(img, SCMSG_VT2, (L["prev_scmsg"] - 4) | 1, labels["c_scmsg2"] | 1)
+    if views:
+        rhbuild.patch(img, T.PP_ENTRY, f"b.w #{L['prev_ppad']:#x}", bw_ins(T.PP_ENTRY, labels["c_msgpad"]))
+        rhbuild.patch(img, T.PR_ENTRY, f"b.w #{L['prev_prel']:#x}", bw_ins(T.PR_ENTRY, labels["c_msgrel"]))
+    if scchain:
+        rhbuild.patch(img, DONE_SITE, "cmp.w sl, #0|itt eq|ldrbeq r0, [r0, #1]|cmpeq fp, r0",
+                      bl_ins(DONE_SITE, labels["c_mtdone"]) + nop() * 3)
     if liststart:
         rhbuild.patch(img, SEEK_SITE, "ldrb r4, [r0]|ldr r0, [r5]", bl_ins(SEEK_SITE, labels["c_mtseek"]))
     if scenecut:
         rhbuild.patch_word(img, MIX_VT, L["prev_mix"] | 1, labels["c_mxpad"] | 1)
         rhbuild.patch_word(img, MIX_VT + 4, L["prev_mixr"] | 1, labels["c_mxpr"] | 1)
     report["mutset"] = dict(slot=hex(rhstate.ST + rhstate.OFF["mutset"][0]), hold_ms=HOLD_MS, blk_off=BLK_OFF, blk_len=BLK_LEN,
+                            **({"slot_len": SLOT_BACK if bounce else SLOT_PEND if pending else SLOT_SEEDS} if seeds else {}),
                             **({"randfill": True} if randfill else {}), **({"mutate": True} if mutate else {}), **({"listpads": True} if listpads else {}), **({"scenecut": True} if scenecut else {}), **({"pagebyte": True} if pagebyte else {}), **({"dimrest": True} if dimrest else {}), **({"clearall": True} if clearall else {}),
                             **({"liststart": True} if liststart else {}), **({"scenesave": True} if scenesave else {}),
                             **({"greendup": True} if greendup else {}), **({"pageclr": True} if pageclr else {}),
@@ -2364,5 +3394,13 @@ def install(img, report, base_addr, randfill=False, mutate=False, listpads=False
                             **({"restlvl": restlvl} if restlvl != VDIM else {}), **({"amount": True} if amount else {}),
                             **({"norep": True} if norep else {}), **({"keep1": True} if keep1 else {}),
                             **({"hidepause": True} if hidepause else {}), **({"vlock": True} if vlock else {}),
+                            **({"seeds": True} if seeds else {}), **({"live": True} if live else {}),
+                            **({"clrdup": True} if clrdup else {}), **({"pending": True} if pending else {}),
+                            **({"scchain": True} if scchain else {}), **({"scplay": True} if scplay else {}),
+                            **({"livecol": True} if livecol else {}), **({"views": True} if views else {}),
+                            **({"bounce": True} if bounce else {}), **({"shtrk": True} if shtrk else {}),
+                            **({"shtrkled": True} if shtrkled else {}), **({"clrpage": True} if clrpage else {}),
+                            **({"shkeep": True} if shkeep else {}), **({"shmut": True} if shmut else {}),
+                            **({"prev_btn": hex(L["prev_btn"])} if shtrk else {}),
                             labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")})
     return labels, code

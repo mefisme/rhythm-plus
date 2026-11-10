@@ -2,7 +2,7 @@
 
 This section defines the parameters that you can see and change in Track +. It also tells you which of them you can automate or lock to a step.
 
-Firmware: Rhythm Plus AG015 (test build).
+Firmware: Rhythm Plus AG026 (test build).
 
 ## Terms
 
@@ -160,4 +160,4 @@ The Granular values are kept for each track and saved with the project. They hav
 All page resets work on the selected track only. They do not change the sample, the mixer or the FX page's sends.
 The stock's filters and resonance remain on the Parameter Editor. Clear + pad 27 or 28 does nothing.
 
-Projects saved on an archived Filter or Mix page open in the Parameter Editor. Old Filter/Mix settings remain in the project for compatibility and do not affect this build.
+Projects saved on an archived Filter or Mix page open in the Parameter Editor. The Filter and Mix pages keep no settings in the project.

@@ -14,7 +14,7 @@ os.environ["RH_TRACKRESET"] = "1"
 os.environ["RH_PSHAPE"] = "1"
 os.environ["RH_FSHAPE"] = "1"
 os.environ["RH_UPGUARD"] = "1"
-os.environ["RH_MUTSET"] = "2"
+os.environ.setdefault("RH_MUTSET", "2")                  # "3": the mutate's seeds, Live and Clear + Duplicate (AG016); "4": the next list at the end (AG019); "5": scenes with lists (AG020); "6": a chain's scene at Play, Live on column 1, the other views (AG021); "7": the page back after a held button (AG022); "8": Shift + a track over the page (AG023); "9": with a track view's look (AG024); "10": Down / Up in the Clear preview, no Shift layer on a track held (AG025); "11": Shift + Duplicate on the page mutates (AG026)
 import ourram  # noqa: E402,F401  (first: the feature modules read its layout)
 import rhbuild  # noqa: E402
 import rhdsppatch  # noqa: E402
@@ -90,7 +90,16 @@ def build(name=NAME, error_led=True):
     b.add("smpads", smpads, sm=3)
     b.add("tmenu", tmenu, stockplus=True, testpages=False, fpage=True, click=True, twoview=True, shiftled=True, bounce=True, pageclear=True, steadyreset=True, resetcue=True, stepmarker=True, trackpulse=True, steppage=True, softclear=True, viewlock=True, momhold=True, nocrush=True, perpage=True, pagecols=False, shapes=True, shapebar="page", filtpage=False, k78white=False, volpage=False, syncbar=True, depthfirst=True, scanfx=True, pageorder=True, mixpage=False, pxrand=True, glide=True, fade=True, fclr=False, fadetan=True, soundonly=True)
     b.add("trackreset", trackreset, viewsync=True, softclear=True)
-    b.add("mutset", mutset, mutate=True, listpads=True, scenecut=True, pagebyte=True, dimrest=True, clearall=True, liststart=True, scenesave=True, greendup=True, pageclr=True, shiftstock=True, shiftpads=True, pclrv=True, scenefix=True, stocktrk=True, cleardark=True, clrnone=True, restlvl=6, amount=True, norep=True, keep1=True, hidepause=True, vlock=True)
+    b.add("mutset", mutset, mutate=True, listpads=True, scenecut=True, pagebyte=True, dimrest=True, clearall=True, liststart=True, scenesave=True, greendup=True, pageclr=True, shiftstock=True, shiftpads=True, pclrv=True, scenefix=True, stocktrk=True, cleardark=True, clrnone=True, restlvl=6, amount=True, norep=True, keep1=True, hidepause=True, vlock=True,
+          **({"seeds": True, "live": True, "clrdup": True} if os.environ["RH_MUTSET"] in ("3", "4", "5", "6", "7", "8", "9", "10", "11") else {}),
+          **({"pending": True} if os.environ["RH_MUTSET"] in ("4", "5", "6", "7", "8", "9", "10", "11") else {}),
+          **({"scchain": True} if os.environ["RH_MUTSET"] in ("5", "6", "7", "8", "9", "10", "11") else {}),
+          **({"scplay": True, "livecol": True, "views": True} if os.environ["RH_MUTSET"] in ("6", "7", "8", "9", "10", "11") else {}),
+          **({"bounce": True} if os.environ["RH_MUTSET"] in ("7", "8", "9", "10", "11") else {}),
+          **({"shtrk": True} if os.environ["RH_MUTSET"] in ("8", "9", "10", "11") else {}),
+          **({"shtrkled": True} if os.environ["RH_MUTSET"] in ("9", "10", "11") else {}),
+          **({"clrpage": True, "shkeep": True} if os.environ["RH_MUTSET"] in ("10", "11") else {}),
+          **({"shmut": True} if os.environ["RH_MUTSET"] == "11" else {}))
     b.add("upguard", upguard, route=c0fx.routes())
     b.add("pvloop", pvloop)
     b.add("rdiag", diagread)

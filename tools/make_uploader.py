@@ -17,9 +17,9 @@ BUILDS = (
     ("A0120", "stable", HERE / "firmware" / "a0120",
      "Pattern Mutate y Track +: Parameter Editor, Filter, Mix, Pitch y FX. Probada en el aparato.",
      "Pattern Mutate and Track +: Parameter Editor, Filter, Mix, Pitch and FX. Tested on the unit."),
-    ("AG015", "test", HERE / "buildtmp" / "granular-hardware-ag015",
-     "La página Granular en el pad 30, con Slice y Lock. Sin las páginas Filter y Mix. Versión de prueba.",
-     "The Granular page on pad 30, with Slice and Lock. No Filter or Mix pages. Test build."),
+    ("AG026", "test", HERE / "buildtmp" / "granular-hardware-ag026",
+     "La página Granular en el pad 30, con Slice y Lock. Mutate con Live y Clear + Duplicate; las escenas con mutate avanzan en cadena; los ajustes también en Mixer y FX. Sin las páginas Filter y Mix.",
+     "The Granular page on pad 30, with Slice and Lock. Mutate with Live and Clear + Duplicate; scenes with a mutate move on in a chain; the settings also on Mixer and FX. No Filter or Mix pages."),
 )
 TEMPLATE = HERE / "tools" / "uploader_template.html"
 OUT = HERE / "tools" / "uploader.html"

@@ -56,10 +56,11 @@ All parameters, and what you can do with each one: [`manual/track_plus_parameter
 
 ### Pattern Mutate
 
-On the Patterns page, hold Shift and tap Duplicate: each track gets a new play list, a short run of its own patterns in a random order. The track plays the list in a loop in place of its chain. Your patterns do not change. Hold Clear and Shift and tap Duplicate to go back to the chains.
+On the Patterns, Mixer, Grid FX, FX or Sidechain page, hold Shift and tap Duplicate: each track gets a new play list, a short run of its own patterns in a random order. The track plays the list in a loop in place of its chain. Your patterns do not change. Hold Clear and tap Duplicate to go back to the chains (A0120: hold Clear and Shift and tap Duplicate).
 
-- **Settings:** hold Shift and hold Duplicate. Page 1: Length, Length type, Pool, When. Page 2 (Down): Length 5-8, Amount, Repeats, Keep slot 1. The track buttons choose which tracks mutate.
-- **Scenes** keep each track's mutate. View Lock works with a mutate.
+- **Settings:** hold Shift and hold Duplicate, on the Patterns, Mixer, Grid FX, FX or Sidechain page. Shift + tap Duplicate on the page mutates and keeps it open. Column 1 on both pages: Live. Hold a view button, or Shift + a track button, to look at that view; let go and the settings come back. Page 1: Length, Length type, Pool, When. Page 2 (Down): Length 5-8, Amount, Repeats, Keep slot 1. The track buttons choose which tracks mutate.
+- **Live:** each mutate keeps a seed for each track. With Live on, a setting change makes the lists again from the same seeds, while they play. Change the setting back and the lists come back. (AG016 and later.)
+- **Scenes** keep each track's mutate. In a scene chain, a mutated track is done at the end of its list, and Play starts on the chain's first scene. View Lock works with a mutate.
 
 ### Granular
 

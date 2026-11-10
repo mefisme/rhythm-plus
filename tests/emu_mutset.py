@@ -22,6 +22,11 @@ from unicorn.arm_const import UC_ARM_REG_R0  # noqa: E402
 check, u32, call, MAN = ET.check, ET.u32, ET.call, ET.MAN
 C = ET.C
 REP = MAN["report"]["mutset"]
+SEEDS = REP.get("seeds", False)
+if SEEDS:
+    M.use_seeds()
+if REP.get("livecol"):
+    M.use_livecol()
 LB = {k: int(v, 16) for k, v in REP["labels"].items()}
 SLOT = int(REP["slot"], 16)
 C_RRT = int(MAN["report"]["rhrec"]["labels"]["c_rrt"], 16)
@@ -102,6 +107,17 @@ def want_page(uc, pulse_hi):
             on = b[M.B_VAL2] >> M.K1_BIT & 1 if ours(b) else 0
             w[M.K1_COL] = ET.scl(g, M.DIM) if on else g
             w[8 + M.K1_COL] = g if on else ET.scl(g, M.DIM)
+        if REP.get("live") and not REP.get("livecol"):
+            g = u32(uc, M.COLOURS + 4 * M.GREEN)
+            on = b[M.B_VAL2] >> M.LV_BIT & 1 if ours(b) else 0
+            w[M.LV_COL] = ET.scl(g, M.DIM) if on else g
+            w[8 + M.LV_COL] = g if on else ET.scl(g, M.DIM)
+    if REP.get("livecol"):                                # Live on column 1 of both pages
+        b = block(uc)
+        g = u32(uc, M.COLOURS + 4 * M.GREEN)
+        on = b[M.B_VAL2] >> M.LV_BIT & 1 if ours(b) else 0
+        w[M.LV_COL] = ET.scl(g, M.DIM) if on else g
+        w[8 + M.LV_COL] = g if on else ET.scl(g, M.DIM)
     w[M.LED_DOWN], w[M.LED_UP] = (M.WHITE, 0) if pg == 0 else (0, M.WHITE)
     if REP.get("greendup"):
         g = u32(uc, M.COLOURS + 4 * M.GREEN)
@@ -284,9 +300,43 @@ def nxt(uc, t, ch, first, last, forced=0, scene=0, la=0, sc=0):
 
 
 def lst(uc, t):
+    if SEEDS:
+        call(uc, LB["c_mtls"])
+        b = bytes(uc.mem_read(SLOT + M.O_LISTS + M.LIST_LEN * t, M.LIST_LEN))
+        return list(b[1:1 + b[0]])
     b = block(uc)
     o = M.B_LISTS + M.LIST_LEN * t
     return list(b[o + 1:o + 1 + b[o]])
+
+
+GEN_AT = PF.STACK + 0xC0000                               # (seeds) c_mtgen's list, in the test's own RAM
+
+
+def key_of(uc, t): return struct.unpack_from("<I", block(uc), M.B_KEYS + 4 * t)[0]
+
+
+def mk(seed, n, typ=1, pool=1, first=0, last=0, val2=0):
+    """(seeds) a key: Length n, Length type (1 Exact), Pool (1 All), the page 2 bits, the chain"""
+    return seed | (n - 1) << 12 | typ << 15 | pool << 17 | val2 << 18 | first << 22 | last << 25
+
+
+def gen(uc, t, key):
+    """(seeds) the list a key makes for track t"""
+    uc.mem_write(GEN_AT, bytes(M.LIST_LEN))
+    call(uc, LB["c_mtgen"], t, key, GEN_AT)
+    b = bytes(uc.mem_read(GEN_AT, M.LIST_LEN))
+    return list(b[1:1 + b[0]])
+
+
+def set_key(uc, t, key):
+    """(seeds) the block's key of track t (the block made ours)"""
+    b = bytearray(block(uc))
+    if not ours(b):
+        b = bytearray(M.BLK_LEN)
+        b[0], b[1] = M.MARK0, M.MARK1
+    struct.pack_into("<I", b, M.B_KEYS + 4 * t, key)
+    b[2] = (sum(b[M.B_VAL:]) & 0xFF) ^ M.CHECK
+    uc.mem_write(blk(uc), bytes(b))
 
 
 def renew(uc): return block(uc)[M.B_RENEW]
@@ -462,20 +512,43 @@ def mutate_tests(uc, stock_pads):
     check("Every chain end: Shift + tap: no list yet, the tracks that are on renew", all(lst(uc, t) == [] for t in range(7)) and
           renew(uc) == 0x7F, hex(renew(uc)))
     check("  track 3 (chain 3-3), forced: the stock's", nxt(uc, 2, 2, 2, 2, forced=1) == 2 and lst(uc, 2) == [])
-    a = nxt(uc, 2, 2, 2, 2, la=1)
-    A = lst(uc, 2)
-    p = nxt(uc, 2, 2, 2, 2)
-    check("  its chain's end: a list of 3, slot 1 plays (the look-ahead the same)", len(A) == 3 and a == p == A[0], (a, p, A))
-    p2 = nxt(uc, 2, 2, 2, 2)
-    p3 = nxt(uc, 2, 2, 2, 2)
-    B = lst(uc, 2)
-    check("  slot 3 (the last) plays: a new list for after it", (p2, p3) == (A[1], A[2]) and pos(uc, 2) == 0xFF and len(B) == 3,
-          (p2, p3, B))
-    check("  then the new list's slot 1", nxt(uc, 2, 2, 2, 2, la=1) == B[0] == nxt(uc, 2, 2, 2, 2))
-    check("  track 1 (chain 1-2) enters its chain's last: the stock's (2), its list made for after it",
-          nxt(uc, 0, 1, 0, 1) == 1 and len(lst(uc, 0)) == 3 and pos(uc, 0) == 0xFF)
-    C0 = lst(uc, 0)
-    check("  then its list", nxt(uc, 0, 0, 0, 1) == C0[0])
+    if REP.get("pending"):                                # the next list hidden until it plays: the pads show the list playing
+        a = nxt(uc, 2, 2, 2, 2, la=1)
+        hidden = lst(uc, 2) == []
+        p = nxt(uc, 2, 2, 2, 2)
+        A = lst(uc, 2)
+        check("  its chain's end: the look-ahead answers the next list's slot 1, not shown; the play: a list of 3, slot 1 plays",
+              hidden and len(A) == 3 and a == p == A[0] and pos(uc, 2) == 0, (a, p, A))
+        p2 = nxt(uc, 2, 2, 2, 2)
+        p3 = nxt(uc, 2, 2, 2, 2)
+        a = nxt(uc, 2, 2, 2, 2, la=1)
+        check("  slot 3 (the last) plays and its look-ahead: the list playing still shown, slot 3 playing",
+              (p2, p3) == (A[1], A[2]) and lst(uc, 2) == A and pos(uc, 2) == 2, (p2, p3, lst(uc, 2)))
+        p = nxt(uc, 2, 2, 2, 2)
+        B = lst(uc, 2)
+        check("  its end: the new list (a new seed), its slot 1 as the look-ahead said", len(B) == 3 and p == a == B[0] and
+              pos(uc, 2) == 0, (a, p, B))
+        check("  track 1 (chain 1-2) enters its chain's last: the stock's (2), no list shown yet", nxt(uc, 0, 1, 0, 1) == 1 and
+              lst(uc, 0) == [])
+        a = nxt(uc, 0, 0, 0, 1, la=1)
+        p = nxt(uc, 0, 0, 0, 1)
+        C0 = lst(uc, 0)
+        check("  its chain's end: its list, slot 1 (the look-ahead the same)", len(C0) == 3 and a == p == C0[0], (a, p, C0))
+    else:
+        a = nxt(uc, 2, 2, 2, 2, la=1)
+        A = lst(uc, 2)
+        p = nxt(uc, 2, 2, 2, 2)
+        check("  its chain's end: a list of 3, slot 1 plays (the look-ahead the same)", len(A) == 3 and a == p == A[0], (a, p, A))
+        p2 = nxt(uc, 2, 2, 2, 2)
+        p3 = nxt(uc, 2, 2, 2, 2)
+        B = lst(uc, 2)
+        check("  slot 3 (the last) plays: a new list for after it", (p2, p3) == (A[1], A[2]) and pos(uc, 2) == 0xFF and len(B) == 3,
+              (p2, p3, B))
+        check("  then the new list's slot 1", nxt(uc, 2, 2, 2, 2, la=1) == B[0] == nxt(uc, 2, 2, 2, 2))
+        check("  track 1 (chain 1-2) enters its chain's last: the stock's (2), its list made for after it",
+              nxt(uc, 0, 1, 0, 1) == 1 and len(lst(uc, 0)) == 3 and pos(uc, 0) == 0xFF)
+        C0 = lst(uc, 0)
+        check("  then its list", nxt(uc, 0, 0, 0, 1) == C0[0])
     setting(uc, 5, 0)                                     # On the tap
     B = lst(uc, 2)
     for k in range(3):
@@ -508,7 +581,27 @@ def mutate_tests(uc, stock_pads):
         hidepause_tests(uc)
     if REP.get("vlock"):
         vlock_tests(uc)
+    if SEEDS:
+        seeds_tests(uc, chain)
     real_play()
+    if REP.get("scchain"):
+        scene_play(chain=True)
+        scene_play(chain=False)
+    if REP.get("scplay"):
+        play_start(chain=True)
+        play_start(chain=False)
+    if REP.get("livecol"):
+        livecol_tests(uc)
+    if REP.get("views"):
+        views_tests(uc)
+    if REP.get("bounce"):
+        bounce_tests(uc)
+    if REP.get("shtrk"):
+        shtrk_tests(uc)
+    if REP.get("clrpage"):
+        clrpage_tests(uc)
+    if REP.get("shmut"):
+        shmut_tests(uc)
 
 
 def amount_set(uc, r):
@@ -825,6 +918,12 @@ def item(uc, off, i):
 
 
 def set_list(uc, t, pats):
+    if SEEDS:                                             # a list the test chose: a key nobody makes, the RAM's list made from it
+        k = 0x0F000F00 | t + 1 if pats else 0
+        set_key(uc, t, k)
+        uc.mem_write(SLOT + M.O_LISTS + M.LIST_LEN * t, bytes([len(pats)] + pats + [0] * (8 - len(pats))))
+        uc.mem_write(SLOT + M.O_RKEY + 4 * t, struct.pack("<I", k))
+        return
     b = bytearray(block(uc))
     o = M.B_LISTS + M.LIST_LEN * t
     b[o:o + M.LIST_LEN] = bytes([len(pats)] + pats + [0] * (8 - len(pats)))
@@ -887,12 +986,23 @@ def scenecut_tests(uc):
     ET.pad(uc, 0); ET.unpad(uc, 0)
     check("  the Mixer's pad 1 (not a scene): the lists kept", all(lst(uc, t) for t in range(8)))
     ET.pad(uc, 16); ET.unpad(uc, 16)
-    check("  the Mixer's pad 17 (scene 1): every list gone at the press", all(lst(uc, t) == [] for t in range(8)) and renew(uc) == 0)
+    if REP.get("scchain"):
+        check("  the Mixer's pad 17 (scene 1), playing: the lists kept to the scene's start", all(lst(uc, t) for t in range(8)))
+        for t in range(8):
+            call(uc, LB["c_mtcl"], t)
+    else:
+        check("  the Mixer's pad 17 (scene 1): every list gone at the press", all(lst(uc, t) == [] for t in range(8)) and
+              renew(uc) == 0)
     uc.mem_write(item(uc, M.O_SCASK, 1), b"\x00")         # the scene started
     tap(uc)
     uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", MIX))
     ET.pad(uc, 18); ET.unpad(uc, 18)
-    check("  new lists, then pad 19 (scene 3): every list gone", all(lst(uc, t) == [] for t in range(8)))
+    if REP.get("scchain"):
+        check("  new lists, then pad 19 (scene 3): the lists kept", all(lst(uc, t) for t in range(8)))
+        for t in range(8):
+            call(uc, LB["c_mtcl"], t)
+    else:
+        check("  new lists, then pad 19 (scene 3): every list gone", all(lst(uc, t) == [] for t in range(8)))
     uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
 
 
@@ -947,16 +1057,27 @@ def scene_bytes(uc, sc):
 
 
 def scene_lists(uc, sc):
-    """scene sc's lists (None: no lists in it)"""
+    """scene sc's lists (None: no lists in it); (seeds) the lists its keys make"""
     _, b = scene_bytes(uc, sc)
     if b[28] != (sum(b[:28]) + sc) & 0xFF ^ M.SC_CHECK:
         return None
     bits = int.from_bytes(b[:28], "little")
+    if SEEDS:
+        return [gen(uc, t, k) if (k := bits >> 28 * t & 0xFFFFFFF) else [] for t in range(8)]
     out = []
     for t in range(8):
         n = bits >> 28 * t & 15
         out.append([bits >> 28 * t + 4 + 3 * j & 7 for j in range(n)])
     return out
+
+
+def put(uc, want, keys):
+    """the tracks' lists: (seeds) by their keys, else as they are"""
+    for t in range(8):
+        if SEEDS:
+            set_key(uc, t, keys[t])
+        else:
+            set_list(uc, t, want[t])
 
 
 def scmsg(uc, cmd, r2, r3):
@@ -969,8 +1090,10 @@ def scenesave_tests(uc):
     o = M.SCMSG_VT - rhbuild.BASE
     check("the scene commands' handler (0x08068B18) is c_scmsg", struct.unpack_from("<I", img, o)[0] == LB["c_scmsg"] | 1)
     want = [[5, 2, 0], [], [7, 7, 1, 3, 4, 6, 0, 2], [], [3], [], [], [1, 1]]
-    for t in range(8):
-        set_list(uc, t, want[t])
+    keys = [mk(0x3A1 + 77 * t, len(w), first=0, last=1) if w else 0 for t, w in enumerate(want)]
+    if SEEDS:
+        want = [gen(uc, t, k) if k else [] for t, k in enumerate(keys)]
+    put(uc, want, keys)
     call(uc, C_RRT)
     tail = uc.reg_read(UC_ARM_REG_R0)
     area = lambda: bytes(uc.mem_read(tail - 0x29110 + 0x40, 640)) + bytes(uc.mem_read(tail + M.SC_TOFF, 16 * M.SC_TLEN))
@@ -991,12 +1114,12 @@ def scenesave_tests(uc):
     for t in range(8):
         set_list(uc, t, [6])
     a = nxt(uc, 0, 1, 0, 1, scene=1, la=1, sc=3)
-    check("scene 4 starts, the look-ahead: its slot 1, track 1's list kept", a == 5 and lst(uc, 0) == [6], (a, lst(uc, 0)))
+    check("scene 4 starts, the look-ahead: its slot 1, track 1's list kept", a == want[0][0] and lst(uc, 0) == [6], (a, lst(uc, 0)))
     p = nxt(uc, 0, 1, 0, 1, scene=1, sc=3)
-    check("  the play: track 1 the scene's list, slot 1 playing", p == 5 and lst(uc, 0) == [5, 2, 0] and pos(uc, 0) == 0,
+    check("  the play: track 1 the scene's list, slot 1 playing", p == want[0][0] and lst(uc, 0) == want[0] and pos(uc, 0) == 0,
           (p, lst(uc, 0), pos(uc, 0)))
     p = nxt(uc, 2, 1, 0, 1, scene=1, sc=3)
-    check("  track 3: its list of 8", p == 7 and lst(uc, 2) == want[2], (p, lst(uc, 2)))
+    check("  track 3: its list of 8", p == want[2][0] and lst(uc, 2) == want[2], (p, lst(uc, 2)))
     p = nxt(uc, 1, 4, 4, 4, scene=1, sc=3)
     check("  track 2 (none in the scene): the stock's, its list gone", p == 4 and lst(uc, 1) == [])
     p = nxt(uc, 3, 4, 4, 4, scene=1, sc=6)
@@ -1012,8 +1135,7 @@ def scenesave_tests(uc):
     scmsg(uc, 0x68, 2, 5)
     scmsg(uc, 0x70, 5, 0)
     check("save scene 6 with no lists: no lists in it", scene_bytes(uc, 5)[1] == bytes(29))
-    for t in range(8):
-        set_list(uc, t, want[t])
+    put(uc, want, keys)
     scmsg(uc, 0x70, 8, 0)
     for t in range(8):
         set_list(uc, t, [])
@@ -1028,16 +1150,20 @@ def scenesave_tests(uc):
     uc.mem_write(item(uc, M.O_SCASK, 1), b"\x00")
     uc.mem_write(run, b"\x01")
     ET.pad(uc, 16); ET.unpad(uc, 16)
-    check("  playing, pad 17 (scene 1): every list gone at the press", all(lst(uc, t) == [] for t in range(8)))
+    if REP.get("scchain"):
+        check("  playing, pad 17 (scene 1): every list kept at the press (the scene's own at its start)",
+              [lst(uc, t) for t in range(8)] == want)
+    else:
+        check("  playing, pad 17 (scene 1): every list gone at the press", all(lst(uc, t) == [] for t in range(8)))
     uc.mem_write(item(uc, M.O_SCASK, 1), b"\x00")
     uc.mem_write(run, bytes(was))
     uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
     scmsg(uc, 0x68, 2, 8)
     if REP.get("scenefix"):
-        mixscene_tests(uc, img, want)
+        mixscene_tests(uc, img, want, keys)
 
 
-def mixscene_tests(uc, img, want):
+def mixscene_tests(uc, img, want, keys):
     """the Mixer's scene pads, through the stock's own sends (its scene object at view + 0x0C, base 0x2003D300)"""
     import rhbuild
     o = M.SCMSG_VT2 - rhbuild.BASE
@@ -1047,8 +1173,7 @@ def mixscene_tests(uc, img, want):
     copied = u32(uc, SO + 0x2C)
     was = bytes(uc.mem_read(copied, 1))
     uc.mem_write(copied, bytes(1))                        # nothing copied: the next Duplicate + pad copies
-    for t in range(8):
-        set_list(uc, t, want[t])
+    put(uc, want, keys)
     uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", MIX))
     set_shift(uc, 1)
     ET.pad(uc, 31); ET.unpad(uc, 31)
@@ -1142,9 +1267,12 @@ def pclrv_tests(uc):
     closed = lights(uc)
     set_clear(uc, 1)
     o = lights(uc)
-    check(f"Patterns page, Clear held: the track buttons of tracks 1, 3, 6 (a list) green, the others {NW}; the pads and Duplicate "
-          "as without Clear", [o[M.LED_TRK0 + t] for t in range(8)] == want_trk and all(o[k] == closed[k] for k in range(32)) and
-          o[M.LED_DUP] == closed[M.LED_DUP], [f"{o[M.LED_TRK0 + t]:06x}" for t in range(8)])
+    red = u32(uc, M.COLOURS + 4 * M.CLR_RED)
+    dup = red if REP.get("clrdup") else closed[M.LED_DUP]
+    check(f"Patterns page, Clear held: the track buttons of tracks 1, 3, 6 (a list) green, the others {NW}; the pads as without Clear; "
+          f"Duplicate {'red' if REP.get('clrdup') else 'as without Clear'}", [o[M.LED_TRK0 + t] for t in range(8)] == want_trk and
+          all(o[k] == closed[k] for k in range(32)) and o[M.LED_DUP] == dup,
+          ([f"{o[M.LED_TRK0 + t]:06x}" for t in range(8)], f"{o[M.LED_DUP]:06x}"))
     reached = []
     pb = prev_btn()
     h = uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: reached.append(1), None, pb, pb + 1)
@@ -1200,24 +1328,165 @@ def pclrv_tests(uc):
         set_list(uc, t, [])
 
 
+def seeds_tests(uc, chain):
+    """the keys in place of the lists: a load, an old project, Live, a scene recall with Live, Clear + Duplicate"""
+    keys = lambda: [key_of(uc, t) for t in range(8)]                           # noqa: E731
+    lists = lambda: [lst(uc, t) for t in range(8)]                             # noqa: E731
+    for t in range(8):
+        chain(t, 0, 1)
+    for col, v in ((3, 1), (2, 2), (4, 1), (5, 0)):          # Exact, Length 3, Pool All, On the tap
+        setting(uc, col, v)
+    for col in (M.AM_COL, M.NR_COL, M.K1_COL, M.LV_COL):     # Amount All, Repeats On, Keep slot 1 Off, Live Off
+        page2_pad(uc, col, 0)
+    hold_open(uc)
+    off = vals(uc)[4]
+    for t in range(8):
+        if (off >> t & 1) != (t == 7):
+            ET.press(uc, t); ET.release(uc, t)
+    ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+    tap(uc, clear=True)
+    tap(uc)
+    K, L = keys(), lists()
+    want_set = 2 | 1 << 3 | 1 << 5                           # Length 3, Exact, Pool All
+    check("seeds: a tap: tracks 1-7 a key each (a seed, the settings, the chain 1-2), each list in RAM the one its key makes; track 8 "
+          "(off) none", all(K[t] & 0xFFF and K[t] >> 12 & 0x3FF == want_set and K[t] >> 22 == 1 << 3 and len(L[t]) == 3 and
+                            L[t] == gen(uc, t, K[t]) for t in range(7)) and K[7] == 0 and L[7] == [] and vals(uc)[4] == 0x80,
+          ([hex(k) for k in K], L))
+    check("  the seeds differ track to track", len({k & 0xFFF for k in K[:7]}) == 7)
+    uc.mem_write(SLOT + M.O_LISTS, bytes(M.O_RKEY + 4 * 8 - M.O_LISTS))
+    check("a project load (the lists in RAM gone): the same lists again from the keys", lists() == L, lists())
+    saved = block(uc)
+    other = [mk(0x111 + 9 * t, 2, first=0, last=1) for t in range(8)]
+    for t in range(8):
+        set_key(uc, t, other[t])
+    check("  another project's keys: its lists", lists() == [gen(uc, t, other[t]) for t in range(8)])
+    old = bytearray(saved)
+    old[2] = (sum(old[M.B_VAL:]) & 0xFF) ^ 0x5A
+    uc.mem_write(blk(uc), bytes(old))
+    check("  a project of the builds before (their check byte): no lists, the settings the defaults", lists() == [[]] * 8 and
+          vals(uc) == [4, 0, 0, 0, 0], vals(uc))
+    uc.mem_write(blk(uc), saved)
+    check("  the first project again: its lists", lists() == L)
+
+    setting(uc, 2, 4)                                     # Length 5
+    check("Live Off, Length 5: the keys and the lists kept", keys() == K and lists() == L)
+    setting(uc, 2, 2)
+    setting(uc, 5, 1)                                     # Every chain end
+    check("Live Off, When Every chain end: nothing until a tap (no track renews)", renew(uc) == 0 and keys() == K, hex(renew(uc)))
+    setting(uc, 5, 0)
+    page2_pad(uc, M.LV_COL, 1)
+    check(f"page 2, column 7, row 2: Live On (the block's byte {M.B_VAL2}, bit {M.LV_BIT}); the keys kept",
+          block(uc)[M.B_VAL2] >> M.LV_BIT & 1 == 1 and keys() == K, block(uc)[M.B_VAL2])
+    hold_open(uc)
+    ET.press(uc, M.ID_DOWN); ET.release(uc, M.ID_DOWN)
+    page_ok(uc, "  page 2: column 7 Live, On (row 2) full, Off (row 1) dim")
+    ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+    setting(uc, 2, 4)                                     # Length 5
+    K5, L5 = keys(), lists()
+    check("Live On, Length 5: tracks 1-7 lists of 5, their first 3 slots kept (the same seeds and chains); track 8 (off) kept",
+          all(len(L5[t]) == 5 and L5[t][:3] == L[t] and K5[t] & ~M.K_SET == K[t] & ~M.K_SET for t in range(7)) and
+          K5[7] == K[7] and L5[7] == L[7], (L5, L))
+    setting(uc, 2, 2)                                     # Length 3
+    check("  Length 3 again: the first lists back (the same keys)", keys() == K and lists() == L)
+    setting(uc, 4, 0)                                     # Pool With steps
+    check("  Pool With steps: track 1 only its patterns with hits (1, 3, 6), the tracks with no hits none, their keys kept",
+          set(lst(uc, 0)) <= {0, 2, 5} and len(lst(uc, 0)) == 3 and lst(uc, 1) == [] and all(key_of(uc, t) for t in range(7)),
+          lists())
+    setting(uc, 4, 1)                                     # Pool All
+    check("  Pool All again: the first lists back", lists() == L)
+    page2_pad(uc, M.NR_COL, 1)
+    check("  Repeats Off: no slot the same as the one before it (the list loops)",
+          all(x[i] != x[i - 1] for x in lists()[:7] for i in range(3)), lists())
+    page2_pad(uc, M.NR_COL, 0)
+    check("  Repeats On again: the first lists back", lists() == L)
+    setting(uc, 5, 1)                                     # Every chain end
+    check("  When Every chain end: at once, as a tap: tracks 1-7 (on) renew, track 8 (off) not; the lists kept until then",
+          renew(uc) == 0x7F and keys() == K, hex(renew(uc)))
+    for k in range(3):
+        nxt(uc, 0, 1, 0, 1)
+    check("  track 1 plays its list to the end: a new list (a new seed) for after it", key_of(uc, 0) & 0xFFF != K[0] & 0xFFF and
+          len(lst(uc, 0)) == 3, (hex(key_of(uc, 0)), hex(K[0])))
+    setting(uc, 5, 0)
+    for t in range(8):
+        set_key(uc, t, K[t])
+
+    scmsg(uc, 0x70, 10, 0)
+    check("save scene 11: its lists the tracks' (their keys in the scene)", scene_lists(uc, 10) == L, scene_lists(uc, 10))
+    tap(uc)
+    check("  a new tap: new lists", lists()[:7] != L[:7])
+    for t in range(8):
+        call(uc, LB["c_scget"], 10, t, 0)
+    check("  scene 11 again (stopped): its lists", lists() == L, lists())
+    setting(uc, 2, 4)                                     # Length 5
+    check("  then Live, Length 5: the scene's lists grow (their first 3 slots kept)",
+          all(len(x) == 5 and x[:3] == L[t] for t, x in enumerate(lists()[:7])), lists())
+    setting(uc, 2, 2)
+    check("  Length 3 again: the scene's lists", lists() == L)
+    scmsg(uc, 0x68, 2, 10)
+    page2_pad(uc, M.LV_COL, 0)
+
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+    set_clear(uc, 1)
+    o = lights(uc)
+    red = u32(uc, M.COLOURS + 4 * M.CLR_RED)
+    check("Patterns page, Clear held (no Shift), lists: Duplicate red", o[M.LED_DUP] == red, f"{o[M.LED_DUP]:06x}")
+    ET.press(uc, M.ID_DUP); ET.tick(uc, 400); lights(uc); ET.release(uc, M.ID_DUP)
+    set_clear(uc, 0)
+    check("  Clear + Duplicate, held 400 ms: every list and key gone, the page not opened",
+          lists() == [[]] * 8 and keys() == [0] * 8 and not is_open(uc))
+    tap(uc)
+    set_clear(uc, 1)
+    ET.press(uc, M.ID_DUP)
+    set_clear(uc, 0)
+    ET.release(uc, M.ID_DUP)
+    check("  Clear + Duplicate, Clear let go first: the lists gone at the press, no mutate at the release", lists() == [[]] * 8)
+    set_shift(uc, 1)
+    ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+    set_shift(uc, 0)
+    check("  Shift + Duplicate still mutates", all(lists()[:7]))
+    tap(uc, clear=True)
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+    plain = lights(uc)
+    set_clear(uc, 1)
+    o = lights(uc)
+    set_shift(uc, 1)
+    o2 = lights(uc)
+    set_shift(uc, 0)
+    set_clear(uc, 0)
+    g = u32(uc, M.COLOURS + 4 * M.GREEN)
+    check("no lists, Clear held: Duplicate not red (its light as without Clear); Clear + Shift: Shift's dim green",
+          o[M.LED_DUP] == plain[M.LED_DUP] != red and o2[M.LED_DUP] == ET.scl(g, M.DUP_DIM),
+          (f"{o[M.LED_DUP]:06x}", f"{plain[M.LED_DUP]:06x}", f"{o2[M.LED_DUP]:06x}"))
+
+
 def chain_item(uc, t):
     call(uc, M.PARAM_GET, u32(uc, M.CHAINS), t)
     return uc.reg_read(UC_ARM_REG_R0)
 
 
 def real_play():
-    """the stock's clock and sequencer for 7 s, track 1 with the list 4, 2, 7: the patterns it plays (the engine's playing store)"""
+    """the stock's clock and sequencer for 7 s, track 1 with a list of 3 (4, 2, 7; seeds: a key's): the patterns it plays (the engine's
+    playing store)"""
     import playfix
     fw, ram = Path(sys.argv[2]).read_bytes(), Path(sys.argv[3]).read_bytes()
     uc = PF.machine(fw, ram)
     uc.mem_write(ET.rhstate.HEAP_LIMIT_PTR, struct.pack("<I", ET.rhstate.ST))
     uc.mem_write(ET.rhstate.ST, bytes(ET.rhstate.SIZE))
     uc.mem_write(ET.rhstate.ST, struct.pack("<I", ET.rhstate.MAGIC))
-    b = bytearray(M.BLK_LEN)
-    b[0], b[1] = M.MARK0, M.MARK1
-    b[M.B_LISTS:M.B_LISTS + 4] = bytes([3, 3, 1, 6])
-    b[2] = (sum(b[M.B_VAL:]) & 0xFF) ^ M.CHECK
-    uc.mem_write(blk(uc), bytes(b))
+    if SEEDS:
+        seed = 0x5C3                                      # Repeats Off, and the chain's pattern 1 not in the list (as 4, 2, 7)
+        while 0 in gen(uc, 0, mk(seed, 3, val2=1 << M.NR_BIT)):
+            seed += 1
+        k = mk(seed, 3, val2=1 << M.NR_BIT)
+        set_key(uc, 0, k)
+        L = gen(uc, 0, k)
+    else:
+        L = [3, 1, 6]
+        b = bytearray(M.BLK_LEN)
+        b[0], b[1] = M.MARK0, M.MARK1
+        b[M.B_LISTS:M.B_LISTS + 4] = bytes([3] + L)
+        b[2] = (sum(b[M.B_VAL:]) & 0xFF) ^ M.CHECK
+        uc.mem_write(blk(uc), bytes(b))
     uc.mem_write(SLOT + M.O_POS, b"\xff")
 
     def playing(off):
@@ -1238,7 +1507,337 @@ def real_play():
         if la != p and (not ahead or ahead[-1] != la):
             ahead.append(la)
     check("the stock's sequencer plays track 1's list in order (the playing store), the look-ahead store before each the same",
-          seen[1:5] == [3, 1, 6, 3] and ahead[:3] == [1, 6, 3], (seen, ahead))
+          seen[1:5] == L + L[:1] and (ahead[:4] == L + L[:1] if REP.get("scchain") else ahead[:3] == L[1:] + L[:1]),
+          (seen, ahead, L))
+
+
+def scene_play(chain):
+    """(scchain) the stock's clock: scene 1 (pattern 1, each track a list of 3 without patterns 1 and 5), scene 2 (pattern 5, no lists);
+    chain: the scene chain 1-2 moves on after every track's list's last slot; else scene 2 pressed mid-pattern, the lists kept to the
+    switch at track 1's pattern end"""
+    import playfix
+    fw, ram = Path(sys.argv[2]).read_bytes(), Path(sys.argv[3]).read_bytes()
+    uc = PF.machine(fw, ram)
+    uc.mem_write(ET.rhstate.HEAP_LIMIT_PTR, struct.pack("<I", ET.rhstate.ST))
+    uc.mem_write(ET.rhstate.ST, bytes(ET.rhstate.SIZE))
+    uc.mem_write(ET.rhstate.ST, struct.pack("<I", ET.rhstate.MAGIC))
+    for t in range(8):
+        uc.mem_write(chain_item(uc, t), b"\x04\x04")
+        set_key(uc, t, 0)
+    scmsg(uc, 0x70, 1, 0)
+    keys = []
+    for t in range(8):
+        uc.mem_write(chain_item(uc, t), b"\x00\x00")
+        k = 0x123 + 37 * t
+        while {0, 4} & set(gen(uc, t, mk(k, 3))):
+            k += 1
+        keys.append(mk(k, 3))
+        set_key(uc, t, keys[t])
+    scmsg(uc, 0x70, 0, 0)
+    lists = [gen(uc, t, keys[t]) for t in range(8)]
+    uc.mem_write(SLOT + M.O_POS, b"\xff" * 8)
+    if chain:
+        uc.mem_write(item(uc, M.O_SCASK, 0), bytes([0, 1]))
+    scene = lambda: uc.mem_read(item(uc, 0x2C, 0), 1)[0]
+    playing = lambda: [uc.mem_read(item(uc, M.O_PLAYING + 4 * t, 0), 1)[0] for t in range(8)]
+    uc.mem_write(playfix.UWTICK, struct.pack("<I", 1000))
+    call(uc, PF.SETMODE, PF.CLOCK, 0)
+    call(uc, PF.TICK, 0, PF.CLOCK)
+    log, kept = [], None
+    for m in range(1, 9001):
+        uc.mem_write(playfix.UWTICK, struct.pack("<I", 1000 + m))
+        if not chain and m == 3300:
+            call(uc, LB["c_mxpad"], 0x2004E090, 17, 127)
+            call(uc, LB["c_mxpr"], 0x2004E090, 17, 0)
+            kept = [lst(uc, t) for t in range(8)]
+        call(uc, PF.TICK, 0, PF.CLOCK)
+        st = (scene(), playing())
+        if not log or st != log[-1][1:]:
+            log.append((m,) + st)
+    if chain:
+        start = next(r[0] for r in log if r[1] == 0 and r[0] > 2000)
+        sw = [r[0] for r in log if r[1] == 1 and r[0] > start]
+        check("the scene chain 1-2: scene 1 plays its lists of 3 (3 bars), then scene 2 (every track's list at its last slot)",
+              sw and 5900 < sw[0] - start < 6100, log[-6:])
+    else:
+        before = [r for r in log if 3300 <= r[0] and r[1] == 0]
+        sw = [r[0] for r in log if r[1] == 1]
+        check("scene 2 pressed mid-pattern: the lists kept, no track back to its chain's pattern before the switch, then scene 2",
+              kept == lists and all(0 not in r[2] for r in before) and sw and log[-1][2] == [4] * 8, log[-4:])
+
+
+def play_start(chain):
+    """(scplay) the stock's Play (its seek from the start, 0x08034082): scene 1 (pattern 1, no lists), scene 2 (pattern 5, lists), the
+    state scene 2's (a project saved while it played); chain (scenes 1-2): scene 1 starts with its own patterns, scene 2 then with its
+    lists; else (scene 2 alone): the lists play from the start"""
+    import playfix
+    fw, ram = Path(sys.argv[2]).read_bytes(), Path(sys.argv[3]).read_bytes()
+    uc = PF.machine(fw, ram)
+    uc.mem_write(ET.rhstate.HEAP_LIMIT_PTR, struct.pack("<I", ET.rhstate.ST))
+    uc.mem_write(ET.rhstate.ST, bytes(ET.rhstate.SIZE))
+    uc.mem_write(ET.rhstate.ST, struct.pack("<I", ET.rhstate.MAGIC))
+    for t in range(8):
+        uc.mem_write(chain_item(uc, t), b"\x00\x00")
+        set_key(uc, t, 0)
+    scmsg(uc, 0x70, 0, 0)
+    keys = []
+    for t in range(8):
+        uc.mem_write(chain_item(uc, t), b"\x04\x04")
+        k = 0x123 + 37 * t
+        while {0, 4} & set(gen(uc, t, mk(k, 3, first=4, last=4))):
+            k += 1
+        keys.append(mk(k, 3, first=4, last=4))
+        set_key(uc, t, keys[t])
+    scmsg(uc, 0x70, 1, 0)
+    lists = [gen(uc, t, keys[t]) for t in range(8)]
+    uc.mem_write(SLOT + M.O_POS, b"\xff" * 8)
+    uc.mem_write(item(uc, M.O_SCASK, 0), bytes([0, 1]) if chain else bytes([1, 1]))
+    uc.mem_write(item(uc, 0x2C, 0), bytes([1]))
+    scene = lambda: uc.mem_read(item(uc, 0x2C, 0), 1)[0]
+    playing = lambda: [uc.mem_read(item(uc, M.O_PLAYING + 4 * t, 0), 1)[0] for t in range(8)]
+    uc.mem_write(playfix.UWTICK, struct.pack("<I", 1000))
+    call(uc, PF.SETMODE, PF.CLOCK, 0)
+    call(uc, 0x08034082, M.ENG, 0)
+    first = (scene(), playing(), [lst(uc, t) for t in range(8)])
+    log = []
+    for m in range(1, 2601):
+        uc.mem_write(playfix.UWTICK, struct.pack("<I", 1000 + m))
+        call(uc, PF.TICK, 0, PF.CLOCK)
+        st = (scene(), playing())
+        if not log or st != log[-1][1:]:
+            log.append((m,) + st)
+    if chain:
+        check("Play, the scene chain 1-2 (the state scene 2's mutate): scene 1 with its own patterns, no lists; then scene 2 with "
+              "its lists", first[0] == 0 and first[1] == [0] * 8 and first[2] == [[]] * 8 and log[-1][1] == 1 and
+              log[-1][2] == [L[0] for L in lists], (first, log[-3:]))
+    else:
+        check("Play, scene 2 alone: the mutate as saved, slot 1 at the start", first[0] == 1 and
+              first[1] == [L[0] for L in lists] and first[2] == lists, (first, log[-2:]))
+
+
+def livecol_tests(uc):
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+    hold_open(uc)
+    page_ok(uc, "Live on column 1, page 1")
+    ET.pad(uc, 8 + M.LV_COL); ET.unpad(uc, 8 + M.LV_COL)
+    on = block(uc)[M.B_VAL2] >> M.LV_BIT & 1
+    page_ok(uc, "  page 1, column 1, row 2: Live On, drawn")
+    ET.press(uc, M.ID_DOWN); ET.release(uc, M.ID_DOWN)
+    page_ok(uc, "  page 2: Live On on column 1 too")
+    ET.pad(uc, M.LV_COL); ET.unpad(uc, M.LV_COL)
+    off = block(uc)[M.B_VAL2] >> M.LV_BIT & 1
+    page_ok(uc, "  page 2, column 1, row 1: Live Off")
+    ET.press(uc, M.ID_UP); ET.release(uc, M.ID_UP)
+    page_ok(uc, "  page 1: Live Off there too")
+    ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+    check("  Live in the block's byte: On, then Off", (on, off) == (1, 0), (on, off))
+
+
+def views_tests(uc):
+    import rhbuild
+    img = Path(sys.argv[2]).read_bytes()
+    pv_vt = lambda k: struct.unpack_from("<I", img, M.PV_VT + 4 * k - rhbuild.BASE)[0]
+    MIXV, FXV, CONT = M.MIX_VIEW, M.FX_VIEW, M.CONT
+    was = bytes(uc.mem_read(CONT + M.O_CMODE, 1))
+    stock = []
+    h = [uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: stock.append(a), None, x & ~1, (x & ~1) + 1)
+         for x in (LB["c_mxpad"], u32(uc, 0x08067990))]
+
+    def on(view, mode=None):
+        if mode is not None:
+            uc.mem_write(CONT + M.O_CMODE, bytes([mode]))
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", view))
+        hold_open(uc)
+        return is_open(uc)
+    for row, (name, view, mode) in enumerate((("the Mixer (Grid FX)", MIXV, None), ("the FX view", FXV, None),
+                                              ("the Sidechain view", CONT, M.MODE_SC)), 1):
+        opened = on(view, mode)
+        page_ok(uc, f"{name}: Shift + hold Duplicate opens the page, drawn")
+        before = block(uc)[M.B_VAL]
+        del stock[:]
+        ET.pad(uc, 8 * row + M.COLS[0]); ET.unpad(uc, 8 * row + M.COLS[0])
+        got = block(uc)[M.B_VAL]
+        check(f"  {name}: a pad sets the page's setting (Length {row + 1}), not the view's own pad", opened and got != before and not stock,
+              (opened, before, got, [hex(x) for x in stock]))
+        ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        check(f"  {name}: Duplicate closes the page", not is_open(uc))
+        set_key(uc, 0, 0) if SEEDS else set_list(uc, 0, [])
+        set_shift(uc, 1)
+        ET.press(uc, M.ID_DUP); ET.tick(uc, 100); lights(uc); ET.release(uc, M.ID_DUP)
+        set_shift(uc, 0)
+        check(f"  {name}: Shift + tap Duplicate mutates", any(lst(uc, t) for t in range(8)), [lst(uc, t) for t in range(8)])
+        set_clear(uc, 1)
+        red = lights(uc)[M.LED_DUP] == u32(uc, M.COLOURS + 4 * M.CLR_RED)
+        ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        set_clear(uc, 0)
+        set_clear(uc, 1)
+        dark = lights(uc)[M.LED_DUP] != u32(uc, M.COLOURS + 4 * M.CLR_RED)
+        set_clear(uc, 0)
+        check(f"  {name}: Clear held, Duplicate red; Clear + Duplicate ends every mutate; then not red", red and dark and
+              all(lst(uc, t) == [] for t in range(8)), (red, dark, [lst(uc, t) for t in range(8)]))
+    uc.mem_write(CONT + M.O_CMODE, bytes([0]))
+    check("a track view (the container, not Sidechain): the page never opens", not on(CONT))
+    uc.mem_write(CONT + M.O_CMODE, was)
+    for x in h:
+        uc.hook_del(x)
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+    setting(uc, M.COLS[0], 3)
+
+
+def bounce_tests(uc):
+    """(bounce) a button that closes the page, held past the stock's hold: the page again on its release, on a page's view"""
+    def run(held_ms, back_to, bid=14):
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+        hold_open(uc)
+        ET.press(uc, bid)
+        shut = not is_open(uc)
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.MIX_VIEW))
+        ET.tick(uc, held_ms); lights(uc)
+        during = is_open(uc)
+        ET.release(uc, bid)
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", back_to))
+        lights(uc)
+        after = is_open(uc)
+        if after:
+            ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        return shut, during, after
+    r = run(500, M.PV)
+    check("the page open, Mixer held (500 ms): closed while held, open again on the release", r == (True, False, True), r)
+    r = run(100, M.MIX_VIEW)
+    check("  Mixer tapped (100 ms): the page stays closed (the Mixer shows)", r == (True, False, False), r)
+    r = run(500, M.FX_VIEW, 15)
+    check("  FX held, then back on the FX view: open again", r == (True, False, True), r)
+    uc.mem_write(M.CONT + M.O_CMODE, bytes([0]))
+    r = run(500, M.CONT)
+    check("  held, then on a track view: the page stays closed", r == (True, False, False), r)
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+
+
+def shtrk_tests(uc):
+    """(shtrk) the page open, Shift + a track button: the page closes, the stock gets the press with its Shift flag down; held past the
+    stock's hold, the page again on its release; a tap leaves it closed"""
+    flag = lambda: uc.mem_read(item_ctrl(uc), 1)[0]
+    plain = []
+    back = []
+
+    def run(held_ms, back_to, t=2):
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+        hold_open(uc)
+        off0 = vals(uc)[4]
+        set_shift(uc, 1)
+        held0 = u32(uc, C.CTRL + M.O_HELD)
+        uc.mem_write(C.CTRL + M.O_HELD, struct.pack("<I", held0 | 1 << M.BIT_SHIFT if REP.get("shkeep") else held0))
+        reads = []
+        nxt = int(REP["prev_btn"], 16)
+        fa = item_ctrl(uc)
+        hk = uc.hook_add(UC_HOOK_CODE, lambda u, ad, n, d: reads.append(u.mem_read(fa, 1)[0]), None, nxt, nxt + 1)
+        ET.press(uc, t)
+        uc.hook_del(hk)
+        plain.append(reads == [0])
+        shut, kept = not is_open(uc), vals(uc)[4] == off0
+        up = 1 - flag() if REP.get("shkeep") else flag()
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", back_to))
+        ET.tick(uc, held_ms); lights(uc)
+        ET.release(uc, t)
+        if REP.get("shkeep"):
+            back.append(flag())
+            uc.mem_write(C.CTRL + M.O_HELD, struct.pack("<I", u32(uc, C.CTRL + M.O_HELD) & ~(1 << M.BIT_SHIFT)))
+        set_shift(uc, 0)
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", back_to))
+        lights(uc)
+        after = is_open(uc)
+        if after:
+            ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        return shut, kept, up, after
+    r = run(500, M.PV)
+    check("the page open, Shift + track 3 held: the page closes (track 3's on / off kept), Shift up after; open again on the release",
+          r == (True, True, 1, True), r)
+    uc.mem_write(M.CONT + M.O_CMODE, bytes([0]))
+    r = run(100, M.CONT)
+    check("  Shift + track 3 tapped, the stock on the track view: the page stays closed", r == (True, True, 1, False), r)
+    check("  both presses: the next handler gets the press once, with the Shift flag down (a plain track press)", plain == [True, True],
+          plain)
+    if REP.get("shkeep"):
+        check("  Shift's flag down while the track is held (the track page with no Shift layer); up again at its release, Shift held",
+              back == [1, 1], back)
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+    hold_open(uc)
+    off0 = vals(uc)[4]
+    ET.press(uc, 2); ET.release(uc, 2)
+    check("  a track button without Shift: the page stays open, track 3 on / off", is_open(uc) and vals(uc)[4] == off0 ^ 4,
+          (is_open(uc), off0, vals(uc)[4]))
+    ET.press(uc, 2); ET.release(uc, 2)
+    if REP.get("shtrkled"):
+        ET.press(uc, 2); ET.release(uc, 2)
+        set_shift(uc, 1)
+        o = lights(uc)
+        set_shift(uc, 0)
+        call(uc, M.SELTRK, M.CONT)
+        sel = uc.reg_read(UC_ARM_REG_R0)
+        tc = [u32(uc, M.COLOURS + 4 * M.TRK_SLOTS[t]) for t in range(8)]
+        want = [tc[t] if t == sel else ET.scl(tc[t], M.DIM) for t in range(8)]
+        got = [o[M.LED_TRK0 + t] for t in range(8)]
+        check(f"  the page, Shift held: the track buttons as a track view (each colour dim, the selected track {sel + 1} full); "
+              "track 3 off on the page still shown in its colour", got == want and sel < 8, ([f"{x:06x}" for x in got], sel))
+        o = lights(uc)
+        check("  Shift up: the page's track buttons again (track 3 very dim, off)", o[M.LED_TRK0 + 2] == ET.scl(tc[2], M.VDIM))
+        ET.press(uc, 2); ET.release(uc, 2)
+    ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+
+
+def clrpage_tests(uc):
+    """(clrpage) the page open, Clear held (the preview): Down / Up page the Patterns view (its byte, its arrows), the page's own kept"""
+    pvpage = lambda: uc.mem_read(M.PV + M.O_PV_PAGE, 1)[0]
+    for view in (M.PV, M.MIX_VIEW):
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", view))
+        uc.mem_write(M.PV + M.O_PV_PAGE, b"\x00")
+        hold_open(uc)
+        set_clear(uc, 1)
+        ET.press(uc, M.ID_DOWN); ET.release(uc, M.ID_DOWN)
+        o = lights(uc)
+        a = (pvpage(), page(uc), o[M.LED_UP], o[M.LED_DOWN])
+        ET.press(uc, M.ID_UP); ET.release(uc, M.ID_UP)
+        o = lights(uc)
+        b = (pvpage(), page(uc), o[M.LED_UP], o[M.LED_DOWN])
+        set_clear(uc, 0)
+        ET.press(uc, M.ID_DOWN); ET.release(uc, M.ID_DOWN)
+        c = (pvpage(), page(uc))
+        ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        name = "Patterns" if view == M.PV else "Mixer"
+        check(f"the page on {name}, Clear held: Down = the Patterns view's page 2 (Up white), Up = page 1 (Down white), the "
+              "settings page kept; Clear up: Down = the settings page 2", a == (1, 0, M.WHITE, 0) and b == (0, 0, 0, M.WHITE) and
+              c == (0, 1), (a, b, c))
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+
+
+def shmut_tests(uc):
+    """(shmut) on the page: Shift + Duplicate mutates (the page kept open); Duplicate alone closes it"""
+    for t in range(8):
+        call(uc, LB["c_mtcl"], t)
+    for view in (M.PV, M.MIX_VIEW):
+        uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", view))
+        hold_open(uc)
+        set_shift(uc, 1)
+        ET.press(uc, M.ID_DUP); ET.tick(uc, 100); lights(uc); ET.release(uc, M.ID_DUP)
+        set_shift(uc, 0)
+        a = (is_open(uc), [lst(uc, t) for t in range(8)])
+        set_shift(uc, 1)
+        ET.press(uc, M.ID_DUP); ET.tick(uc, 600); lights(uc); ET.release(uc, M.ID_DUP)
+        set_shift(uc, 0)
+        b = (is_open(uc), [lst(uc, t) for t in range(8)])
+        ET.press(uc, M.ID_DUP); ET.release(uc, M.ID_DUP)
+        c = is_open(uc)
+        name = "Patterns" if view == M.PV else "Mixer"
+        check(f"the page on {name}: Shift + Duplicate mutates, the page stays open; again (held 600 ms): new lists, still open; "
+              "Duplicate alone closes it", a[0] and any(a[1]) and b[0] and b[1] != a[1] and not c, (a, b, c))
+        for t in range(8):
+            call(uc, LB["c_mtcl"], t)
+    uc.mem_write(C.CTRL + M.O_VIEW, struct.pack("<I", M.PV))
+
+
+def item_ctrl(uc):
+    call(uc, M.PARAM_GET, u32(uc, C.CTRL + M.O_SHIFTF), 0)
+    return uc.reg_read(UC_ARM_REG_R0)
 
 
 if __name__ == "__main__":

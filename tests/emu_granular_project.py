@@ -32,8 +32,8 @@ def main():
         return u.reg_read(UC_ARM_REG_R0)
     L.validate_layout()
     assert len(offsets)==80 and len(set(offsets))==80
-    reserved=next(block for block in L.BLOCKS if block.name=='future envelope/waveshape')
-    assert not set(offsets)&set(range(reserved.offset,reserved.offset+reserved.size))
+    for free in (block for block in L.BLOCKS if block.status=='free'):
+        assert not set(offsets)&set(range(free.offset,free.offset+free.size))
     call('params_init',params)
     assert bytes(u.mem_read(params,64))==bytes((0,64,51,72,0,0,64,0))*8
     for t in range(8):
