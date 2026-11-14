@@ -91,14 +91,23 @@ def main():
     u.mem_write(tail,encoded);u.mem_write(config,b'\x03'+modes[1:])
     assert call('project_save',tail,params,config)==0 and bytes(u.mem_read(tail,884))==encoded
     assert [call('level_word',value) for value in (0,1,64,127)]==[1,512,0x200000,127*127*512]
-    shift=bytes((i*5)%128 for i in range(56));setting=bytes((0,1,2,3,4,5,8,9))
+    shift=bytes((i*5)%128 for i in range(56));setting=bytes((0,1,2,3,4,25,40,73))
     u.mem_write(params,shift);u.mem_write(config,setting);u.mem_write(tail,bytes(884))
     assert call('shift_save',tail,params,config)==1
-    record=bytes(u.mem_read(tail+436,72));written=b'GS\x01\x08'+shift+setting
+    record=bytes(u.mem_read(tail+436,72));written=b'GS\x02\x08'+shift+setting
     assert record==written+struct.pack('<I',zlib.crc32(written))
     assert all(b==0 for i,b in enumerate(u.mem_read(tail,884)) if not 436<=i<508)
     u.mem_write(params,bytes(56));u.mem_write(config,bytes(8));assert call('shift_load',tail,params,config)==1
     assert bytes(u.mem_read(params,56))==shift and bytes(u.mem_read(config,8))==setting
+    old=b'GS\x01\x08'+shift+setting;u.mem_write(tail+436,old+struct.pack('<I',zlib.crc32(old)))
+    assert call('shift_load',tail,params,config)==1
+    assert bytes(u.mem_read(params,56))==bytes(64 if i%7==6 else b for i,b in enumerate(shift))
+    u.mem_write(tail+436,record)
+    print('PASS a version 1 Shift record loads with Burst Speed at the middle')
+    for bad_setting in (10,96,97):
+        u.mem_write(config,bytes([bad_setting])+setting[1:]);assert call('shift_save',tail,params,config)==0
+    u.mem_write(config,setting)
+    print('PASS settings with a Pitch Set over 4 or a Burst pitch over 2 are not saved')
     for index in range(72):
         bad=bytearray(record);bad[index]^=1;u.mem_write(tail+436,bytes(bad))
         u.mem_write(params,b'\x55'*56);assert call('shift_load',tail,params,config)==0 and bytes(u.mem_read(params,56))==b'\x55'*56

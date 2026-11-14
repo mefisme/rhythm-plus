@@ -70,7 +70,7 @@ def main():
     tick(2333);frame();assert u.mem_read(slot+96+6,1)==b'\x01'
     for pad in (17,16):event('pad',pad);event('release',pad)
     assert u.mem_read(slot+168,1)[0]&3==2 and invoke('owner_mode',slot,0)==0
-    settings=draw();assert settings[23]==0
+    settings=draw();assert settings[23]!=0
     event('release',29);assert draw()==normal
     event('pad',24);event('release',24);assert u.mem_read(menu+8,1)==b'\x02'
     # Track selection does not move engine state or another track's page.

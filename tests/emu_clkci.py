@@ -129,6 +129,13 @@ class Rig:
         E.press(self.uc, bid)
         self.stock()
 
+    def tap(self, bid):                     # press and release (with the scrub, Shift + Play reaches the stock at the release)
+        E.press(self.uc, bid)
+        gx = E.MAN["report"].get("gfxmix", {}).get("labels", {}).get("c_gx_rel")
+        if gx:                              # the rig stops the stock's release chain at its entry: our head called directly
+            call(self.uc, int(gx, 16), C.CTRL, bid)
+        self.stock()
+
     def run(self, t_end, t0=T0 + 1, period=20, first=7, on_pulse=None):
         """Each ms: a pulse every `period` ms (slave) from T0 + first, the clock's tick, then the LEDs every 2 ms.  Returns the frames of
         Record and Clear, the times of the pulses and the clock state just after each."""
@@ -217,7 +224,7 @@ def test_master(fw, ram):
     check("master: transport stopped elsewhere: the Play LED drawn as stopped", pled(r.uc) == WANT_PLED[0], f"{pled(r.uc):#x}")
 
     r = Rig(fw, ram, shift=1)
-    r.press(C.ID_PLAY)
+    r.tap(C.ID_PLAY)
     check("master: Shift + Play reaches the stock with Shift", [p[2] for p in r.log.press] == [1], f"{r.log.press}")
 
     for name, kw in (("count-in off", dict()), ("Record not armed", dict(rec=0)), ("playing", dict(play=1))):
@@ -293,7 +300,7 @@ def test_slave(fw, ram):
     check("slave: Record red 100 ms from each click", flash_ok(rec, got, ts[96], C.COL_REC))
 
     r = Rig(fw, ram, slave=True, shift=1)
-    r.press(C.ID_PLAY)
+    r.tap(C.ID_PLAY)
     r.run(T0 + 60)
     check("slave: Shift + Play: the press after the first click has Shift, Shift up after",
           [p[2] for p in r.log.press] == [1] and E.newest(r.uc, E.shift_store(r.uc), 0) == 0, f"{r.log.press}")

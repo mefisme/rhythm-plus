@@ -3,11 +3,12 @@ import sys
 import struct
 from pathlib import Path
 import emu_tmenu as E
-PV = E.MAN['report']['pageclear'].get('page_values', [[0, 1, 2, 3, 11, 7], [10, 5, 9, 4, 8]])
+PV = E.MAN['report']['pageclear'].get('page_values', [[0, 1, 2, 3, 11, 7], [10, 5, 9, 4, 8]]) or [[], []]
 FILT = E.MAN['report']['pageclear'].get('filt', False)
 FSP = (5, 9) if FILT else ()                       # (filt) Stock+'s filter type and pitch follow: on the filter page
 FXV, ALLV = set(PV[1]), set(PV[0]) | set(PV[1]) | set(FSP)
 VOL = E.MAN['report']['pageclear'].get('vol', False)
+ALLRESET = E.MAN['report']['pageclear'].get('allreset', True)   # Clear + pad 32: every page
 PX = E.MAN['report']['pageclear'].get('px', False)   # the pitch page and Clear All reset fshape's random pitch (values 26, 27)
 PXN = ('random pitch, glide and LFO fade-in' if E.MAN['report'].get('fshape', {}).get('fade') else
        'random pitch and glide' if E.MAN['report'].get('fshape', {}).get('glide') else 'random pitch')
@@ -26,9 +27,9 @@ def main():
             result.append(u.reg_read(E.UC_ARM_REG_R0) & 255)
         return result
     def setv(u, t, i, v): E.call(u, 0x08031A38, 0x20010E10, 0x10 + t, i, v)
-    def spvals(): return [E.spval(uc, s, i) for i in range(12)]
+    def spvals(): return [E.spval(uc, s, i) for i in range(12 if E.SP else 0)]
     def seedsp():
-        for i in range(12): E.call(uc, E.SPL['c_spput'], s, i, 2048)
+        for i in range(12 if E.SP else 0): E.call(uc, E.SPL['c_spput'], s, i, 2048)
     def push(p): E.pad(uc, p); E.unpad(uc, p)
     FSL = {k: int(v, 16) for k, v in E.MAN['report']['fshape']['labels'].items()} if FILT or PX else {}
     FDEF = E.MAN['report']['fshape']['defs'] if FILT else []
@@ -86,7 +87,13 @@ def main():
     lights = []
     for _ in range(4):
         lights.append(E.out(uc)[31]); E.tick(uc, 64)
-    E.check('pad 32 steady with Clear held' if E.MAN['report']['tmenu'].get('steadyreset') else 'pad 32 flashes red only while Clear held', set(lights) == ({reset_rgb} if E.MAN['report']['tmenu'].get('steadyreset') else {0, E.T.RED}), lights)
+    if not ALLRESET:
+        cue = reset_rgb
+        reset_rgb = 0
+        E.check('no Clear All: pad 32 dark with Clear held', set(lights) == {0}, lights)
+        E.check('no Clear All: pad 26 in the reset red while Clear is held', E.out(uc)[E.T.PAD_PAGE0] == cue, hex(E.out(uc)[E.T.PAD_PAGE0]))
+    else:
+        E.check('pad 32 steady with Clear held' if E.MAN['report']['tmenu'].get('steadyreset') else 'pad 32 flashes red only while Clear held', set(lights) == ({reset_rgb} if E.MAN['report']['tmenu'].get('steadyreset') else {0, E.T.RED}), lights)
     push(25)
     got = values(uc, s)
     if E.MAN['report']['tmenu'].get('resetcue'):
@@ -98,11 +105,25 @@ def main():
     E.check('page 1 defaults match stock Clear + right (including fine values)', got[6:16] == expected, (got[6:16], expected))
     E.check('page 1 clears all eight sound lanes of current pattern', bytes(uc.mem_read(lanes, 8 * E.T.LANE_SIZE)) == bytes([255]) * (8 * E.T.LANE_SIZE))
     E.check('remaining four automation lanes unchanged', bytes(uc.mem_read(lanes + 8 * E.T.LANE_SIZE, 4 * E.T.LANE_SIZE)) == bytes([41]) * (4 * E.T.LANE_SIZE))
-    E.check('page 1 leaves other parameters and Stock+ alone', got[:6] + got[16:] == before[:6] + before[16:] and spvals() == [2048] * 12)
+    E.check('page 1 leaves other parameters and Stock+ alone', got[:6] + got[16:] == before[:6] + before[16:] and spvals() == [2048] * len(spvals()))
     E.check('other pattern and track unchanged', bytes(uc.mem_read(other, E.T.PAT_SIZE)) == other_before and values(uc, (s + 1) % 8) == othertrack)
     shown = E.b8(uc, E.T.O_PAGE)
-    push(E.pp(1))
-    E.check(f'the Stock+ page resets only its {len(PV[0])} values; page stays selected', spvals() == [E.DEFS[i] if i in PV[0] else 2048 for i in range(12)] and E.b8(uc, E.T.O_PAGE) == shown, spvals())
+    if not ALLRESET:
+        start = E.u32(uc, int(E.MAN['report']['pageclear']['slot'], 16))   # the flash's start tick
+        feedback = []
+        for dt in range(0, 384, 64):
+            uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + dt))
+            E.led(uc, E.LB['c_tmled']); feedback.append(E.out(uc)[E.T.PAD_PAGE0])
+        E.check('Clear + pad 26: pad 26 flashes red three times', feedback == [E.clear_red(uc), 0] * 3, [hex(x) for x in feedback])
+        uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + 384))
+        E.led(uc, E.LB['c_tmled'])
+        E.check('  then the reset red again while Clear is held', E.out(uc)[E.T.PAD_PAGE0] == cue, hex(E.out(uc)[E.T.PAD_PAGE0]))
+        clear(False); E.led(uc, E.LB['c_tmled']); f = E.out(uc)
+        E.check('  Clear lifted: pad 26 back in its page colour', f[E.T.PAD_PAGE0] == E.page_pads_want(uc, 0, f[24])[E.T.PAD_PAGE0 - 24], hex(f[E.T.PAD_PAGE0]))
+        clear(True)
+    if E.SP:
+        push(E.pp(1))
+        E.check(f'the Stock+ page resets only its {len(PV[0])} values; page stays selected', spvals() == [E.DEFS[i] if i in PV[0] else 2048 for i in range(12)] and E.b8(uc, E.T.O_PAGE) == shown, spvals())
     if PX:
         seedsp(); seedpx()
         push(E.pp(1))
@@ -110,9 +131,10 @@ def main():
         seedpx()
     seedsp()
     stock_before = values(uc, s)
-    push(E.pp(2))
-    E.check('FX page resets only its values', spvals() == [E.DEFS[i] if i in FXV else 2048 for i in range(12)], spvals())
-    E.check('FX reset keeps stock knobs and sample parameters', values(uc, s) == stock_before)
+    if E.SP:
+        push(E.pp(2))
+        E.check('FX page resets only its values', spvals() == [E.DEFS[i] if i in FXV else 2048 for i in range(12)], spvals())
+        E.check('FX reset keeps stock knobs and sample parameters', values(uc, s) == stock_before)
     if FILT:
         seedsp(); seedfl()
         check0 = flvals() == [3000] * (6 if FILT else 0)
@@ -131,44 +153,52 @@ def main():
         seedsp(); seedfl(); seedvl()
         st0 = values(uc, s)
         push(E.T.PAD_PAGE0 + E.PADMAP.index(None))
-        E.check(f"Clear + pad {E.T.PAD_PAGE0 + E.PADMAP.index(None) + 1} (no page): nothing reset", spvals() == [2048] * 12 and flvals() == [3000] * (6 if FILT else 0)
+        E.check(f"Clear + pad {E.T.PAD_PAGE0 + E.PADMAP.index(None) + 1} (no page): nothing reset", spvals() == [2048] * len(spvals()) and flvals() == [3000] * (6 if FILT else 0)
                 and vlvals() == [3000] * (8 if VOL else 0) and values(uc, s) == st0, (spvals(), flvals(), vlvals()))
         seedfl(); seedvl()
     if PX:
         E.check(f'the FX, filter, mix and empty pads keep the {PXN}', pxvals() == [3000] * len(PXDEF), pxvals())
-    seedsp()
-    uc.mem_write(lanes, bytes([37]) * (8 * E.T.LANE_SIZE))
-    E.pad(uc, 4)  # A held step must not reduce reset scope to that step.
-    E.call(uc, E.C.PARAM_GET, E.u32(uc, rec + 0x40), 0)
-    heldflag = uc.reg_read(E.UC_ARM_REG_R0)
-    uc.mem_write(heldflag, b'\x01')
-    E.call(uc, E.LB['c_tmview'])
-    push(31)
-    E.check('all-pages reset restores the 11 Stock+ controls to defaults', [v for i, v in enumerate(spvals()) if i != 6] == [(v if i in ALLV else 2048) for i, v in enumerate(E.DEFS) if i != 6], spvals())
-    if FILT:
-        E.check("all-pages reset: the filter page's values too", flvals() == FDEF, flvals())
-    if VOL:
-        E.check("all-pages reset: the movement page's values too", vlvals() == VDEF, vlvals())
-    if PX:
-        E.check(f"all-pages reset: the {PXN} too", pxvals() == PXDEF, pxvals())
-    E.check('all-pages reset clears whole current pattern even with step held', bytes(uc.mem_read(lanes, 8 * E.T.LANE_SIZE)) == bytes([255]) * (8 * E.T.LANE_SIZE) and uc.mem_read(heldflag, 1)[0] == 1)
-    E.check('reset leaves menu open and selected page unchanged', E.b8(uc, E.T.O_OPEN) == 1 and E.b8(uc, E.T.O_PAGE) == shown)
-    if E.MAN['report']['tmenu'].get('steadyreset'):
-        start = E.u32(uc, E.C.HAL_TICK)
-        feedback = []
-        for dt in range(0, 384, 64):
-            uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + dt))
-            E.led(uc, E.LB['c_tmled']); frame = E.out(uc); feedback.append(frame[31])
+    if not ALLRESET:
+        uc.mem_write(lanes, bytes([37]) * (8 * E.T.LANE_SIZE))
+        st0 = values(uc, s)
+        push(31)
+        E.check('no Clear All: Clear + pad 32 resets nothing, keeps the automation', values(uc, s) == st0
+                and bytes(uc.mem_read(lanes, 8 * E.T.LANE_SIZE)) == bytes([37]) * (8 * E.T.LANE_SIZE) and E.b8(uc, E.T.O_PAGE) == shown)
+    else:
+        seedsp()
+        uc.mem_write(lanes, bytes([37]) * (8 * E.T.LANE_SIZE))
+        E.pad(uc, 4)  # A held step must not reduce reset scope to that step.
+        E.call(uc, E.C.PARAM_GET, E.u32(uc, rec + 0x40), 0)
+        heldflag = uc.reg_read(E.UC_ARM_REG_R0)
+        uc.mem_write(heldflag, b'\x01')
+        E.call(uc, E.LB['c_tmview'])
+        push(31)
+        if E.SP:
+            E.check('all-pages reset restores the 11 Stock+ controls to defaults', [v for i, v in enumerate(spvals()) if i != 6] == [(v if i in ALLV else 2048) for i, v in enumerate(E.DEFS) if i != 6], spvals())
+        if FILT:
+            E.check("all-pages reset: the filter page's values too", flvals() == FDEF, flvals())
+        if VOL:
+            E.check("all-pages reset: the movement page's values too", vlvals() == VDEF, vlvals())
+        if PX:
+            E.check(f"all-pages reset: the {PXN} too", pxvals() == PXDEF, pxvals())
+        E.check('all-pages reset clears whole current pattern even with step held', bytes(uc.mem_read(lanes, 8 * E.T.LANE_SIZE)) == bytes([255]) * (8 * E.T.LANE_SIZE) and uc.mem_read(heldflag, 1)[0] == 1)
+        E.check('reset leaves menu open and selected page unchanged', E.b8(uc, E.T.O_OPEN) == 1 and E.b8(uc, E.T.O_PAGE) == shown)
+        if E.MAN['report']['tmenu'].get('steadyreset'):
+            start = E.u32(uc, E.C.HAL_TICK)
+            feedback = []
+            for dt in range(0, 384, 64):
+                uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + dt))
+                E.led(uc, E.LB['c_tmled']); frame = E.out(uc); feedback.append(frame[31])
+                if E.MAN['report']['tmenu'].get('resetcue'):
+                    want = E.clear_red(uc) if dt % 128 == 0 else 0
+                    E.check(f'Clear All: every page flashes together at {dt} ms', list(frame[E.T.PAD_PAGE0:E.T.PAD_PAGE0 + len(E.PADMAP)]) == [0 if i is None else want for i in E.PADMAP])
+            E.check('pad 32 flashes three times only after press', feedback == [E.clear_red(uc), 0] * 3, feedback)
+            uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + 384))
+            E.led(uc, E.LB['c_tmled'])
+            E.check('pad 32 returns steady while Clear remains held', E.out(uc)[31] == reset_rgb)
             if E.MAN['report']['tmenu'].get('resetcue'):
-                want = E.clear_red(uc) if dt % 128 == 0 else 0
-                E.check(f'Clear All: every page flashes together at {dt} ms', list(frame[E.T.PAD_PAGE0:E.T.PAD_PAGE0 + len(E.PADMAP)]) == [0 if i is None else want for i in E.PADMAP])
-        E.check('pad 32 flashes three times only after press', feedback == [E.clear_red(uc), 0] * 3, feedback)
-        uc.mem_write(E.C.HAL_TICK, struct.pack('<I', start + 384))
-        E.led(uc, E.LB['c_tmled'])
-        E.check('pad 32 returns steady while Clear remains held', E.out(uc)[31] == reset_rgb)
-        if E.MAN['report']['tmenu'].get('resetcue'):
-            f = E.out(uc)
-            E.check('Clear All: page colours return after feedback', list(f[24:32]) == E.page_pads_want(uc, shown, f[24])[:-1] + [reset_rgb])
+                f = E.out(uc)
+                E.check('Clear All: page colours return after feedback', list(f[24:32]) == E.page_pads_want(uc, shown, f[24])[:-1] + [reset_rgb])
     clear(False); E.tick(uc, 1000); E.led(uc, E.LB['c_tmled'])
     E.check('pad 32 hidden again after Clear release and feedback', E.out(uc)[31] == 0)
     print('ALL PASS' if not E.FAILS else f'{len(E.FAILS)} FAILED')

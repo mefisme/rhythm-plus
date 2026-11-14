@@ -10,7 +10,7 @@ import granular_stock_controls as C
 import granular_route_candidate as R
 import granular_snapshot_candidate as S
 
-AT,ENGINE,RAW=0x2980,0x2100,0x1480
+AT,ENGINE,RAW=0x29a0,0x2100,0x1480
 SEEN=C.CONTROL+8
 LIFE_KEY=0x674c31
 ACK_ACTIVE=0x674331
@@ -104,5 +104,6 @@ def code(in_place=False,grain_cap=None):
                   'move r3,a','add #>$8,a','move a1,r3','move r2,a','add #>$4,a','move a1,r2',
                   ('label','ack_end'),('jsr',grain['g_rest']),'rts']
     words,labels=core0.asm_at(items,AT)
-    assert AT+len(words)<0x4000
+    # The pool wrapper starts at P:0x2b00.
+    assert AT+len(words)<=0x2b00
     return [('p',ENGINE,engine),('p',AT,words)],dict(labels=labels,engine_words=len(engine),producer_words=len(words),tables=tables,in_place=in_place)

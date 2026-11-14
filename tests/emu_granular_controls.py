@@ -129,6 +129,58 @@ def main():
     synced,_=render(low,.5,dict(size=20,dens=0,scan=0,timing=9600,fine=128<<16),stock_snapshot=unity,field_changes=[(200,1,9600|1<<18)])
     assert unsynced[:200*32]==synced[:200*32] and any(synced[201*32:204*32]) and not any(unsynced[201*32:204*32])
     print('PASS a sync pulls the next grain to the grid')
+    def runs(words):
+        found=[];n=0
+        while n<len(words):
+            if words[n]:
+                end=n
+                while end<len(words) and words[end]:end+=1
+                found.append((n,end));n=end
+            else:n+=1
+        return found
+    def burst(count,speed,seconds=1.2):
+        zone=127|(count-1 if count else 0)<<adapter.BURST_COUNT_SHIFT|speed<<adapter.BURST_SPEED_SHIFT
+        words,_=render(steps,seconds,dict(size=10,dens=0,scan=40,timing=4800,spr=127,pspr=127,fine=128<<16,zone=zone),stock_snapshot=unity)
+        return words,runs(words)
+    plain,plain_runs=burst(0,64)
+    words,found=burst(4,64)
+    gaps=[b[0]-a[0] for a,b in zip(found,found[1:])]
+    grains=[words[a:b] for a,b in found]
+    assert all(abs(g-4800)<=48 for g in gaps[:4]),gaps
+    # The first grain starts at the block's own offset, so it is the same grain a sample earlier.
+    peaks=[max(g) for g in grains]
+    assert grains[1]==grains[2]==grains[3] and peaks[0]==peaks[1] and peaks[4]!=peaks[1],peaks
+    assert plain_runs[0]==found[0] and plain[found[0][0]:found[0][1]]==grains[0]
+    assert plain[found[1][0]:found[1][1]]!=grains[1]
+    _,fast=burst(6,127);_,slow=burst(4,0,1.9)
+    fast_gaps=[b[0]-a[0] for a,b in zip(fast,fast[1:])][:4];slow_gaps=[b[0]-a[0] for a,b in zip(slow,slow[1:])][:3]
+    assert all(b<a for a,b in zip(fast_gaps,fast_gaps[1:])) and fast_gaps[1]<.6*fast_gaps[0],fast_gaps
+    assert all(b>a for a,b in zip(slow_gaps,slow_gaps[1:])) and slow_gaps[1]>1.4*slow_gaps[0],slow_gaps
+    zone=127|5<<adapter.BURST_COUNT_SHIFT|127<<adapter.BURST_SPEED_SHIFT
+    synced,_=render(steps,.4,dict(size=10,dens=0,scan=40,timing=4800,spr=127,pspr=127,fine=128<<16,zone=zone),stock_snapshot=unity,
+                    field_changes=[(160,1,4800|1<<18)])
+    assert [a for a,_ in runs(synced)][:4]==[a for a,_ in fast][:4],(runs(synced)[:4],fast[:4])
+    print('PASS Burst repeats the first grain of a voice at even gaps, then the usual grains go on; Speed right shortens the gaps, left lengthens them')
+    fade=127|3<<adapter.BURST_COUNT_SHIFT|64<<adapter.BURST_SPEED_SHIFT|1<<adapter.BURST_FADE_BIT
+    faded,_=render(steps,1.2,dict(size=10,dens=0,scan=40,timing=4800,spr=127,pspr=127,fine=128<<16,zone=fade),stock_snapshot=unity)
+    faded_peaks=[max(faded[a:b]) for a,b in runs(faded)]
+    shares=[p/peaks[1] for p in faded_peaks[1:4]]
+    assert all(abs(s-e)<.04 for s,e in zip(shares,(.75,.5,.25))) and faded_peaks[4]==peaks[4],(shares,faded_peaks)
+    print('PASS Burst fade lowers each repeat by an even share; the grains after the burst keep their level')
+    pure=tone(3000)
+    def crossings(words):
+        block=signed_block(words);return sum(1 for a,b in zip(block,block[1:]) if a<0<=b)
+    def climb(direction):
+        zone=127|3<<adapter.BURST_COUNT_SHIFT|64<<adapter.BURST_SPEED_SHIFT|direction<<adapter.BURST_PITCH_SHIFT
+        words,_=render(pure,1.2,dict(size=40,dens=0,scan=40,timing=4800,fine=128<<16,zone=zone),stock_snapshot=unity)
+        # A pure tone has zero samples inside a grain, so take each grain from its onset block.
+        starts=[0]+onsets(words)[:3]
+        return [crossings(words[a:a+960]) for a in starts]
+    level,up,down=climb(0),climb(1),climb(2)
+    assert all(abs(r/level[0]-1)<.03 for r in level),level
+    assert all(abs(r/up[0]-2**(k/12))<.03 for k,r in enumerate(up)),[r/up[0] for r in up]
+    assert all(abs(r/down[0]-2**(-k/12))<.03 for k,r in enumerate(down)),[r/down[0] for r in down]
+    print('PASS Burst pitch moves each repeat one semitone up or down from the first')
     moving=dict(size=20,dens=40,scan=63,zone=4)
     assert render(low,.25,dict(moving,flags=16),stock_snapshot=unity)[0]!=render(low,.25,moving,stock_snapshot=unity)[0]
     print('PASS Bounce changes the scan path')

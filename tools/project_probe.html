@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Rhythm Plus A0177 project capture</title>
+<style>body{font:17px system-ui;max-width:850px;margin:40px auto;padding:0 20px;background:#171923;color:#eee}button,select,input{font:inherit;padding:8px;margin:5px 0}pre{white-space:pre-wrap;background:#222738;padding:16px}label{display:block}a{color:#a6d8ff}</style>
+<h1>A0177 project capture</h1>
+<p>This page reads the unit’s diagnostic RAM. It does not write projects or SD files.</p>
+<p>Use Chrome or Edge. Connect USB, close other MIDI tools and the uploader connection, then connect here. Capture immediately after each test. After a power cycle, connect again.</p>
+<button id="connect">Connect MIDI</button>
+<label>MIDI input <select id="input"></select></label>
+<label>MIDI output <select id="output"></select></label>
+<label>Test label <input id="label" value="startup" placeholder="startup / pack / bar / immediate / save"></label>
+<button id="capture" disabled>Capture log</button> <button id="download" disabled>Download captures</button>
+<pre id="status">Install A0177 before capturing.</pre>
+<script src="project_probe_protocol.js"></script>
+<script>
+'use strict';
+const SLOT = 0x2004f340; // Checked against A0177 manifest by tests/project_probe_protocol.cjs.
+const $ = id => document.getElementById(id);
+let midi, sequence = 0, captures = [], busy = false;
+function show(error) {$('status').textContent = error.message || String(error);}
+$('connect').onclick = async () => {
+  try {
+    if (!navigator.requestMIDIAccess) throw new Error('Web MIDI requires Chrome or Edge on localhost.');
+    midi = await navigator.requestMIDIAccess({sysex:true});
+    for (const [id, ports] of [['input', midi.inputs], ['output', midi.outputs]]) {
+      $(id).replaceChildren();
+      for (const port of ports.values()) $(id).add(new Option(port.name, port.id));
+      const found = [...$(id).options].find(o => /rhythm/i.test(o.text));
+      if (found) $(id).value = found.value;
+    }
+    if (!$('input').value || !$('output').value) throw new Error('No MIDI ports found. Check USB and reconnect.');
+    $('capture').disabled = false;
+    show('Connected. Select the Circuit Rhythm ports, perform one test, then capture.');
+  } catch (error) {show(error);}
+};
+async function read(input, output, address, length) {
+  const seq = sequence = (sequence + 1) % 128;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {clearTimeout(timer); input.removeEventListener('midimessage', receive);};
+    const timer = setTimeout(() => {cleanup(); reject(new Error('No diagnostic reply. Confirm A0177 and selected ports.'));}, 3000);
+    function receive(event) {
+      try {
+        const bytes = ProjectProbe.reply(event.data, seq, length);
+        if (bytes) {cleanup(); resolve(bytes);}
+      } catch (error) {cleanup(); reject(error);}
+    }
+    input.addEventListener('midimessage', receive);
+    try {output.send(ProjectProbe.request(address, length, seq));}
+    catch (error) {cleanup(); reject(error);}
+  });
+}
+$('capture').onclick = async () => {
+  if (busy) return;
+  busy = true; $('capture').disabled = true;
+  let input, output;
+  try {
+    input = midi.inputs.get($('input').value); output = midi.outputs.get($('output').value);
+    if (!input || !output) throw new Error('Ports disconnected. Connect again.');
+    await input.open(); await output.open();
+    let bytes;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      bytes = new Uint8Array(1056);
+      for (let offset = 0; offset < bytes.length; offset += 64)
+        bytes.set(await read(input, output, SLOT + offset, Math.min(64, bytes.length - offset)), offset);
+      const after = await read(input, output, SLOT, 32);
+      if (after.every((v, i) => v === bytes[i])) break;
+      bytes = null;
+    }
+    if (!bytes) throw new Error('Project activity changed the log during capture. Let loading finish, then retry.');
+    const result = ProjectProbe.decode(bytes);
+    result.label = $('label').value; result.capturedAt = new Date().toISOString();
+    captures.push(result); $('download').disabled = false;
+    show(JSON.stringify(result, null, 2));
+  } catch (error) {show(error);}
+  finally {
+    if (input) await input.close().catch(() => {});
+    if (output) await output.close().catch(() => {});
+    busy = false; $('capture').disabled = false;
+  }
+};
+$('download').onclick = () => {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(captures, null, 2)], {type:'application/json'}));
+  const link = document.createElement('a'); link.href = url; link.download = 'rhythm-plus-a0177-project-captures.json'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+</script></html>

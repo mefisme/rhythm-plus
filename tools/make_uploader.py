@@ -1,4 +1,4 @@
-"""tools/uploader.html: the Rhythm Plus installer, from tools/uploader_template.html, with the stable build and the newest test build.
+"""tools/uploader.html: the Rhythm Plus installer, with stable and one development build.
 
     python tools/make_uploader.py         (needs the builds' .bin files and the stock image)
 """
@@ -13,13 +13,14 @@ import make_rm_uploader as m  # noqa: E402
 import rh_fw  # noqa: E402
 
 # (name, kind, folder, Spanish, English); the first one is picked when the page opens.
+# Keep descriptions short: included features and key fixes; controls belong in the manual.
 BUILDS = (
     ("A0120", "stable", HERE / "firmware" / "a0120",
-     "Pattern Mutate y Track +: Parameter Editor, Filter, Mix, Pitch y FX. Probada en el aparato.",
-     "Pattern Mutate and Track +: Parameter Editor, Filter, Mix, Pitch and FX. Tested on the unit."),
-    ("AG026", "test", HERE / "buildtmp" / "granular-hardware-ag026",
-     "La página Granular en el pad 30, con Slice y Lock. Mutate con Live y Clear + Duplicate; las escenas con mutate avanzan en cadena; los ajustes también en Mixer y FX. Sin las páginas Filter y Mix.",
-     "The Granular page on pad 30, with Slice and Lock. Mutate with Live and Clear + Duplicate; scenes with a mutate move on in a chain; the settings also on Mixer and FX. No Filter or Mix pages."),
+     "Pattern Mutate y el Track Parameter Editor con las páginas Filter, Mix, Pitch y FX. Probada en el aparato.",
+     "Pattern Mutate and the Track Parameter Editor with the Filter, Mix, Pitch and FX pages. Tested on the unit."),
+    ("A0201", "test", HERE / "firmware" / "a0201",
+     "Ajustes por pista: edición con toques/deslizamiento, centro con dos dedos y selección silenciosa. Conserva Granular.",
+     "Track settings: value-bar tap/slide editing, two-finger center and silent step selection. Retains Granular."),
 )
 TEMPLATE = HERE / "tools" / "uploader_template.html"
 OUT = HERE / "tools" / "uploader.html"

@@ -1,7 +1,7 @@
 """Unicorn test of upguard.py on the RAM dump.
     python tests/emu_upguard.py STOCK.bin BUILT.bin RAM.bin      (RH_BUILD = the build's folder)
-The two upload calls go through c_upw (the mark set during the upload, cleared after, its result kept); Stock+'s c_spw and fshape's c_flsw
-write through c_dspw: the stock's 0x08031200 with the same words without the mark, nothing with it.
+The two upload calls go through c_upw (the mark set during the upload, cleared after, its result kept); Stock+'s c_spw (or smswitch's c_sww) and
+fshape's c_flsw write through c_dspw: the stock's 0x08031200 with the same words without the mark, nothing with it.
 """
 import json
 import os
@@ -59,7 +59,7 @@ def main():
         life=R.get('granular',{}).get('lifecycle')
         target=int(life['labels']['c_glupload'],16) if life else C_UPW
         check(f"{at:#x}: upload guard chain", bl_at(fw, at) == ("bl", target) and (not life or int(life['previous_upload'],16)==C_UPW))
-    for (mod, lab, off), at in zip(U.WRITERS, G["writers"]):
+    for (mod, lab, off), at in zip([w for w in U.WRITERS if w[1] in R.get(w[0], {}).get("labels", {})], G["writers"], strict=True):
         at = int(at, 16)
         check(f"{lab}: its write is bl c_dspw", at == int(R[mod]["labels"][lab], 16) + off and bl_at(fw, at) == ("bl", C_DSPW))
 
@@ -83,7 +83,8 @@ def main():
     check("c_upw: the mark cleared after, the upload's result kept",
           uc.mem_read(FLAG, 1)[0] == 0 and uc.reg_read(UC_ARM_REG_R0) == 0x1234)
 
-    spw, flsw = int(R["stockplus"]["labels"]["c_spw"], 16), int(R["fshape"]["labels"]["c_flsw"], 16) if "c_flsw" in R["fshape"]["labels"] else None
+    spw = int(R["stockplus"]["labels"]["c_spw"], 16) if "stockplus" in R else int(R["smswitch"]["labels"]["c_sww"], 16)
+    flsw = int(R["fshape"]["labels"]["c_flsw"], 16) if "c_flsw" in R.get("fshape", {}).get("labels", {}) else None
     for mark in (0, 1):
         uc.mem_write(FLAG, bytes([mark]))
         writes.clear()
@@ -91,7 +92,7 @@ def main():
         if flsw:
             call(uc, flsw, 0x654321, 0x37328)
         want = [] if mark else [(core(0x1E70)[0], 0x123456 << 8 & 0xFFFFFFFF, 0x9E70)] + ([(0, 0x654321 << 8 & 0xFFFFFFFF, 0x37328)] if flsw else [])
-        check(f"mark {mark}: Stock+'s and fshape's writes {'dropped' if mark else 'as the stock writes them'}", writes == want,
+        check(f"mark {mark}: the switch and shape writes {'dropped' if mark else 'as the stock writes them'}", writes == want,
               f"{[tuple(hex(x) for x in w) for w in writes]}")
     if "route" in G:
         only0, both = ([(int(a, 16), int(b, 16)) for a, b in r] for r in G["route"])

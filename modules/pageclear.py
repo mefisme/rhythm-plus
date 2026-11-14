@@ -10,6 +10,8 @@ vol: Clear + pad 30 resets the movement page (fshape's values 18..25); pad 32 to
 scanfx: the scan's depth and speed (11, 7) reset with pad 28, not pad 27.
 pageorder: the page on each pad as tmenu's PADMAP_ORDER (pad 30 none: Clear + pad 30 nothing).
 px: the pitch page and Clear All also reset fshape's random pitch (values 26, 27); fade: and the LFO's fade-in (value 28).
+stockonly: no Stock+: Clear + pad 26 resets the stock page, the other page pads pass to the stock.
+allreset=False: no Clear + pad 32.
 """
 import struct
 import sys
@@ -20,7 +22,6 @@ from thumb import (Asm, movw, movt, push_list, pop_list, mov_reg, movs_imm, cmp_
                    strb_imm, lsls_imm, adds_reg, adds_imm8, raw, h)
 import countin as C
 import rhstate
-import stockplus_rp
 
 FIRST, RESET = 25, 31
 OFF = rhstate.OFF.get('pageclear', (0, 0))[0]
@@ -34,12 +35,15 @@ VOL_PAGE = 4                                    # (vol) pad 30: the movement pag
 PADMAP_ORDER = (0, FILT_PAGE, VOL_PAGE, 1, None, 2)  # (pageorder) the page on pads 26-31; None = no page
 
 
-def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, shapes=False, filt=False, vol=False, scanfx=False, pageorder=False, px=False, fade=False, soundonly=False):
+def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, shapes=False, filt=False, vol=False, scanfx=False, pageorder=False, px=False, fade=False, soundonly=False, stockonly=False, allreset=True):
     import rhbuild
     assert rhstate.OFF['pageclear'][1] == 8
     default_table = struct.unpack_from('<I', img, 0x0805884C - rhbuild.BASE)[0]
     assert rhbuild.BASE <= default_table < rhbuild.BASE + len(img)
-    defaults = stockplus_rp.defaults(report['stockplus'].get('lfodef') or False)
+    assert not stockonly or not (gran or shapes or filt or vol or scanfx or pageorder or px or fade or soundonly or 'stockplus' in report)
+    if not stockonly:
+        import stockplus_rp
+        defaults = stockplus_rp.defaults(report['stockplus'].get('lfodef') or False)
     lab = lambda k: int(report['stockplus']['labels'][k], 16)
     a = Asm(base_addr)
     E = a.emit
@@ -111,78 +115,82 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
     a.label('c_pcreset')
     E(push_list, [4, 5, 6, 7], lr=True)
     E(mov_reg, 4, 0); E(mov_reg, 5, 1)
-    if gran:
-        gl = lambda k: int(report['grain']['labels'][k], 16)                 # noqa: E731
-        E(cmp_imm, 5, GRAN_PAGE); E(b_cond, 'pc_ng', 'ne')
-        E(bl, gl('c_grreset'))                                               # the granular page: its 12 defaults
+    if stockonly:
+        E(mov_reg, 0, 4); E(bl, 'c_pcstock')
         E(pop_list, [4, 5, 6, 7], pc=True)
-        a.label('pc_ng')
-    if filt:
-        fl = lambda k: int(report['fshape']['labels'][k], 16)               # noqa: E731
-        E(cmp_imm, 5, FILT_PAGE); E(b_cond, 'pc_nf', 'ne')
-        E(bl, 'pc_filt')
-        E(pop_list, [4, 5, 6, 7], pc=True)
-        a.label('pc_filt')                                                   # r4 = the track: the filter page's defaults
-        E(push_list, [], lr=True)
-        E(mov_reg, 0, 4); E(bl, fl('c_flreset'))
-        for index in FILT_SP:
-            E(mov_reg, 0, 4); E(movs_imm, 1, index); E(movw, 2, defaults[index]); E(bl, lab('c_spput'))
-        E(mov_reg, 0, 4); E(bl, lab('c_spdirty'))
-        E(pop_list, [], pc=True)
-        a.label('pc_nf')
-    fl = lambda k: int(report['fshape']['labels'][k], 16)
-    assert not px or ((vol or soundonly) and report['fshape'].get('px'))
-    assert not fade or (px and report['fshape'].get('fade'))
-    if vol:
-        assert filt and report['fshape'].get('vol')
-        E(cmp_imm, 5, VOL_PAGE); E(b_cond, 'pc_nv', 'ne')
-        E(mov_reg, 0, 4); E(bl, fl('c_vlreset'))
-        E(pop_list, [4, 5, 6, 7], pc=True)
-        a.label('pc_nv')
-    E(cmp_imm, 5, 0); E(b_cond, 'pc_stock', 'eq')
-    E(cmp_imm, 5, 3); E(b_cond, 'pc_stock', 'hs')
-    E(b, 'pc_sp')
-    a.label('pc_stock')
-    E(mov_reg, 0, 4); E(bl, 'c_pcstock')
-    a.label('pc_sp')
-    page_values = (PAGE_VALUES[0], tuple(i for i in PAGE_VALUES[1] if i != BITCRUSH)) if nocrush else PAGE_VALUES
-    if shapes:
-        assert nocrush
-        page_values = (page_values[0] + SHAPES, page_values[1])
-    if filt:
-        assert shapes and 'fshape' in report
-        page_values = (page_values[0], FX_RING)
-    if scanfx:
-        assert filt or soundonly
-        if soundonly:
-            page_values = (tuple(i for i in page_values[0] if i not in FILT_SP), FX_RING)
-        scan = (11, 7)
-        page_values = (tuple(i for i in page_values[0] if i not in scan), page_values[1] + scan)
-    for page, indices in enumerate(page_values, 1):
-        E(cmp_imm, 5, page); E(b_cond, f'pc_do{page}', 'eq')
-        E(cmp_imm, 5, 6); E(b_cond, f'pc_next{page}', 'ne')
-        a.label(f'pc_do{page}')
-        for index in indices:
-            E(mov_reg, 0, 4); E(movs_imm, 1, index); E(movw, 2, defaults[index]); E(bl, lab('c_spput'))
-        if px and page == 1:
-            E(mov_reg, 0, 4); E(bl, fl('c_pxreset'))
-            if fade:
-                E(mov_reg, 0, 4); E(bl, fl('c_fireset'))
-        E(mov_reg, 0, 4); E(bl, lab('c_spdirty'))
-        a.label(f'pc_next{page}')
-    if filt:
-        E(cmp_imm, 5, 6); E(b_cond, 'pc_fx', 'ne')
-        E(bl, 'pc_filt')
+    if not stockonly:
+        if gran:
+            gl = lambda k: int(report['grain']['labels'][k], 16)                 # noqa: E731
+            E(cmp_imm, 5, GRAN_PAGE); E(b_cond, 'pc_ng', 'ne')
+            E(bl, gl('c_grreset'))                                               # the granular page: its 12 defaults
+            E(pop_list, [4, 5, 6, 7], pc=True)
+            a.label('pc_ng')
+        if filt:
+            fl = lambda k: int(report['fshape']['labels'][k], 16)               # noqa: E731
+            E(cmp_imm, 5, FILT_PAGE); E(b_cond, 'pc_nf', 'ne')
+            E(bl, 'pc_filt')
+            E(pop_list, [4, 5, 6, 7], pc=True)
+            a.label('pc_filt')                                                   # r4 = the track: the filter page's defaults
+            E(push_list, [], lr=True)
+            E(mov_reg, 0, 4); E(bl, fl('c_flreset'))
+            for index in FILT_SP:
+                E(mov_reg, 0, 4); E(movs_imm, 1, index); E(movw, 2, defaults[index]); E(bl, lab('c_spput'))
+            E(mov_reg, 0, 4); E(bl, lab('c_spdirty'))
+            E(pop_list, [], pc=True)
+            a.label('pc_nf')
+        fl = lambda k: int(report['fshape']['labels'][k], 16)
+        assert not px or ((vol or soundonly) and report['fshape'].get('px'))
+        assert not fade or (px and report['fshape'].get('fade'))
         if vol:
+            assert filt and report['fshape'].get('vol')
+            E(cmp_imm, 5, VOL_PAGE); E(b_cond, 'pc_nv', 'ne')
             E(mov_reg, 0, 4); E(bl, fl('c_vlreset'))
-        a.label('pc_fx')
-    if gran:
-        E(cmp_imm, 5, 6); E(b_cond, 'pc_x', 'ne')
-        E(bl, gl('c_grtrk')); E(subs_imm8, 0, 1)
-        E(cmp_reg, 0, 4); E(b_cond, 'pc_x', 'ne')
-        E(bl, gl('c_grreset'))                                               # all pages of the granular track: its values too
-        a.label('pc_x')
-    E(pop_list, [4, 5, 6, 7], pc=True)
+            E(pop_list, [4, 5, 6, 7], pc=True)
+            a.label('pc_nv')
+        E(cmp_imm, 5, 0); E(b_cond, 'pc_stock', 'eq')
+        E(cmp_imm, 5, 3); E(b_cond, 'pc_stock', 'hs')
+        E(b, 'pc_sp')
+        a.label('pc_stock')
+        E(mov_reg, 0, 4); E(bl, 'c_pcstock')
+        a.label('pc_sp')
+        page_values = (PAGE_VALUES[0], tuple(i for i in PAGE_VALUES[1] if i != BITCRUSH)) if nocrush else PAGE_VALUES
+        if shapes:
+            assert nocrush
+            page_values = (page_values[0] + SHAPES, page_values[1])
+        if filt:
+            assert shapes and 'fshape' in report
+            page_values = (page_values[0], FX_RING)
+        if scanfx:
+            assert filt or soundonly
+            if soundonly:
+                page_values = (tuple(i for i in page_values[0] if i not in FILT_SP), FX_RING)
+            scan = (11, 7)
+            page_values = (tuple(i for i in page_values[0] if i not in scan), page_values[1] + scan)
+        for page, indices in enumerate(page_values, 1):
+            E(cmp_imm, 5, page); E(b_cond, f'pc_do{page}', 'eq')
+            E(cmp_imm, 5, 6); E(b_cond, f'pc_next{page}', 'ne')
+            a.label(f'pc_do{page}')
+            for index in indices:
+                E(mov_reg, 0, 4); E(movs_imm, 1, index); E(movw, 2, defaults[index]); E(bl, lab('c_spput'))
+            if px and page == 1:
+                E(mov_reg, 0, 4); E(bl, fl('c_pxreset'))
+                if fade:
+                    E(mov_reg, 0, 4); E(bl, fl('c_fireset'))
+            E(mov_reg, 0, 4); E(bl, lab('c_spdirty'))
+            a.label(f'pc_next{page}')
+        if filt:
+            E(cmp_imm, 5, 6); E(b_cond, 'pc_fx', 'ne')
+            E(bl, 'pc_filt')
+            if vol:
+                E(mov_reg, 0, 4); E(bl, fl('c_vlreset'))
+            a.label('pc_fx')
+        if gran:
+            E(cmp_imm, 5, 6); E(b_cond, 'pc_x', 'ne')
+            E(bl, gl('c_grtrk')); E(subs_imm8, 0, 1)
+            E(cmp_reg, 0, 4); E(b_cond, 'pc_x', 'ne')
+            E(bl, gl('c_grreset'))                                               # all pages of the granular track: its values too
+            a.label('pc_x')
+        E(pop_list, [4, 5, 6, 7], pc=True)
 
     # r0 pad index, r1 selected track. Returns 1 if Clear consumes a page press.
     a.label('c_pcpress')
@@ -196,6 +204,14 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
     # page index = pad - FIRST (all reset is page 6).
     from thumb import subs_imm8
     E(subs_imm8, 1, FIRST)
+    if stockonly and not allreset:
+        E(cmp_imm, 1, 0); E(b_cond, 'pp_no', 'ne')
+    elif stockonly:
+        E(cmp_imm, 1, 0); E(b_cond, 'pp_ok', 'eq')
+        E(cmp_imm, 1, RESET - FIRST); E(b_cond, 'pp_no', 'ne')
+        a.label('pp_ok')
+    elif not allreset:
+        E(cmp_imm, 1, RESET - FIRST); E(b_cond, 'pp_no', 'eq')
     if pageorder:
         assert (filt and vol or soundonly) and scanfx
         for j, pg in enumerate((0, None, None, 1, None, 2) if soundonly else PADMAP_ORDER):
@@ -218,6 +234,6 @@ def install(img, report, base_addr, viewsync=False, nocrush=False, gran=False, s
     code, labels = a.assemble()
     img += bytes([255]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4: img.append(255)
-    report['pageclear'] = dict(viewsync=viewsync, gran=gran, shapes=shapes, filt=filt, vol=vol, scanfx=scanfx, padmap=[0,None,None,1,None,2] if soundonly else list(PADMAP_ORDER) if pageorder else None, px=px, fade=fade, page_values=[list(v) for v in page_values], slot=hex(rhstate.ST + OFF), default_table=hex(default_table),
+    report['pageclear'] = dict(viewsync=viewsync, gran=gran, shapes=shapes, filt=filt, vol=vol, scanfx=scanfx, padmap=[0,None,None,1,None,2] if soundonly else list(PADMAP_ORDER) if pageorder else None, px=px, fade=fade, page_values=[] if stockonly else [list(v) for v in page_values], stockonly=stockonly, allreset=allreset, slot=hex(rhstate.ST + OFF), default_table=hex(default_table),
         labels={k: hex(v) for k, v in labels.items() if k.startswith('c_')})
     return labels, code

@@ -27,10 +27,21 @@ GRAIN = os.environ.get("RH_GRAIN") == "1"            # RH_GRAIN=1: grain_rp's sl
 UPGUARD = os.environ.get("RH_UPGUARD") == "1"        # RH_UPGUARD=1: upguard's slot (set while the stock uploads a sample)
 MUTSET = {"1": 20, "2": 32, "3": 136, "4": 168, "5": 168, "6": 168, "7": 176, "8": 176, "9": 176, "10": 176, "11": 176}.get(os.environ.get("RH_MUTSET"), 0)   # mutset's slot: 1 the settings page, 2 with the mutate, 3 its seeds, 4 and the next keys, 5 and the scene chain fixes, 6 and Live on column 1, the other views, 7 and the page back after a held button, 8 and Shift + a track over the page, 9 and its look, 10 and Down / Up in the Clear preview, 11 and Shift + Duplicate on the page
 SLOTS = (("mutset", MUTSET),) * (MUTSET > 0) + (("upguard", 4),) * UPGUARD + (("trackreset", 220),) * TRACKRESET + (("pageclear", 8),) * PAGECLEAR + (("plog", PLOG),) * PROBES + SP_SLOTS * STOCKPLUS + (("grain", 4),) * GRAIN + (("pshape", 4),) * PSHAPE + (("fshape", 8),) * FSHAPE + (("tmenu", 32 + 4 * (TMCLICK > 0) + 16 * (TMCLICK > 1) + 4 * (TMCLICK > 2)), ("clkci", 52), ("playfix", 16), ("countin", 8), ("vismet", 4), ("srcount", 8)) + (("srprobe", 8),) * PROBES
-if os.environ.get("RH_GRANULAR") == "1":
+# RH_SMSWITCH=1: smswitch's slot and dspready's READY byte (cthresh's name), without Stock+'s slots.
+if os.environ.get("RH_SMSWITCH") == "1":
+    SLOTS += (("smswitch", 4), ("cthresh", 4))
+if os.environ.get("RH_STEPMUT") == "1":
+    SLOTS = (("stepmut", 32),) + SLOTS
+if os.environ.get("RH_GFXMIX") == "1":
+    SLOTS = (("gfxmix", 472),) + SLOTS
+if os.environ.get("RH_PROJECTPROBE") == "1":
+    SLOTS = (("projectprobe", 1056),) + SLOTS
+if os.environ.get("RH_STORAGESHADOW") == "1":
+    SLOTS = (("storageshadow", 1024),) + SLOTS
+if os.environ.get("RH_GRANULAR") == "1" or os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1':
     # Prefix keeps all existing short offsets unchanged; the new adapter uses
     # its own absolute slot pointer. Historical builds leave this disabled.
-    SLOTS = (("granular",316),) + SLOTS
+    SLOTS = ((("granstore",448),) if os.environ.get('RH_GRANULAR_COMPANION')=='1' else ()) + (("granular",416 if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1' else 316),) + SLOTS
 # Volatile automation proof has a private enable word, initialized by c_rst.
 if os.environ.get("RH_AUTOPROT") == "1":
     SLOTS += (("autoprot", 4),)

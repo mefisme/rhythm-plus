@@ -149,8 +149,8 @@ def install(img, report, base_addr, sm=0):
     smd, prev = None, None
     if sm:
         import fshape
-        fs = report["fshape"]
-        assert fs.get("sm"), "sm: fshape with sm"
+        fs = report["smswitch"] if "smswitch" in report else report["fshape"]
+        assert fs.get("sm"), "sm: fshape or smswitch with sm"
         pads = ((PAD_XF, fshape.SM_XF), (PAD_RD, fshape.SM_DR if fs.get("drone") else fshape.SM_RD), (PAD_EF, fshape.SM_EF))[3 - sm:]
         assert sm < 2 or fs.get("declick") or fs.get("drone"), "sm=2: fshape with declick or drone"
         assert sm < 3 or fs.get("loopxf"), "sm=3: fshape with loopxf"

@@ -66,6 +66,8 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
             label=f'unchanged_{frame}'
             items += [f'move y:>${STATE:x},a',f'cmp #>${frame:x},a',('jcc','ne',label),f'move #>${key:x},a']
             items += [f'move a1,y:>${R.CONTROL+track*4:x}' for track in range(1,8)]
+            if host_mailbox:
+                items += [f'move a1,y:>${P.HOST_CONTROL+track*4:x}' for track in range(1,8)]
             items += [('label',label)]
     items += [('jsr',meta['labels']['after_wait'])]
     for k in range(8):

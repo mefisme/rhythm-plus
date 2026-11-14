@@ -77,8 +77,11 @@ def main():
         if "mixmove" not in rep:
             _,_,words=core0.block_words(bytearray(img))
             _,_,stock_words=core0.block_words(bytearray(STOCK.read_bytes()))
-            check(f"{b}: removed Mix leaves all three stock gain/send hooks and vectors unchanged",
-                  all(words[a]==stock_words[a]==M.OLD for a in M.SITES) and words[0x50:0x100]==stock_words[0x50:0x100])
+            gs = rep.get("gfxsplit")
+            own = range(int(gs["at"], 16), int(gs["at"], 16) + gs["words"]) if gs else range(0)
+            check(f"{b}: removed Mix leaves all three stock gain/send hooks and the vectors unchanged (but gfxsplit's)",
+                  all(words[a]==stock_words[a]==M.OLD for a in M.SITES)
+                  and all(words[a]==stock_words[a] for a in range(0x50, 0x100) if a not in own))
             continue
         mm = rep["mixmove"]
         n, at, ws = core0.block_words(bytearray(img))

@@ -41,7 +41,17 @@ def regions(rep):
     add(1, "y", 0x400, 0x1000, "stock: sample rings (8 x 512)")
     add(1, "y", 0x1400, 0x10, "stock: filter coefficients, voice index")
     pm = rep.get("pitchmod")
-    if pm:
+    if pm and "smswitch" in rep:
+        add(1, "p", int(pm["start"], 16), pm["core1_words"], "our core 1 code (pitchmod's block, smswitch's words)")
+        add(1, "y", int(pm["y_idle"], 16), 3, "pitchmod: idle, burn, block count")
+        add(1, "p", XF.AT, XF.END - XF.AT, REUSE + "loopxf: XF")
+        add(1, "p", XF.WC_AT, XF.WC_END - XF.WC_AT, REUSE + "loopxf: WC")
+        add(1, "y", XF.TEMP, XF.N_MAX, "loopxf: TEMP")
+        add(1, "y", FS.SMF, 8, "smswitch: Sample mode switches")
+        add(1, "y", FS.LN, 16, "smswitch: drone's last note-on, last note-off's block")
+        add(1, "y", FS.XFS, len(FS.XF_SCRATCH), "loopxf: scratch (moved)")
+        add(1, "y", FS.XFB, 8, "loopxf: on + t (moved)")
+    elif pm:
         sh = int(pm["shift"], 16)
         yb = PM.Y_BASE + sh
         add(1, "p", int(pm["start"], 16), pm["core1_words"], "our core 1 code (pitchmod's block)")
@@ -124,6 +134,23 @@ def regions(rep):
         add(0, "p", MM.AT, mm["words"], REUSE + "mixmove: hooks (unused vectors)")
         add(0, "x", MM.Q, 0x20, "mixmove: Q")
         add(0, "y", MM.YD, 0x18, "mixmove: pan, reverb, delay depth")
+    gs = rep.get("gfxsplit")
+    if gs:
+        add(0, "p", int(gs["at"], 16), gs["words"], REUSE + "gfxsplit: hooks (unused vectors)")
+        add(0, "x", int(gs["dry"], 16), 64, "gfxsplit: the dry mix")
+        if "cut" in gs:
+            add(0, "x", int(gs["cut"], 16), 8, "gfxsplit: each track's share around Grid FX")
+        if "applied" in gs:
+            add(0, "x", int(gs["applied"], 16), 8, "gfxsplit: each track's share in use")
+        if 'retrigger' in gs:
+            add(0,'x',int(gs['retrigger'],16),1,'gfxsplit: audio-boundary Beat Repeat request')
+        if 'control_at' in gs:
+            add(0,'p',int(gs['control_at'],16),gs['control_words'],'gfxsplit: routing/blend/retrigger code')
+            add(0,'x',int(gs['return_cut'],16),4,'gfxsplit: return shares and blend state')
+            add(0,'x',int(gs['clean'],16),64,'gfxsplit: clean stereo capture')
+    if rep.get('core0') and not c0:
+        import core0
+        add(0,'p',core0.LD,rep['core0']['ld_words'],'core0: segmented upload loader')
     if c0:
         import c0fx as C0
         import core0

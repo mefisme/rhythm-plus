@@ -21,7 +21,7 @@ def main():
     u=E.setup(fw,ram);reads=[];replies=[];locks=[];forbidden=[]
     L={k:int(v,16) for k,v in E.MAN['report']['rdiag']['labels'].items()}
     ready=int(E.MAN['report']['cthresh']['slot'],16)+1
-    wait=E.rhstate.ST+E.rhstate.OFF['spwait'][0]
+    wait=E.rhstate.ST+(E.rhstate.OFF['spwait'][0] if 'spwait' in E.rhstate.OFF else E.rhstate.OFF['smswitch'][0]+2)
     def ret(u,value=0):u.reg_write(UC_ARM_REG_R0,value);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
     def rd(u,a,n,d):
         c=u.reg_read(UC_ARM_REG_R0);addr=u.reg_read(UC_ARM_REG_R1)
@@ -74,6 +74,9 @@ def main():
     for cmd in (6,9,253,254):
         st,_=request(cmd=cmd)
         E.check(f'write command {cmd} disabled',st==0xffffffff and not reads and not forbidden)
+    lo=min(L.values());hi=lo+0x800
+    calls={int(i.op_str.lstrip('#'),16) for i in E.rhbuild.MD.disasm(fw[lo-0x08010000:hi-0x08010000],lo) if i.mnemonic=='bl'}
+    E.check('no call to a stock SD or DSP writer in the code',not calls&{R.DSP_WR16,R.DSP_WRITE,R.WRITE},[hex(x) for x in calls&{R.DSP_WR16,R.DSP_WRITE,R.WRITE}])
     st,p=request(cmd=1)
     E.check('ping remains available',st==0x5213)
     st,_=request(length=16)

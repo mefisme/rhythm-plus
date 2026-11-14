@@ -37,7 +37,7 @@ def main():
     for build in sys.argv[1:]:
         d = HERE / "firmware" / build
         rep = json.loads((d / "manifest.json").read_text())["report"]
-        fs = rep["fshape"]
+        fs = rep["smswitch"] if "smswitch" in rep else rep["fshape"]
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))
         dr, ln, smf = int(fs["drone"], 16), int(fs["ln"], 16), int(fs["smf"], 16)

@@ -64,12 +64,16 @@ def main():
     assert call('runtime_pad',state,0,16)==1 and u.mem_read(state+168,1)[0]==16|32|2  # On restores Texture.
     assert call('runtime_pad',state,0,18)==1 and call('runtime_pad',state,0,20)==1
     assert u.mem_read(state+168,1)[0]==16|32|8|64|2
-    settings=draw(0,0);assert settings[19] and settings[20] and settings[21] and settings[22]==settings[23]==0
+    settings=draw(0,0);assert all(settings[19:24])
     setting=lambda:u.mem_read(state+292,1)[0]
     for expected in (2,4,6,8,0):assert call('runtime_pad',state,0,21)==1 and setting()==expected and call('runtime_release',state,21)==1
     assert call('runtime_pad',state,0,19)==1 and setting()==1 and draw(0,0)[19]!=settings[19]
     assert call('runtime_pad',state,0,19)==1 and setting()==0 and call('runtime_release',state,19)==1
-    assert call('runtime_pad',state,0,22)==1 and u.mem_read(state+168,1)[0]==16|32|8|64|2 and setting()==0 and call('runtime_release',state,22)==1
+    assert call('runtime_pad',state,0,22)==1 and u.mem_read(state+168,1)[0]==16|32|8|64|2 and setting()==16 and draw(0,0)[22]!=settings[22]
+    assert call('runtime_pad',state,0,22)==1 and setting()==0 and call('runtime_release',state,22)==1
+    for expected in (32,64,0):assert call('runtime_pad',state,0,23)==1 and setting()==expected and call('runtime_release',state,23)==1
+    call('runtime_pad',state,0,23);up=draw(0,0)[23];call('runtime_pad',state,0,23);down=draw(0,0)[23];call('runtime_pad',state,0,23)
+    assert len({settings[23],up,down})==3 and setting()==0
     assert all(settings[i] and settings[i]!=default_settings[i] for i in (16,17,18,20))
     assert call('runtime_release',state,18)==1 and call('runtime_release',state,20)==1
     call('runtime_release',state,29)
@@ -96,21 +100,24 @@ def main():
     assert level()==64 and call('runtime_shift_turn',state,1,0,1)==1 and level()==65
     call('runtime_shift_turn',state,1,0,0x7fffffff);assert level()==127
     call('runtime_shift_turn',state,1,0,0x80000000);assert level()==0
-    assert call('runtime_clear_knob',state,1,6,1)==0 and level()==0
+    assert call('runtime_clear_knob',state,1,6,1)==1 and level()==0
     shift=lambda k:u.mem_read(state+236+7+k,1)[0]
     assert shift(1)==64 and call('runtime_shift_turn',state,1,2,20)==1 and shift(1)==84
     assert call('runtime_shift_turn',state,1,1,9)==1 and shift(0)==9 and call('runtime_shift_turn',state,1,3,7)==1 and shift(2)==7
-    assert call('runtime_shift_turn',state,1,6,7)==0 and call('runtime_shift_turn',state,1,7,7)==0
+    assert call('runtime_shift_turn',state,1,6,30)==1 and shift(5)==30 and call('runtime_shift_turn',state,1,7,7)==1 and shift(6)==71
+    burst=draw(1,14);assert sum(1 for x in burst[16:24] if x>0x080808)==2  # 4 grains fill two pads.
+    speed=draw(1,15);assert sum(1 for x in speed[20:24] if x>0x080808)==1 and speed[16:20]==[0]*3+[speed[19]]
+    assert call('runtime_clear_knob',state,1,7,1)==1 and shift(6)==64 and call('runtime_clear_knob',state,1,6,1)==1 and shift(5)==0
     assert call('runtime_shift_turn',state,1,4,20)==1 and shift(3)==20
     sliced=draw(1,12);assert sum(1 for x in sliced[16:24] if x>0x080808)==2  # 3 slices fill a pad and a half.
     assert call('runtime_clear_knob',state,1,4,1)==1 and shift(3)==0
     assert call('runtime_shift_turn',state,1,5,30)==1 and shift(4)==30
-    assert call('runtime_clear_knob',state,1,5,1)==1 and shift(4)==0 and call('runtime_clear_knob',state,1,6,1)==0
+    assert call('runtime_clear_knob',state,1,5,1)==1 and shift(4)==0
     timed=draw(1,10);assert sum(1 for x in timed[20:24] if x>0x080808)>=1 and timed[16:20]==[0]*3+[timed[19]]
     for knob,value in ((1,0),(2,64),(3,0)):assert call('runtime_clear_knob',state,1,knob,1)==1 and shift(knob-1)==value
     assert call('runtime_clear_knob',state,1,0,1)==1 and level()==64
     shifted=draw(1,8)
-    assert shifted[60]==draw(1,0)[60] and shifted[66:68]==[0]*2 and all(shifted[61:66])
+    assert shifted[60]==draw(1,0)[60] and all(shifted[61:68])
     assert sum(1 for x in shifted[16:24] if x>0x080808)==4  # Level 64 fills half the bar.
     call('params_put',state+104,1,4,127);bright=draw(1,0)[64]
     call('params_put',state+104,1,4,0);dim=draw(1,0)[64]

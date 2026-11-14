@@ -1,8 +1,10 @@
-"""Exercise the real stock LED palette updater: track pulse follows white step pulse."""
+"""Exercise the real stock LED palette updater: the track number pulses in phase with the step marker."""
 from pathlib import Path
 import struct
 import sys
 import emu_tmenu as E
+STEADY=E.MAN['report']['tmenu'].get('steady_track',False)
+SYNC = E.MAN['report']['tmenu'].get('pulsesync', False)   # the track number in phase with the step marker
 
 
 def main():
@@ -20,13 +22,19 @@ def main():
         E.call(uc, 0x0803E47A, E.C.CTRL, E.OUT, phase)
         coefficient = E.u32(uc, E.T.COLOURS + 4*0x0A) & 255
         colour = E.u32(uc, E.T.COLOURS + 4*E.T.TRK_SLOTS[t])
-        wanted = E.scl(colour, 64 + ((255-coefficient)*192 >> 8))
+        wanted = colour if STEADY else E.scl(colour, 64 + ((coefficient if SYNC else 255 - coefficient)*192 >> 8))
         actual = E.u32(uc, E.OUT + 4*(32+t))
         E.check(f'stock frame phase {phase}: track pulse uses same coefficient as white step', actual == wanted and actual != 0, (hex(actual), hex(wanted)))
         samples.append(actual)
         white.append(E.u32(uc, E.T.COLOURS + 4*0x1B))
-    E.check('full stock cycle: visible pulse, never off', len(set(samples)) > 8 and 0 not in samples)
+    E.check('full stock cycle: steady selected track' if STEADY else 'full stock cycle: visible pulse, never off', (len(set(samples))==1 if STEADY else len(set(samples))>8) and 0 not in samples)
     E.check('stock white selection pulse also changes in same frame cycle', len(set(white)) > 8)
+    lv = [sum(c >> k & 255 for k in (0, 8, 16)) for c in samples]
+    wl = [sum(c >> k & 255 for k in (0, 8, 16)) for c in white]
+    peaks = lambda v, f: [i for i, x in enumerate(v) if x == f(v)]  # noqa: E731
+    if SYNC and not STEADY:
+        E.check('track pulse in phase with the step marker: brightest and darkest in the same frames',
+                peaks(lv, max) == peaks(wl, max) and peaks(lv, min) == peaks(wl, min), (peaks(lv, max), peaks(wl, max), peaks(lv, min), peaks(wl, min)))
     # Confirmation red must override the coloured pulse.
     uc.mem_write(E.C.CTRL + 0xA0, struct.pack('<I', E.u32(uc, E.C.CTRL + 0xA0) | (1<<23)))
     E.press(uc, t); E.release(uc, t)

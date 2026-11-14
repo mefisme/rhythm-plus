@@ -60,7 +60,7 @@ def validate(report):
         for other in REGIONS[:i]:
             if (region.core,region.space)==(other.core,other.space):
                 assert not(region.start<other.end and other.start<region.end),(region,other)
-    assert report['c0fx']['mix'] is False
+    if 'c0fx' in report:assert report['c0fx']['mix'] is False
     return REGIONS
 
 

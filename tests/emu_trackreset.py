@@ -44,11 +44,11 @@ def main():
         E.call(uc, 0x0803FD26, st, 0)
         uc.mem_write(uc.reg_read(E.UC_ARM_REG_R0), bytes([value]))
         E.call(uc, 0x0803FBEC, st)
-    def sp(t): return [E.spval(uc, t, k) for k in range(12)]
+    def sp(t): return [E.spval(uc, t, k) for k in range(12 if E.SP else 0)]
     def changed():
         for i in range(25): setv(target, i, 19 if i not in (0, 1, 2, 3, 4, 5, 20) else 1)
         setsmp(target, (baseline_sample + 1) % 64)
-        for k in range(12): E.call(uc, E.SPL['c_spput'], target, k, 2048)
+        for k in range(12 if E.SP else 0): E.call(uc, E.SPL['c_spput'], target, k, 2048)
     led()  # Snapshot after the real LED chain, as on the unit.
     baseline, baseline_sample = vals(target), smp(target)
     E.check('snapshot taken at first LED frame', uc.mem_read(slot, 1)[0] == 0xC3)
@@ -92,9 +92,10 @@ def main():
     defaults = list(fw[0x0806900C - 0x08010000 + 6:0x0806900C - 0x08010000 + 16])
     E.check('stock knobs and fine values use normal defaults', actual[6:16] == defaults, (actual[6:16], defaults))
     E.check('sample selection restored to project-load snapshot', smp(target) == baseline_sample)
-    pv = E.MAN['report']['pageclear'].get('page_values', [[0, 1, 2, 3, 11, 7], [10, 5, 9, 4, 8]])
-    reset = set(pv[0]) | set(pv[1])
-    E.check(f'all {len(reset)} Stock+ controls of the pages use feature defaults', [v for i, v in enumerate(sp(target)) if i in reset] == [v for i, v in enumerate(E.DEFS) if i in reset], sp(target))
+    if E.SP:
+        pv = E.MAN['report']['pageclear'].get('page_values', [[0, 1, 2, 3, 11, 7], [10, 5, 9, 4, 8]])
+        reset = set(pv[0]) | set(pv[1])
+        E.check(f'all {len(reset)} Stock+ controls of the pages use feature defaults', [v for i, v in enumerate(sp(target)) if i in reset] == [v for i, v in enumerate(E.DEFS) if i in reset], sp(target))
     E.check('all 12 stock lanes cleared in current pattern', bytes(uc.mem_read(lanes, 12 * E.T.LANE_SIZE)) == bytes([255]) * (12 * E.T.LANE_SIZE))
     expected = bytearray(all_before)
     at = pat * E.T.PAT_SIZE + E.T.LANES

@@ -12,7 +12,7 @@ import os
 import struct
 import sys
 
-from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
+from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, UC_MODE_MCLASS, Uc
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R4, UC_ARM_REG_SP
 
 sys.path[:0] = [str(__import__("pathlib").Path(__file__).resolve().parents[1] / d) for d in ("modules", "builds", "tests", "remix/tools")]
@@ -26,8 +26,8 @@ WAIT = 0x0802B66C                                        # the DSP link's busy-w
 BURST = [0, 0, 0, 1] + [3] * 22 + list(range(4, 40)) + [199, 200, 201, 250]   # HAL ms of each tick after the start tick: Play's late burst, then 1 a ms
 
 
-def machine(fw, ram):
-    uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
+def machine(fw, ram, *, mclass=False):
+    uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB | (UC_MODE_MCLASS if mclass else 0))
     uc.mem_map(0x08000000, 0x80000)
     uc.mem_write(FLASH, fw)
     uc.mem_write(SENT, b"\x00\xbf" * 8)

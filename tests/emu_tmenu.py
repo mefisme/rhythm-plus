@@ -63,12 +63,16 @@ os.environ["RH_GRAIN"] = "1" if "grain" in MAN["report"] else "0"
 os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"
 os.environ["RH_UPGUARD"] = "1" if "upguard" in MAN["report"] else "0"
+os.environ["RH_SMSWITCH"] = "1" if "smswitch" in MAN["report"] else "0"
 os.environ["RH_MUTSET"] = ("11" if MAN["report"]["mutset"].get("shmut") else "10" if MAN["report"]["mutset"].get("clrpage") else "9" if MAN["report"]["mutset"].get("shtrkled") else "8" if MAN["report"]["mutset"].get("shtrk") else "7" if MAN["report"]["mutset"].get("bounce") else "4" if MAN["report"]["mutset"].get("pending") else "3" if MAN["report"]["mutset"].get("seeds") else "2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
 os.environ["RH_AUTOPROT"] = "1" if "autoprot" in MAN["report"] else "0"
 os.environ["RH_AUTOBANK"] = "1" if "autobank" in MAN["report"] else "0"
+os.environ["RH_PROJECTPROBE"] = "1" if "projectprobe" in MAN["report"] else "0"
+os.environ["RH_STORAGESHADOW"] = "1" if "storageshadow" in MAN["report"] else "0"
 import ourram  # noqa: E402,F401
 with ourram.remix_imports():
-    import stockplus as SPM  # noqa: E402
+    if SP:
+        import stockplus as SPM  # noqa: E402
     import cthresh as TH  # noqa: E402
 import countin as C  # noqa: E402
 import rhbuild  # noqa: E402
@@ -96,7 +100,8 @@ from unicorn import UC_HOOK_CODE  # noqa: E402
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3  # noqa: E402
 
 LB = {k: int(v, 16) for k, v in MAN["report"]["tmenu"]["labels"].items()}
-import stockplus_rp  # noqa: E402
+if SP:
+    import stockplus_rp  # noqa: E402
 if SB:
     import syncbar as SBM  # noqa: E402
     SPM.div_index = SBM.div_index                             # the models' synced steps in syncbar's order
@@ -126,9 +131,14 @@ def sync_pads(uc, t, i, v, page_rgb):
     w = [0] * 8
     w[n & 7] = scl(page_rgb if n >= 8 else u32(uc, T.COLOURS + 4 * T.TRK_SLOTS[t]), 255 * dim_mul(uc) >> 8)
     return w
-DEFS = stockplus_rp.defaults(MAN["report"].get("stockplus", {}).get("lfodef") or False)   # the 12 values' defaults in this build
+DEFS = stockplus_rp.defaults(MAN["report"]["stockplus"].get("lfodef") or False) if SP else None   # the 12 values' defaults in this build
 C_RST = int(MAN["report"]["rhstate"]["labels"]["c_rst"], 16)
 SLOT = int(MAN["report"]["tmenu"]["slot"], 16)
+_GX = int(MAN["report"]["gfxmix"]["slot"], 16) if "gfxmix" in MAN["report"] else 0
+PADLOG = (_GX + 240, _GX + 372) if _GX and "build_a0155" <= "build_" + os.environ["RH_BUILD"] else (0, 0)   # gfxmix: the pads' events kept
+
+
+def ours(a): return SLOT <= a < SLOT + 32 or PADLOG[0] <= a < PADLOG[1]
 PREV_OUT = int(MAN["report"]["tmenu"]["prev_out"], 16)
 PREV_LED = int(MAN["report"]["tmenu"]["prev_led"], 16)
 PAGES = [int(c, 16) for c in MAN["report"]["tmenu"]["pages"]]
@@ -179,7 +189,7 @@ def out(uc, fn=None):
 
 
 def setup(fw, ram, built=True):
-    uc = machine(fw, ram)
+    uc = machine(fw, ram, mclass=True) if "automation3_ops" in MAN["report"] else machine(fw, ram)
     from unicorn.arm_const import UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC
     uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | 0xF00000)
     uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
@@ -206,7 +216,7 @@ def pgb(uc):
 
 
 def ours(a):
-    return rhstate.ST <= a < rhstate.HEAP_LIMIT or 0x20002B54 <= a < 0x20002B58
+    return int(MAN['report']['rhstate']['block'],16) <= a < rhstate.HEAP_LIMIT or 0x20002B54 <= a < 0x20002B58
 
 
 def ptr(uc, store, i):
@@ -262,9 +272,10 @@ def clear_red(uc):
 
 def sel_rgb(uc, tc):
     """The selected track's number now: its colour, dark while bit BLINK_BIT of the tick is set."""
+    if MAN['report']['tmenu'].get('steady_track'):return tc
     if MAN['report']['tmenu'].get('trackpulse'):
         coefficient = u32(uc, T.COLOURS + 4 * 0x0A) & 255
-        return scl(tc, 64 + ((255 - coefficient) * 192 >> 8))
+        return scl(tc, 64 + ((coefficient if MAN['report']['tmenu'].get('pulsesync') else 255 - coefficient) * 192 >> 8))
     return 0 if u32(uc, C.HAL_TICK) >> T.BLINK_BIT & 1 else tc
 
 
@@ -472,12 +483,12 @@ def main():
     before = bytes(uc.mem_read(RAM, 0x60000))
     pad(uc, 20)
     after = bytes(uc.mem_read(RAM, 0x60000))
-    changed = [hex(RAM + i) for i in range(len(after)) if after[i] != before[i] and not SLOT <= RAM + i < SLOT + 32]
+    changed = [hex(RAM + i) for i in range(len(after)) if after[i] != before[i] and not ours(RAM + i)]
     check("pad 21 pressed: taken, the stock untouched", changed == [] and u32(uc, SLOT + T.O_TAKEN) == 1 << 20, changed[:6])
     unpad(uc, 20)
     after2 = bytes(uc.mem_read(RAM, 0x60000))
     check("its release swallowed", u32(uc, SLOT + T.O_TAKEN) == 0 and [i for i in range(len(after2)) if after2[i] != before[i]
-                                                                       and not SLOT <= RAM + i < SLOT + 32] == [])
+                                                                       and not ours(RAM + i)] == [])
 
     f0 = led(uc, head)
     pad(uc, 4)
@@ -569,14 +580,14 @@ def main():
         pad(uc, T.PAD_KNOB); unpad(uc, T.PAD_KNOB)
         seen.append(b8(uc, T.O_KNOB))
     after = bytes(uc.mem_read(RAM, 0x60000))
-    changed = [hex(RAM + i) for i in range(len(after)) if after[i] != before[i] and not SLOT <= RAM + i < SLOT + 32]
+    changed = [hex(RAM + i) for i in range(len(after)) if after[i] != before[i] and not ours(RAM + i)]
     check("pad 25 tapped 9 times from K1: K2 .. K8, K1, K2", seen == [2, 3, 4, 5, 6, 7, 8, 1, 2], seen)
     check("  the stock never sees pad 25", changed == [] and u32(uc, SLOT + T.O_TAKEN) == 0, changed[:6])
     bar_check(uc, head, s, 1, "  the bar shows K2")
 
     def page_pads(): o = out(uc); return [f"{x:06x}" for x in o[24:32]]
     full = scl(PAGES[NP - 1 if NP <= 2 else T.PAGE_SP], 255 * dim_mul(uc) >> 8)
-    for p, i in ((PADMAP.index(1) + T.PAD_PAGE0 + 1, 1), (PADMAP.index(0) + T.PAD_PAGE0 + 1, 0))[2 - NP:]:
+    for p, i in [(PADMAP.index(i) + T.PAD_PAGE0 + 1, i) for i in (1, 0) if i in PADMAP][2 - NP:]:
         before = bytes(uc.mem_read(RAM, 0x60000))
         pad(uc, p - 1); unpad(uc, p - 1)
         after = bytes(uc.mem_read(RAM, 0x60000))
@@ -647,7 +658,8 @@ def main():
         tap(uc, s); led(uc, head)
         opened = b8(uc, T.O_OPEN)
         press(uc, bid)
-        closes = bid < T.CLOSE_END and bid not in T.KEEP
+        arrow_pages=MAN['report'].get('granular',{}).get('ui',{}).get('arrow_pages',False)
+        closes = bid < T.CLOSE_END and bid not in T.KEEP and not (arrow_pages and bid in (19,20))
         check(f"button {bid}: the menu {'closes' if closes else 'stays open'}",
               opened == 1 and b8(uc, T.O_OPEN) == (0 if closes else 1), (opened, b8(uc, T.O_OPEN)))
         if CLICK and closes:

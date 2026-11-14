@@ -1,6 +1,6 @@
 # Rhythm Plus
 
-Rhythm Plus is a custom firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Track +** added: a track menu with pages of extra sound controls for each track. It also adds **Pattern Mutate**, a count-in and some workflow features.
+Rhythm Plus is a custom firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Pattern Mutate**, **Step Mutate**, **Grid FX sends**, an **FX track**, the **Track Parameter Editor** (a full view of each track's knobs), switches for each track's sample, a count-in and some workflow features.
 
 ## Credits
 
@@ -12,7 +12,7 @@ Rhythm Plus is built on the work of **Ghillermo**, the author of **Circuit Remix
 
 Rhythm Plus is a separate project. It is not Circuit Remix, and it does not include the Circuit Remix features.
 
-> **Status: in development, no release yet.** A0122 removes the custom error reporter after A0121 removed the Filter and Mix pages; Normal, Pitch and FX stay in place. It is locally tested and has not been flashed for hardware validation. Automation development is on hold; granular synthesis is the next design discussion.
+> **Status: in development, no release yet.** A0201 adds track-wide value-bar tap/slide editing, two-finger center and silent step selection in Stock settings, retaining Granular and lane assignments. Emulator checks pass; hardware validation is pending. See [A0201 controls and settings](manual/granular-a0201.md).
 
 Legal note: the firmware from Novation is proprietary. This repository does not contain Novation's firmware or any file made from it. You supply the official firmware, and the build checks it. Do not install the result on any device other than a Circuit Rhythm.
 
@@ -24,35 +24,31 @@ Legal note: the firmware from Novation is proprietary. This repository does not 
 
 ## Features
 
-### Track +
+### Playhead scrub
 
-Tap the selected track's button to open Track +. Tap it again to close it. While Track + is open:
+Hold **Shift + Play** and turn **K1** to move through the active scene chain, or the longest track pattern chain in the selected scene. Page and pattern boundaries do not interrupt scrubbing.
+
+- Scrubbing onto the first or last step stops playback and holds there. Outward turns retrigger that boundary step: left at the beginning, right at the end. Turn inward or tap Shift + Play to continue. Normal playback still starts and loops as usual.
+- **K2 right:** audition while stopped (default on, green). **K2 left:** silent stopped scrubbing (red). Running playback remains audible.
+- **K3–K8:** dark and disabled while held. Normal knob controls return on release.
+- Stopped audition uses normal sample playback, with no time stretching or turntable effect. Preview notes release when you let go or stop turning.
+
+### Track Parameter Editor
+
+Tap the selected track's button to open the Track Parameter Editor. Tap it again to close it. While it is open:
 
 | Pads | What they do |
 |---|---|
 | 1-16 | Select a step. Hold a step to see its values. Arm Record and turn a knob to record into the held step. |
 | 17-24 | The bar: the value of the shown knob. |
 | 25 | Selects the next knob. |
-| 26-31 | The pages (below). Each track keeps its own page. |
-| 32 | Hold Clear and tap pad 32: reset all pages of the track. |
+| 26 | White. Hold Clear: it turns dim red. Tap it: the track's eight knobs go back to their defaults and their automation in the current pattern is deleted (three red flashes). |
+| 27-32 | Dark. They do nothing. |
 
-| Pad | Page | Knobs |
-|---|---|---|
-| 26 | Parameter Editor (white) | The stock's eight knobs of the track |
-| 27 | Reserved (dark) | Filter page archived |
-| 28 | Reserved (dark) | Mix page archived |
-| 29 | Pitch (sky blue) | Pitch envelope and LFO, random pitch, glide; Shift + K7: LFO fade-in |
-| 30 | Granular (lime) | The grain engine: Position, Size, Density, Scan, scatter, Edge, Reverse; Shift: Level, Size scatter, Timing, Jitter, Slice, Lock |
-| 31 | FX (amber) | Ring modulation, sample start scan |
-
-- **Shapes:** 16 pitch-envelope shapes and 10 pitch-LFO shapes.
-- **Rates:** right of the middle locks to the tempo (8 bars to 1/16, then the triplets); left of the middle is free. Hold Shift and turn to change between the two sweeps.
 - **Clear + knob:** turn right until it stops: the knob goes back to its default (blue). Turn left until it stops: the knob's automation is deleted (red).
-- **Clear + page pad:** reset that page for the track.
-- The extra values are kept for each track and saved with the project.
-- **Shift + Patterns** (View Lock) keeps Track + open. **Hold** the selected track's button to see the other view while you hold it.
+- **Shift + Patterns** (View Lock) keeps the Track Parameter Editor open. **Hold** the selected track's button to see the other view while you hold it.
 
-All parameters, and what you can do with each one: [`manual/track_plus_parameters.md`](manual/track_plus_parameters.md).
+All parameters, and what you can do with each one: [`manual/track_parameter_editor.md`](manual/track_parameter_editor.md).
 
 ### Pattern Mutate
 
@@ -62,11 +58,25 @@ On the Patterns, Mixer, Grid FX, FX or Sidechain page, hold Shift and tap Duplic
 - **Live:** each mutate keeps a seed for each track. With Live on, a setting change makes the lists again from the same seeds, while they play. Change the setting back and the lists come back. (AG016 and later.)
 - **Scenes** keep each track's mutate. In a scene chain, a mutated track is done at the end of its list, and Play starts on the chain's first scene. View Lock works with a mutate.
 
-### Granular
+### Step Mutate
 
-Track + pad 30 plays the track's sample as many short grains: clouds, drones, stutters and chopped beats. Hold pad 30 for its settings: on or off, Triggered or Texture, Flow or Retrigger, Bounce, Freeze and Pitch Set. Slice cuts the sample into 2 to 16 parts, Scan steps through them on the tempo, and Lock repeats the random grains as a loop. The Granular page is in the AG test builds.
+On a track's page, hold Shift and tap Duplicate: the selected track's pattern changes, from its start step to its end step. Each track has its own settings. There is no undo: to keep a pattern, duplicate it first.
 
-The manual, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf). It covers Pattern Mutate, Track +, the Pitch page and Granular.
+- **Settings:** hold Shift and hold Duplicate on a track's page (in the Track Parameter Editor too: a Duplicate tap takes you back to it). Tap a target to turn it on or off, hold it to show its settings on columns 6-8. Tap Duplicate or the selected track's button to close the page. Hold a view button to look at its first view (Shift + hold: its second view), or the selected track's button to look at its Note or Sample view; let go and the page comes back.
+- **Targets:** note, sample flip, step movement, velocity, gate, microsteps, pattern length, pattern speed, play mode and probability. Most have an Amount (the share of the steps with a note that change) and a Range.
+- **Sample flip:** Range Any, Growing (one sample up or down from the step's flip), within 8 or within 4 of the track's sample. Pink only or All steps.
+- **Clear + a target pad** on the settings page: that target goes back to the stock default on the steps from start to end. The settings stay.
+- **Default:** step movement only, all steps, anywhere: the stock Mutate's shuffle, with the stock's random generator.
+
+### Grid FX sends
+
+Keep tracks out of Grid FX. In the Mixer or Grid FX view, press Down to the pan knobs, then Down again: the sends page. Each knob is a track's send into Grid FX: full = as the stock, 0 = Grid FX does not touch the track. Clear + knob = full. Up goes back to the pans. The pads stay as the view's. The level, pan, mute, sidechain and master filter still work on the whole track; the shared delay and reverb still go through Grid FX. Saved with the project.
+
+### The FX track
+
+One track can play Grid FX in time with the pattern. In Sample mode, tap pad 8 on any track: it is the FX track (pad 8 bright amber); tap again and it is a normal track with its own samples, flips and knobs. Hold Clear and tap pad 8 to clear the track (pad 8 flashes red). Only one track at a time. The FX track does not play its own samples; its steps turn the Grid FX pads on for the note's length, on the whole mix. In its sample view, pads 1-16 are the steps and pads 17-32 the 16 Grid FX pads, played live as on the Grid FX page (a held or latched pad is white). Hold pads and tap a step for a pink step with those pads; hold a step and tap pads to put them on or off it; tap an empty step for a blue step (the selected pad, which pulses white). Recording makes pink steps with the pads played, with their gate lengths (all the pads pressed on one step; on a step with pads, in place of them). Note and Velocity are off on the FX track. Record, gate, microsteps, probability, length, speed, play modes and the Mutates work as on any track. Each step's pads play for its gate, under the next steps too; the same effect type on a newer step takes over with no restart, or starts again after a gap. Hold a step + Down / Up: random / repeat. Hold a pad + Up: all its Grid FX settings on the knobs, the effect type too; Down: the sends. Its K1-K8 are the eight sends; turned on the sends page with Record on, they record as its automation. The Grid FX view lights the pads it plays. Its track button is lit amber, and the Mixer button dim amber on the other views; the Track Parameter Editor does not open on it. The steps share the track's steps; their effects are saved in the project apart from the track's data (47 sets of pads a project).
+
+The manual, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/rhythm_plus_manual.pdf). It covers Pattern Mutate, Step Mutate, the Track Parameter Editor, the Sample mode switches, the Grid FX sends and the FX track.
 
 ### More
 
@@ -74,8 +84,8 @@ The manual, with drawings of the pads: [`manual/rhythm_plus_manual.pdf`](manual/
 - **Sample Rec count-in:** in the Sample Rec view, pad 23 turns the count on. With pad 24, the music and the sampling start together on the 1.
 - **Fixed recording with an external MIDI clock:** the fixed-length sample recording follows the external clock's tempo.
 - **Faster start:** the first steps load faster when you press Play.
-- **Track reset:** hold Clear, press a track button, let go of it and press it again (Clear still held): the track's sound knobs and extra values go back to their defaults and its automation in the current pattern is deleted (three red flashes). The notes stay.
-- **Sample mode:** hold Clear and tap pad 1 or 2: the pitch goes back to the sample's own pitch.
+- **Track reset:** hold Clear, press a track button, let go of it and press it again (Clear still held): the track's sound knobs go back to their defaults and its automation in the current pattern is deleted (three red flashes). The notes stay.
+- **Sample mode:** pads 19, 20 and 21 are switches for the selected track: 19 loop crossfade (default off), 20 drone (off), 21 end fade (on). The project saves them. Hold Clear and tap pad 1 or 2: the pitch goes back to the sample's own pitch.
 
 ## Install
 
@@ -110,6 +120,8 @@ You need Python 3.10 or newer and git.
 
    The result is in `firmware/a0085/`: `rhythmplus-A0085.syx` (to send), `.bin` and `manifest.json`. The build is reproducible: the manifest records the SHA-256 of the result.
 
+   From A0125 on, one module (`modules/stepmut.c`) is C. It needs zig 0.13: set `RH_ZIG` to the path of `zig.exe` (default `buildtmp/zig-toolchain/ziglang/zig.exe`).
+
 ### Tests
 
 The tests run the firmware in an emulator. They need:
@@ -135,7 +147,7 @@ Then rebuild and compare the SHA-256 with the manifests before you commit the ne
 
 | Folder | What it holds |
 |---|---|
-| `builds/` | One script for each version (`build_a0120.py` is the newest). |
+| `builds/` | One script for each version (`build_a0143.py` is the newest). |
 | `modules/` | The features: each module adds its code to the firmware. |
 | `tests/` | The emulator tests. |
 | `tools/` | Setup and the installer page generator. |

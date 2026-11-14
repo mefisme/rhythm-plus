@@ -10,7 +10,8 @@ from unicorn.arm_const import *
 
 
 def main():
-    info=build();u=Uc(UC_ARCH_ARM,UC_MODE_THUMB)
+    assigned='--assigned' in sys.argv
+    info=build(pages=assigned,assign=assigned);u=Uc(UC_ARCH_ARM,UC_MODE_THUMB)
     u.mem_map(0x08000000,0x80000);u.mem_write(info['origin'],Path(info['binary']).read_bytes())
     u.mem_map(0x20000000,0x50000)
     state,packet,sp,stop=0x20001000,0x20002000,0x2004f000,0x0807fff0
@@ -68,7 +69,7 @@ def main():
     for address in (*bus,0x08031200,0x080314d6,0x08040814,0x08040778,0x0804070e,0x0803fc58,0x0803fc6c,0x08024150):
         u.hook_add(UC_HOOK_CODE,native,None,address,address+1)
     def memory_write(uc,access,address,size,value,context):
-        assert state<=address and address+size<=state+316 or packet<=address and address+size<=packet+8 or tail<=address and address+size<=tail+884 or 0x2004e000<=address<0x20050000 or (address,size)==(0x20003684,4)
+        assert state<=address and address+size<=state+(404 if assigned else 316) or packet<=address and address+size<=packet+8 or tail<=address and address+size<=tail+884 or 0x2004e000<=address<0x20050000 or (address,size)==(0x20003684,4)
     u.hook_add(UC_HOOK_MEM_WRITE,memory_write)
     def call(name,*args):
         for k,value in enumerate(args):u.reg_write(UC_ARM_REG_R0+k,value)
@@ -92,7 +93,7 @@ def main():
         u.mem_write(packet,struct.pack('<II',word,value))
         accepted=call('runtime_message',state,packet,caller)
         return accepted,struct.unpack('<II',u.mem_read(packet,8))
-    assert call('runtime_size')==316
+    assert call('runtime_size')==(404 if assigned else 316)
     dsp[0x30001]=0x9999
     assert call('sample_read',0x30001)==0x3456
     reads.clear()
@@ -225,7 +226,25 @@ def main():
     call('runtime_put',state,0,3,64);frame();assert dsp[0x240d]>>19==0
     call('runtime_shift_turn',state,0,4,127);frame();assert (dsp[0x240d]>>15)&0xf==15
     call('runtime_clear_knob',state,0,4,1);frame();assert (dsp[0x240d]>>15)&0xf==0
+    # Burst (Shift K7) and Burst Speed (Shift K8) in field 7 above Zone 127.
+    call('runtime_shift_turn',state,0,6,30);frame();assert dsp[0x2407]==127|3<<8|64<<12,hex(dsp[0x2407])
+    call('runtime_shift_turn',state,0,7,40);frame();assert dsp[0x2407]==127|3<<8|104<<12,hex(dsp[0x2407])
+    call('runtime_shift_turn',state,0,6,127);frame();assert (dsp[0x2407]>>8)&0xf==15
+    call('runtime_clear_knob',state,0,7,1);call('runtime_clear_knob',state,0,6,1);frame();assert dsp[0x2407]==127|64<<12
+    # Setting bit 4 Burst fade, bits 5..6 Burst pitch: field 7 bits 19 and 20..21; Pitch Set stays in field 13 bits 5..7.
+    u.mem_write(state+292,bytes([4|16|64]));call('runtime_put',state,0,3,63);frame()
+    assert dsp[0x2407]==127|64<<12|1<<19|2<<20 and (dsp[0x240d]>>5)&0x3ff==2,(hex(dsp[0x2407]),hex(dsp[0x240d]))
+    u.mem_write(state+292,bytes([0]));call('runtime_put',state,0,3,64);frame();assert dsp[0x2407]==127|64<<12
+    print('PASS Burst sends its grain count, Speed, fade and pitch to the DSP; Clear sets them to off and the middle')
     print('PASS Timing follows the tempo and syncs on the grid; Scatter, Jitter, Bounce, Pitch Set, Slice steps and Lock reach the DSP')
+    if assigned:
+        u.mem_write(state+200,struct.pack('<I',255));published=[]
+        for _ in range(8):
+            dirty=struct.unpack('<I',u.mem_read(state+200,4))[0]
+            u.mem_write(state+200,struct.pack('<I',dirty|1));old=len(writes);frame()
+            published.extend((a-0x2404)//256 for a,v in writes[old:] if 0x2404<=a<=0x2b04 and (a-0x2404)%256==0)
+        assert set(published)==set(range(8)),published
+        print('PASS continuously changing track 1 cannot starve other tracks in bounded control publisher')
     # Bounded failure aborts replacement, leaves routes disabled, and restores
     # ordinary stock note handling rather than retaining a stuck held barrier.
     snapshot(0,dsp[0x37401]);frame()  # Ensure an owned Texture for timeout proof.

@@ -7,7 +7,7 @@ import upguard
 APPLY,PACK,FREE,RESET,RECORD=0x080378c6,0x08053e24,0x08064460,0x08064416,0x0806446e
 
 
-def install(img,report,base):
+def install(img,report,base,persist=True,companion=False):
     kernel=report['granular']['arm_kernel']['labels'];bridge=report['granular']['bridge']
     state=int(bridge['labels']['c_gstate'],16);ready=int(bridge['labels']['c_gready'],16)
     uploader=int(report['upguard']['labels']['c_upw'],16)
@@ -34,7 +34,12 @@ def install(img,report,base):
         for register in range(4):E(ldr_sp,register,register*4)
         E(bl,target);E(mov_reg,6,0)
         if name=='apply':
-            E(bl,int(report['rhrec']['labels']['c_rrt'],16));E(mov_reg,1,0);E(mov_reg,0,4);call('runtime_load')
+            if persist:E(bl,int(report['rhrec']['labels']['c_rrt'],16));E(mov_reg,1,0);E(mov_reg,0,4);call('runtime_load')
+            elif companion:
+                E(bl,int(report['storageshadow']['labels']['c_sh_grsettings'],16));E(mov_reg,1,0)
+                E(mov_reg,0,4);call('runtime_settings_load')
+            else:
+                E(mov_reg,0,4);E(movs_imm,1,0);call('runtime_load')
         E(mov_reg,0,4);call('runtime_end_replace');E(mov_reg,0,6);finish()
         a.label(name+'_fail');E(movs_imm,0,0);finish()
         a.label(name+'_pass');tail(target)

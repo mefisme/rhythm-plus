@@ -19,6 +19,12 @@ V_LIVE,V_SMOOTH=29,30
 V_MOTION=31
 # Lock: its own random state, the next of 16 grain steps, 16 seeds of 12 bits (two a word, even step high).
 LOCK_RNG,LOCK_STEP,LOCK_SEEDS=G.GB+0x11,G.GB+0x12,G.GB+0x13
+# Burst: grains left, the next gap in samples (0 before the first), the first grain's random state and playhead.
+BURST_LEFT,BURST_GAP,BURST_RNG,BURST_PH=G.GB+0x1b,G.GB+0x1c,G.GB+0x1d,G.GB+0x1e
+BURST_GAP_MIN,BURST_GAP_MAX=32,48000
+# Field 7 (Zone, low 7 bits read): bits 8..11 Burst grains - 1 (0 off), bits 12..18 Burst Speed (64 even),
+# bit 19 Burst fade, bits 20..21 Burst pitch (1 up, 2 down, a semitone a repeat).
+BURST_COUNT_SHIFT,BURST_SPEED_SHIFT,BURST_FADE_BIT,BURST_PITCH_SHIFT=8,12,19,20
 # Field 1 (replaces Gate): samples between grains (0 = Density), sync count << 18.
 # Field 8 (replaces Fine): Size Scatter, Jitter << 8, step chance << 16.
 TIMING,SCATTER=G.P_GATE,G.P_FINE
@@ -181,6 +187,55 @@ def slice_start(result):
         ('label','stock_slice_whole'),'move y0,b',('label','stock_slice_off')]
 
 
+def burst(result):
+    # A new voice plays its first grain again, BURST_LEFT grains in all, before the usual grains go on.
+    # Each gap is the last one x (1 + (64 - Speed) / 128), from the grain interval.
+    countdown,playhead,interval=f'x:(r7+${G.V_CD:x})',f'x:(r7+${G.V_PH:x})',f'x:(r7+${G.V_I:x})'
+    at=result.index(f'move a,x:>${LOCK_STEP:x}',result.index(('label','g_voice')))+1
+    result[at:at]=['move x:(r6+$7),a',f'asr #{BURST_COUNT_SHIFT},a,a','and #>$f,a',('jcc','eq','stock_burst_arm'),'add #>$1,a',
+                   ('label','stock_burst_arm'),f'move a1,x:>${BURST_LEFT:x}','clr a',f'move a,x:>${BURST_GAP:x}']
+    at=result.index(('label','stock_lock_off'))+1
+    result[at:at]=[f'move x:>${BURST_LEFT:x},a','tst a',('jcc','eq','stock_burst_none'),
+        f'move x:>${BURST_GAP:x},b','tst b',('jcc','ne','stock_burst_again'),
+        f'move x:>${G.RNG:x},x0',f'move x0,x:>${BURST_RNG:x}',f'move {playhead},x0',f'move x0,x:>${BURST_PH:x}',
+        f'move {interval},x0',f'move x0,x:>${BURST_GAP:x}',('jmp','stock_burst_play'),
+        ('label','stock_burst_again'),f'move x:>${BURST_RNG:x},x0',f'move x0,x:>${G.RNG:x}',
+        f'move x:>${BURST_PH:x},x0',f'move x0,{playhead}',
+        ('label','stock_burst_play'),('jsr','g_spawn'),
+        f'move x:>${BURST_GAP:x},x0',f'move {countdown},a','add x0,a',f'move a1,{countdown}',
+        'move x:(r6+$7),a',f'asr #{BURST_SPEED_SHIFT},a,a','and #>$7f,a','move a1,x1','move #>$40,a','sub x1,a',
+        'asl #16,a,a','move a1,y0','mpy y0,x0,a','add x0,a',
+        f'move #>${BURST_GAP_MIN:x},x0','cmp x0,a','tlt x0,a',f'move #>${BURST_GAP_MAX:x},x0','cmp x0,a','tgt x0,a',
+        f'move a1,x:>${BURST_GAP:x}',
+        f'move x:>${BURST_LEFT:x},a','sub #>$1,a',f'move a1,x:>${BURST_LEFT:x}',('jcc','ne','stock_burst_next'),
+        'clr a',f'move a,x:>${BURST_GAP:x}',
+        ('label','stock_burst_next'),('jmp','stock_burst_done'),
+        ('label','stock_burst_none')]
+    at=result.index(f'move a1,{countdown}',result.index(('label','stock_jitter_add')))+1
+    result[at:at]=[('label','stock_burst_done')]
+    # A Timing sync waits for the burst to end, so it cannot move a repeat.
+    at=result.index('asr #18,a,a',result.index(('jcc','eq','stock_timing_off')))-1
+    assert result[at]==f'move x:(r6+${TIMING:x}),a'
+    result[at:at]=[f'move x:>${BURST_LEFT:x},b','tst b',('jcc','ne','stock_timing_off')]
+    # Repeat i of n (i from 0): Burst pitch adds +-i semitones, Burst fade sets the level to (n - i) / n.
+    spawn=result.index(('label','g_spawn'))
+    at=result.index(f'move a1,x:(r7+${G.V_Q:x})',spawn)
+    result[at:at]=[f'move x:>${BURST_LEFT:x},b','tst b',('jcc','eq','stock_burst_tone'),'move b1,x0',
+        'move x:(r6+$7),b',f'asr #{BURST_PITCH_SHIFT},b,b','and #>$3,b',('jcc','eq','stock_burst_tone'),'move b1,x1',
+        'move x:(r6+$7),b',f'asr #{BURST_COUNT_SHIFT},b,b','and #>$f,b','add #>$1,b','sub x0,b','asl #6,b,b',
+        'btst #$1,x1',('jcc','cc','stock_burst_up'),'neg b',('label','stock_burst_up'),'move b1,x0','add x0,a',
+        ('label','stock_burst_tone')]
+    at=result.index('move #>$7fffff,a0',spawn)
+    result[at+1:at+1]=[f'move x:>${BURST_LEFT:x},b','tst b',('jcc','eq','stock_burst_full'),'move b1,y1',
+        'move x:(r6+$7),x1',f'btst #${BURST_FADE_BIT:x},x1',('jcc','cc','stock_burst_full'),
+        'move x1,b',f'asr #{BURST_COUNT_SHIFT},b,b','and #>$f,b','add #>${stock_burst_share:x},b','move b1,r0','nop',
+        'move p:(r0),y0','mpy y1,y0,a','asr a','move a0,b','asr #18,b,b','add #>${stock_burst_root:x},b','move b1,r0',
+        'clr a','move p:(r0),a0',('label','stock_burst_full')]
+    # The fade is squared, so the peak is the root of the share, in 32 steps.
+    result += [('label','stock_burst_share'),('words',[0x7fffff//n for n in range(1,17)]),
+               ('label','stock_burst_root'),('words',[round(((k+1)/32)**.5*0x7fffff) for k in range(32)])]
+
+
 def pitch_sets():
     # Semitones -12..12 snapped to the nearest tone of each set, in all octaves.
     words=[]
@@ -199,6 +254,7 @@ def items(source,latched_source=False,raw_output=None,grain_cap=None,tab_at=None
     motion(result)
     lock(result)
     slice_start(result)
+    burst(result)
     # Convert the 12-word grain offset to a slot index. The rounded-up Q23
     # reciprocal gives the exact quotient for all 16 valid offsets.
     ratio_address=['move r2,x0',f'move #>${G.GR0:x},a','neg a','add x0,a',

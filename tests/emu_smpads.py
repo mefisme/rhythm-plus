@@ -56,8 +56,12 @@ def setup(fw, ram):
     return uc
 
 
+def sw():
+    return "smswitch" if "smswitch" in ET.MAN["report"] else "fshape"
+
+
 def smval(uc, t):
-    call(uc, int(ET.MAN["report"]["fshape"]["labels"]["c_fsval"], 16), t, ET.MAN["report"]["fshape"]["sm0"])
+    call(uc, int(ET.MAN["report"][sw()]["labels"]["c_fsval"], 16), t, ET.MAN["report"][sw()]["sm0"])
     return uc.reg_read(UC_ARM_REG_R0)
 
 
@@ -115,31 +119,31 @@ def sm_checks(uc):
             pad(uc, t, q)
             check(f"sm: pad {q + 1}: the stock's", STOCK_PADS == [q] and smval(uc, t) == FS.SMDEF[0], (STOCK_PADS, smval(uc, t)))
     words = []
-    spw = lab("stockplus", "c_spw")
+    spw = lab("smswitch", "c_sww") if sw() == "smswitch" else lab("stockplus", "c_spw")
 
     def hook(u, a, n, d):
         words.append((u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R1)))
     h = uc.hook_add(UC_HOOK_CODE, hook, None, spw, spw + 1)
     for flags in (FS.SMDEF[0], FS.SM_RD, 0, 7, FS.SMDEF[0] | FS.SM_DR):
-        call(uc, int(rep["fshape"]["labels"]["c_fsput"], 16), t, rep["fshape"]["sm0"], flags)
+        call(uc, int(rep[sw()]["labels"]["c_fsput"], 16), t, rep[sw()]["sm0"], flags)
         words.clear()
-        call(uc, lab("fshape", "c_fldsp"), t)
+        call(uc, lab(sw(), "c_swdsp" if sw() == "smswitch" else "c_fldsp"), t)
         got = [w for w, a in words if a == FS.SMF + t]
         check(f"sm: c_fldsp writes track {t + 1}'s switches {flags} XOR the defaults ({flags ^ FS.SMDEF[0]}) to core 1 Y:${FS.SMF + t:X}",
               got == [flags ^ FS.SMDEF[0]], got)
-        if rep["fshape"].get("loopxf"):
-            xfb, xw = int(rep["fshape"]["xfb"], 16), {k: int(v, 16) for k, v in rep["fshape"]["xf_words"].items()}
+        if rep[sw()].get("loopxf"):
+            xfb, xw = int(rep[sw()]["xfb"], 16), {k: int(v, 16) for k, v in rep[sw()]["xf_words"].items()}
             on = [w for w, a in words if a == xfb + t]
             ln = [(w, a) for w, a in words if a in (xw["XN"], xw["XQ"])]
             check(f"sm: c_fldsp writes the crossfade {'on' if flags & 1 else 'off'} to Y:${xfb + t:X}, its length 256 (step $8000)",
                   on == [flags & 1] and ln == [(256, xw["XN"]), (0x8000, xw["XQ"])], (on, ln))
     uc.hook_del(h)
-    call(uc, int(rep["fshape"]["labels"]["c_fsput"], 16), t, rep["fshape"]["sm0"], FS.SMDEF[0])
+    call(uc, int(rep[sw()]["labels"]["c_fsput"], 16), t, rep[sw()]["sm0"], FS.SMDEF[0])
 
 
 def rhstate_slot():
     import rhstate
-    return rhstate.ST + rhstate.OFF["fshape"][0]
+    return rhstate.ST + rhstate.OFF[sw()][0]
 
 
 def main():

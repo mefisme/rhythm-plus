@@ -15,11 +15,12 @@ from unicorn.arm_const import *
 
 
 def main():
-    firmware = (ROOT / "remix/stock/circuitrhythm-firmware-5706-STOCK.bin").read_bytes()
+    firmware = (Path(sys.argv[1]) if len(sys.argv)>1 else ROOT / "remix/stock/circuitrhythm-firmware-5706-STOCK.bin").read_bytes()
     ram = (ROOT / "remix/stock/rhythm-ram-frd1-synced.bin").read_bytes()
-    u = machine(firmware, ram)
+    u = machine(firmware, ram, mclass=True)
     requests, completions, write_callbacks = [], [], []
     worker_requests, worker_posts = [], []
+    read_callbacks = []
     pending = [False]
     disk_result = [0, 0x29484]
     worker_request = [b""]
@@ -55,6 +56,10 @@ def main():
             write_callbacks.append((uc.reg_read(UC_ARM_REG_R0), uc.reg_read(UC_ARM_REG_R1),
                                     uc.reg_read(UC_ARM_REG_R2), uc.reg_read(UC_ARM_REG_R3),
                                     read(sp), read(sp+4)))
+        elif address == 0x080472a8:
+            sp = uc.reg_read(UC_ARM_REG_SP)
+            read_callbacks.append(tuple(uc.reg_read(UC_ARM_REG_R0+i) for i in range(4))+
+                                  (read(sp),read(sp+4)))
         elif address in (0x0802ca6c, 0x08023cea):
             ret()  # Worker mutex boundary only, no filesystem implementation.
         elif address == 0x08040e18:
@@ -64,7 +69,7 @@ def main():
             uc.mem_write(queue_buffer, worker_request[0])
             pending[0] = False
             ret(1)
-        elif address == 0x080411d8:
+        elif address in (0x080411d8,0x0804113a):
             sp = uc.reg_read(UC_ARM_REG_SP)
             worker_requests.append((uc.reg_read(UC_ARM_REG_R1), uc.reg_read(UC_ARM_REG_R2),
                                     uc.reg_read(UC_ARM_REG_R3)))
@@ -77,7 +82,7 @@ def main():
 
     for address in (0x0802aca2, 0x0802acb8, target, 0x08047304,
                     0x0802ca6c, 0x08023cea, 0x08040e18, 0x08040dee,
-                    0x080411d8, 0x080419cc):
+                    0x080411d8, 0x0804113a, 0x080419cc,0x080472a8):
         u.hook_add(UC_HOOK_CODE, hook, None, address, address+1)
 
     def call(address, *args):
@@ -165,6 +170,36 @@ def main():
         assert write_callbacks[-1][2] == status
         assert write_callbacks[-1][4] == transferred
     print("PASS actual Content worker propagates full, short, failed and unavailable-write results")
+    # Manual switching uses this async READ wrapper instead of synchronous 47270.
+    # Execute original queue construction, worker dispatch, bridge and observer.
+    before=len(completions)
+    call(0x08047288,obj,item,0,buffer,0x29484,callback)
+    assert requests[-1]==dict(async_=True,operation=6,item=(2,19,3),
+                             transfer=(0,buffer,0x29484),callback=0x080472a9,context=obj)
+    assert read(obj)==callback and len(completions)==before
+    print('PASS manual-switch wrapper queues asynchronous read and retains observer without applying project')
+    raw[0]=6
+    struct.pack_into('<3I',raw,4,2,19,3)
+    struct.pack_into('<2I',raw,60,0x080472a9,obj)
+    for status,transferred in ((0,0x29484),(2,0),(0,16),(5,0)):
+        write(obj,callback)
+        worker_request[0]=bytes(raw)
+        disk_result[:]=status,transferred
+        pending[0]=True
+        u.mem_write(worker+0x10,b'\x00\x01\x00\x00')
+        before=len(completions)
+        call(0x0802ad40,worker)
+        assert len(completions)==before
+        bridge,frame=worker_posts[-1]
+        fields=struct.unpack('<I3IBBIII',frame)
+        assert fields[:4]==(0x080472a9,2,19,3)
+        assert fields[5:]==(status,buffer,transferred,obj)
+        u.mem_write(message,frame)
+        call(bridge&~1,message)
+        assert read_callbacks[-1]==(message+4,fields[4],status,buffer,transferred,obj)
+        assert read(obj)==0 and completions[-1]==(callback,message+4)
+    print('PASS async read status/count reach completion before original observer discards them')
+    print('PASS async read observer is cleared and called only after worker completion delivery')
     print("LIMIT: disk backend/queues/mutexes intercepted; SD atomicity and crash recovery unproved")
     print("ALL PASS")
 

@@ -1,7 +1,7 @@
 """Track + (the track menu) and its automation viewer/editor, the knob bar (MIT; Circuit Rhythm 5706).
 
 With pageclear=True (A0039): move pages to pads 26-31; Clear + page calls
-pageclear.py to reset that page; pad 32 resets all pages only with Clear held.
+pageclear.py to reset that page; pad 32 resets all pages only with Clear held (not with pageclear's allreset=False).
 Pad 32 flashes red while Clear is held, with short feedback after a reset.
 The older pad numbers below describe builds without this flag.
 
@@ -112,6 +112,9 @@ Install before errled.
 from __future__ import annotations
 
 import sys
+import os
+REVERSE_CYCLE = os.environ.get("RH_TPE_REVERSE_CYCLE") == "1"
+STEADY_TRACK = os.environ.get("RH_TPE_STEADY_TRACK") == "1"
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / d) for d in ("modules", "builds", "tests", "remix/tools")]
@@ -222,7 +225,7 @@ RED = 0xFF0000
 
 def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None, click=False, twoview=False, shiftled=False,
              bounce=False, pageclear=False, steadyreset=False, resetcue=False, stepmarker=False, trackpulse=False, steppage=False, softclear=False,
-             viewlock=False, momhold=False, x_idx=X_IDX, gran=None, perpage=False, shapes=None, shapebar=False, filt=None, k78white=False, vol=None, sb=None, scanfx=False, padmap=None, spn=None):
+             viewlock=False, momhold=False, x_idx=X_IDX, gran=None, perpage=False, shapes=None, shapebar=False, filt=None, k78white=False, vol=None, sb=None, scanfx=False, padmap=None, spn=None, allreset=True):
     X_IDX, X_KNOBS = x_idx, len(x_idx)
     PADMAP = tuple(padmap) if padmap else tuple(range(len(pages)))
     PADOF = {pg: j for j, pg in enumerate(PADMAP) if pg is not None}   # a page's pad: page0 + PADOF[page]
@@ -302,7 +305,14 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
     a.label("vw_n")
     E(movs_imm, 0, 8)
     a.label("vw_x")
+    if os.environ.get('RH_GFX_EDITOR_GUARD')=='1':
+        E(bl, "c_tmallowed")
     E(pop_list, [4], pc=True)
+    if os.environ.get('RH_GFX_EDITOR_GUARD')=='1':
+        # Linked to the FX ownership predicate after gfxmix is installed.
+        # Default identity keeps this module independently testable.
+        a.label("c_tmallowed")
+        E(raw,h(0x4600)+h(0x4770))  # mov r0,r0; bx lr
 
     # ---- c_tmfill(r0 = the value above a pad's start, signed; r1 = log2 of a pad's values) -> r0 = its level 0..255; clobbers r2
     a.label("c_tmfill")
@@ -722,6 +732,13 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
             E(b_cond, "pp_kv", "ne")
             E(movs_imm, 2, V_KNOBS)
             a.label("pp_kv")
+    if REVERSE_CYCLE:
+        E(push_list,[0,1,2,3])
+        imm32(0,CTRL);E(ldr_imm,0,0,0xc);E(movs_imm,1,0);E(bl,C.PARAM_GET);E(ldrb_imm,3,0,0)
+        E(pop_list,[0,1,2]);E(add_sp_imm,4)
+        E(cmp_imm,3,0);E(b_cond,"pp_forward","eq")
+        E(subs_imm8,1,2);E(cmp_imm,1,0);E(b_cond,"pp_k8","gt");E(mov_reg,1,2);E(b,"pp_k8")
+        a.label("pp_forward")
     E(cmp_reg, 1, 2)
     E(b_cond, "pp_k8", "ls")
     E(movs_imm, 1, 1)
@@ -1550,11 +1567,12 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
     stb(1, 4, O_OPEN)
     stb(0, 4, O_STICKY)
     E(b, "ld_d")
-    a.label("ld_long")
-    ldb(1, 4, O_STICKY)                                   # the end of a hold: closed
-    E(cmp_imm, 1, 0)
-    E(b_cond, "ld_d", "ne")
-    stb(1, 4, O_OPEN)
+    if not bounce:
+        a.label("ld_long")
+        ldb(1, 4, O_STICKY)                               # the end of a hold: closed
+        E(cmp_imm, 1, 0)
+        E(b_cond, "ld_d", "ne")
+        stb(1, 4, O_OPEN)
 
     a.label("ld_d")
     if perpage:                                           # the selected track's page, as the project holds it
@@ -2233,7 +2251,7 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
             E(movs_imm, 0, 0)
             E(str_imm, 0, 5, 4 * (page0 + j))             # a pad with no page: dark
     if pageclear:
-        # Red reset pad only while Clear is held; selected page flashes after reset.
+        # The reset pad red only while Clear is held (pad 32, or pad 26 without Clear All); a reset pad flashes after.
         imm32(0, CTRL + HELD)
         E(ldr_imm, 0, 0, 0)
         E(lsls_imm, 0, 0, 8)
@@ -2253,7 +2271,7 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
         else:
             imm32(0, RED)
         a.label("ou_pcstore")
-        E(str_imm, 0, 5, 4 * 31)
+        E(str_imm, 0, 5, 4 * (31 if allreset else page0))
         a.label("ou_pcend")
         imm32(0, L["pcslot"])
         E(ldrb_imm, 1, 0, 4)
@@ -2281,7 +2299,7 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
             imm32(0, RED)
         a.label("ou_pcfstore")
         E(str_imm, 0, 1, 0)
-        if resetcue:
+        if resetcue and allreset:
             # The all-pages action flashes every page as well as its own reset pad.
             E(mov_reg, 2, 5); E(adds_imm8, 2, 4 * 31)
             E(cmp_reg, 1, 2)
@@ -2305,14 +2323,12 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
         E(b, "ou_ts")                                     # Shift: the track numbers as the frame's tan
         a.label("ou_ns")
     E(mov_reg, 0, 7)                                      # the selected track: its colour at full brightness, also when the stock dims,
-    if trackpulse:
-        # Palette 0x0A is the stock LED frame's grayscale pulse coefficient.
-        # White step selection uses its complement in 0x0803E3A4.
-        imm32(2, COLOURS + 4 * 0x0A); E(ldrb_imm, 2, 2, 0)
-        E(movw, 1, 255); E(subs_reg, 1, 1, 2)
+    if trackpulse and not STEADY_TRACK:
+        # Palette 0x0A: the stock's pulse level, also the white share of the step marker (0x1A / 0x1B).
+        imm32(2, COLOURS + 4 * 0x0A); E(ldrb_imm, 1, 2, 0)
         E(movs_imm, 2, 192); E(muls, 1, 2); E(lsrs_imm, 1, 1, 8)
         E(adds_imm8, 1, 64); E(bl, "c_tmscl")
-    else:
+    elif not STEADY_TRACK:
         imm32(2, C.HAL_TICK)                                  # dark every other BLINK_BIT period
         E(ldr_imm, 2, 2, 0)
         E(lsls_imm, 2, 2, 31 - BLINK_BIT)
@@ -2819,10 +2835,12 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
         assert stockplus and fpage and testpages and "grain" in report, "gran: pad 29's page, with Stock+, fpage, testpages and grain_rp"
         g = dict({k: int(v, 16) for k, v in report["grain"]["labels"].items()}, defs=GR.DEF, bip=GR.BIP)
         pages = pages[:PAGE_G] + (G_RGB,) + pages[PAGE_G + 1:]
-    import stockplus as SPM
-    defs = {i: v for i, v in enumerate(SPM.DEFU8) if v}   # the 12 values' defaults (0 when not listed), with stockplus_rp's LFO speeds
-    for k, v in (report["stockplus"].get("lfodef", {}) if stockplus else {}).items():
-        defs[int(k)] = v
+    defs = {}
+    if stockplus:
+        import stockplus as SPM
+        defs = {i: v for i, v in enumerate(SPM.DEFU8) if v}   # the 12 values' defaults (0 when not listed), with stockplus_rp's LFO speeds
+        for k, v in report["stockplus"].get("lfodef", {}).items():
+            defs[int(k)] = v
     if shapes:
         defs.pop(6, None)                                 # (shapes) the LFO's shape: 0, without K7's XOR (pshape.c_shput)
     if perpage:
@@ -2837,7 +2855,8 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
         L['step_palette'] = int.from_bytes(img[0x0805D548 - B:0x0805D548 - B + 4], 'little')
         assert int.from_bytes(img[L['step_palette'] - B + 2:L['step_palette'] - B + 4], 'little') == 0x1B
         assert int.from_bytes(img[L['step_palette'] - B + 6:L['step_palette'] - B + 8], 'little') == 0x1A
-    code, labels = arm_code(base_addr, L, heads, sp, pages, fpage, defs, click, twoview, shiftled, bounce, pageclear, steadyreset, resetcue, stepmarker, trackpulse, steppage, softclear, viewlock, momhold, xi, g, perpage, sh, shapebar, fl, k78white, vo, sbl, scanfx, padmap, spn=spn)
+    code, labels = arm_code(base_addr, L, heads, sp, pages, fpage, defs, click, twoview, shiftled, bounce, pageclear, steadyreset, resetcue, stepmarker, trackpulse, steppage, softclear, viewlock, momhold, xi, g, perpage, sh, shapebar, fl, k78white, vo, sbl, scanfx, padmap, spn=spn,
+                           allreset=not pageclear or report["pageclear"].get("allreset", True))
     img += bytes([0xFF]) * (base_addr - B - len(img)) + code
     while len(img) % 4:
         img += bytes([0xFF])
@@ -2849,7 +2868,7 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     rhbuild.patch(img, OUT_CALL, f"bl #{L['prev_out']:#x}", bl(OUT_CALL, labels["c_tmout"]))
     rhbuild.patch(img, REC_CALL, f"bl #{RECORDER:#x}", bl(REC_CALL, labels["c_tmrec"]))
     report["tmenu"] = dict(slot=hex(rhstate.ST + rhstate.OFF["tmenu"][0]), prev_btn=hex(L["prev_btn"]), prev_led=hex(L["prev_led"]),
-                           prev_out=hex(L["prev_out"]), stockplus=bool(stockplus), fpage=fpage, click=click, twoview=twoview, shiftled=shiftled, bounce=bounce, pageclear=pageclear, steadyreset=steadyreset, resetcue=resetcue, stepmarker=stepmarker, trackpulse=trackpulse, steppage=steppage, softclear=softclear, viewlock=viewlock, momhold=momhold, page0=25 if pageclear else PAD_PAGE0,
+                           prev_out=hex(L["prev_out"]), stockplus=bool(stockplus), fpage=fpage, click=click, twoview=twoview, shiftled=shiftled, bounce=bounce, pageclear=pageclear, steadyreset=steadyreset, resetcue=resetcue, stepmarker=stepmarker, trackpulse=trackpulse, steppage=steppage, softclear=softclear, viewlock=viewlock, momhold=momhold, pulsesync=trackpulse, steady_track=STEADY_TRACK, reverse_cycle=REVERSE_CYCLE, page0=25 if pageclear else PAD_PAGE0,
                            x_idx=xi, gran=bool(gran), perpage=perpage, pagecols=pagecols, shapes=shapes, shapebar=shapebar,
                            filtpage=filtpage, k78white=k78white, volpage=volpage, syncbar=syncbar,
                            depthfirst=depthfirst, scanfx=scanfx, padmap=padmap, mixpage=mixpage, pxrand=pxrand, glide=glide, fade=fade, fclr=fclr, spn=spn, **({"soundonly": True} if soundonly else {}), **({"fadetan": True} if fadetan else {}), maps=dict(sp=list(SP_MAP), f=list(F_MAP), v=list(V_MAP)),

@@ -47,7 +47,7 @@ def main():
         d = HERE / "firmware" / build
         rep = json.loads((d / "manifest.json").read_text())["report"]
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
-        fs = rep["fshape"]
+        fs = rep["smswitch"] if "smswitch" in rep else rep["fshape"]
         ours = {k: int(v, 16) for k, v in fs["xf_words"].items()}
         ours["XFON"] = int(fs["xfb"], 16)
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))

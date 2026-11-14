@@ -360,7 +360,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
 
     if mutate:
         mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenesave=scenesave, amount=amount, norep=norep,
-                    keep1=keep1, hidepause=hidepause, seeds=seeds, pending=pending, scchain=scchain)
+                    keep1=keep1, hidepause=hidepause, seeds=seeds, pending=pending, scchain=scchain, clron=not (pclrv or clearall))
     assert mutate or not (listpads or scenecut)
     assert listpads or not (pagebyte or dimrest)
     assert mutate or not (clearall or liststart or pageclr or shiftstock)
@@ -804,13 +804,14 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
             E(ands_reg, 1, 2)
             E(strb_imm, 1, 0, 0)
             E(pop_list, [0, 1, 2, 3, 4], pc=True)
-        E(bl, L["c_cishift"])
-        E(cmp_imm, 0, 0)
-        E(b_cond, "mr_ns", "eq")
-        plain("prev_rel", 2)
-        a.label("mr_ns")
-        E(ldr_sp, 1, 4)
-        E(ldrb_imm, 0, 4, O_FL)
+        else:
+            E(bl, L["c_cishift"])
+            E(cmp_imm, 0, 0)
+            E(b_cond, "mr_ns", "eq")
+            plain("prev_rel", 2)
+            a.label("mr_ns")
+            E(ldr_sp, 1, 4)
+            E(ldrb_imm, 0, 4, O_FL)
         a.label("mr_nb")
     E(lsls_imm, 2, 0, 31)
     E(b_cond, "mr_go", "pl")
@@ -1398,7 +1399,7 @@ def arm_code(base, L, randfill=False, mutate=False, listpads=False, scenecut=Fal
         E(movs_imm, 1, lvl)
         E(bl, L["c_tmscl"])
 
-    if mutate:
+    if mutate and not (shiftstock and stocktrk):
         # ---- c_msgreen (r5 = the out RGB words): the track buttons of the tracks with a list soft green; clobbers r0-r3, r6, r7
         a.label("c_msgreen")
         E(push_list, [3], lr=True)
@@ -2268,7 +2269,7 @@ def scene_seeds(a, E, L, SLOT, imm32, pending=False):
 
 
 def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenesave=False, amount=False, norep=False,
-                keep1=False, hidepause=False, seeds=False, pending=False, scchain=False):
+                keep1=False, hidepause=False, seeds=False, pending=False, scchain=False, clron=True):
     # ---- c_mtbits(r0 = offset in the block, r1 = bits cleared, r2 = bits set, r3 = bits flipped): the block made ours; clobbers r0-r3
     a.label("c_mtbits")
     E(push_list, [3, 4, 5, 6, 7], lr=True)
@@ -2668,24 +2669,25 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     E(b_cond, "md2_l", "lo")
     E(pop_list, [3, 4, 5, 6, 7], pc=True)
 
-    # ---- c_mtclon(): the tracks that are on lose their lists (Clear + Shift + Duplicate); clobbers r0-r3
-    a.label("c_mtclon")
-    E(push_list, [3, 4, 5], lr=True)
-    E(bl, "c_mtvals")
-    imm32(4, SLOT)
-    E(movs_imm, 5, 0)
-    a.label("mo2_l")
-    E(ldrb_imm, 0, 4, O_VALS + 4)
-    E(lsrs_reg, 0, 5)
-    E(lsls_imm, 0, 0, 31)
-    E(b_cond, "mo2_n", "mi")
-    E(mov_reg, 0, 5)
-    E(bl, "c_mtcl")
-    a.label("mo2_n")
-    E(adds_imm8, 5, 1)
-    E(cmp_imm, 5, 8)
-    E(b_cond, "mo2_l", "lo")
-    E(pop_list, [3, 4, 5], pc=True)
+    if clron:
+        # ---- c_mtclon(): the tracks that are on lose their lists (Clear + Shift + Duplicate); clobbers r0-r3
+        a.label("c_mtclon")
+        E(push_list, [3, 4, 5], lr=True)
+        E(bl, "c_mtvals")
+        imm32(4, SLOT)
+        E(movs_imm, 5, 0)
+        a.label("mo2_l")
+        E(ldrb_imm, 0, 4, O_VALS + 4)
+        E(lsrs_reg, 0, 5)
+        E(lsls_imm, 0, 0, 31)
+        E(b_cond, "mo2_n", "mi")
+        E(mov_reg, 0, 5)
+        E(bl, "c_mtcl")
+        a.label("mo2_n")
+        E(adds_imm8, 5, 1)
+        E(cmp_imm, 5, 8)
+        E(b_cond, "mo2_l", "lo")
+        E(pop_list, [3, 4, 5], pc=True)
 
     # ---- c_mtnext (the track advance at 0x08034E06, in place of `ldrb.w r2, [sp, #1]`): [sp, #1] and r2 = the next pattern
     F = 24
@@ -2793,26 +2795,27 @@ def mutate_code(a, E, L, SLOT, imm32, far, held_clear, crit_in, crit_out, scenes
     if pending:                                           # the chain's end: the next list (made now if none), shown when it plays
         far("nx_x", "ne")
         E(b, "nx_pw")
-    E(b_cond, "nx_ce", "eq")
-    E(mov_reg, 0, 11)
-    E(cmp_imm, 0, 0)
-    far("nx_x", "ne")
-    E(raw, ldrb_sp(1, F + 2))
-    E(cmp_reg, 5, 1)
-    far("nx_x", "ne")
-    E(mov_reg, 0, 4)                                      # the play enters the chain's last: the list comes after it
-    E(mov_reg, 1, 8)
-    E(raw, ldrb_sp(2, F + 2))
-    E(bl, "c_mtgx")
-    E(b, "nx_x")
-    a.label("nx_ce")
-    E(mov_reg, 0, 4)
-    E(mov_reg, 1, 8)
-    E(raw, ldrb_sp(2, F + 2))
-    E(bl, "c_mtgx")
-    E(ldrb_imm, 0, 7, 0)
-    E(cmp_imm, 0, 0)
-    far("nx_x", "eq")
+    else:
+        E(b_cond, "nx_ce", "eq")
+        E(mov_reg, 0, 11)
+        E(cmp_imm, 0, 0)
+        far("nx_x", "ne")
+        E(raw, ldrb_sp(1, F + 2))
+        E(cmp_reg, 5, 1)
+        far("nx_x", "ne")
+        E(mov_reg, 0, 4)                                  # the play enters the chain's last: the list comes after it
+        E(mov_reg, 1, 8)
+        E(raw, ldrb_sp(2, F + 2))
+        E(bl, "c_mtgx")
+        E(b, "nx_x")
+        a.label("nx_ce")
+        E(mov_reg, 0, 4)
+        E(mov_reg, 1, 8)
+        E(raw, ldrb_sp(2, F + 2))
+        E(bl, "c_mtgx")
+        E(ldrb_imm, 0, 7, 0)
+        E(cmp_imm, 0, 0)
+        far("nx_x", "eq")
     a.label("nx_has")                                     # r0 = the list's length
     imm32(1, SLOT)
     E(adds_reg, 1, 1, 4)

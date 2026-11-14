@@ -3,6 +3,7 @@ from pathlib import Path
 import struct
 import sys
 import emu_tmenu as E
+ALLRESET=E.MAN['report']['pageclear'].get('allreset',True)
 
 
 def main():
@@ -23,12 +24,17 @@ def main():
         head=E.rhbuild.bl_target(bytearray(fw),E.C.LED_CALLS[0])
         E.led(uc,head)
         uc.mem_write(E.C.CTRL+0xA0,struct.pack('<I',E.u32(uc,E.C.CTRL+0xA0)|(1<<23)))
-        E.pad(uc,31);E.unpad(uc,31);E.led(uc,head)
         outfn=E.rhbuild.bl_target(bytearray(fw),E.T.OUT_CALL)
-        rgb=E.out(uc,outfn)
-        E.check(f'LED dim {dim}: Clear All matches held Clear red',all(rgb[p]==red for p in range(25,32) if not (E.T.PAD_PAGE0<=p<E.T.PAD_PAGE0+len(E.PADMAP) and E.PADMAP[p-E.T.PAD_PAGE0] is None)),(hex(rgb[31]),hex(red)))
-        E.tick(uc,384);E.led(uc,head);rgb=E.out(uc,outfn)
-        E.check(f'LED dim {dim}: available pad stays dimmer than reset',0<rgb[31]<red,(hex(rgb[31]),hex(red)))
+        if ALLRESET:
+            E.pad(uc,31);E.unpad(uc,31);E.led(uc,head)
+            rgb=E.out(uc,outfn)
+            pads=[E.T.PAD_PAGE0+j for j,pg in enumerate(E.PADMAP) if pg is not None]+[31]
+            E.check(f'LED dim {dim}: Clear All: the page pads and pad 32 match held Clear red',all(rgb[p]==red for p in pads),[hex(rgb[p]) for p in pads]+[hex(red)])
+            E.tick(uc,384);E.led(uc,head);rgb=E.out(uc,outfn)
+            E.check(f'LED dim {dim}: available pad stays dimmer than reset',0<rgb[31]<red,(hex(rgb[31]),hex(red)))
+        else:
+            E.led(uc,head)
+            E.check(f'LED dim {dim}: no Clear All: pad 32 dark with Clear held',E.out(uc,outfn)[31]==0,hex(E.out(uc,outfn)[31]))
         E.pad(uc,25);E.unpad(uc,25);E.led(uc,head)
         E.check(f'LED dim {dim}: per-page flash matches held Clear red',E.out(uc,outfn)[25]==red)
         E.press(uc,t);E.release(uc,t)

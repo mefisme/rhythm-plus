@@ -3,7 +3,8 @@
 Wrap the existing upload builders before they run: never add program words after
 the core1 landing has already started execution. No legacy granular/mixer path.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager,nullcontext
+import granular_core1_packing as PACK
 import core0
 import rhdsp1
 import granular_layout as L
@@ -43,7 +44,7 @@ def init_code(pool_body):
 
 
 @contextmanager
-def builders(cores=(0,1)):
+def builders(cores=(0,1),packed=False):
     original1,original0=rhdsp1.install,core0.install
     def core1(img,report,base,code,key,**kwargs):
         if 1 not in cores:return original1(img,report,base,code,key,**kwargs)
@@ -52,15 +53,19 @@ def builders(cores=(0,1)):
         segments=rhdsp1.parse([count,0]+stock)[0]+[('p',rhdsp1.START,list(code))]
         before={address+i:word for space,address,words in segments if space=='p' for i,word in enumerate(words)}
         stages={}
-        for name,module in (('route',I),('snapshot',S),('notes',N),('flow',F)):
-            segments,stages[name]=module.patched(segments)
+        native_end=rhdsp1.START+len(code)
+        with PACK.placed(native_end) if packed else nullcontext():
+            for name,module in (('route',I),('snapshot',S),('notes',N),('flow',F)):
+                segments,stages[name]=module.patched(segments)
         after={address+i:word for space,address,words in segments if space=='p' for i,word in enumerate(words)}
         end=max(after)+1;combined=[after.get(address,0) for address in range(rhdsp1.START,end)]
         for address,word in before.items():
             if address<rhdsp1.START and after[address]!=word:rhdsp1.patch_p(img,address,word,after[address])
         labels=original1(img,report,base,combined,key,**kwargs)
-        report.setdefault('granular',{}).update(integration_version=1,core1_start=hex(I.AT),core1_end=hex(end),core1_stages=stages,
-            native_core1_words=len(code),core1_added_words=end-I.AT)
+        start=stages['route']['labels']['source']
+        report.setdefault('granular',{}).update(integration_version=1,core1_start=hex(start),core1_end=hex(end),core1_stages=stages,
+            native_core1_words=len(code),core1_added_words=end-start,core1_packed=packed,
+            core1_padding_words=end-native_end-sum(stage['words'] for stage in stages.values()))
         return labels
     def core0_upload(img,report,base,**kwargs):
         if 0 not in cores:return original0(img,report,base,**kwargs)

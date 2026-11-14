@@ -1054,7 +1054,7 @@ def arm_code(base, L, vol=False, move=False, px=False, glide=False, fade=False, 
     return a.assemble()
 
 
-def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, marks=(VMARK0, VMARK1), v0=V1, n=NV2):
+def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, marks=(VMARK0, VMARK1), v0=V1, n=NV2, reset=True):
     """(vol) the "VL" block (or p's): c_vlblk / c_vlsum / c_vlok as the "FL" block's; c_vlval / c_vlput as c_fsval / c_fsput for values
     v0 .. v0 + n - 1 (18..25); c_vlreset(r0 = track): its n values to their defaults"""
     sh = (2 * n).bit_length() - 1
@@ -1184,20 +1184,21 @@ def vl_code(a, E, imm32, L, O, t_vdef, p="vl", boff=VBLK_OFF, blen=VBLK_LEN, mar
     a.label(f"{p}p_x")
     E(pop_list, [4, 5, 6, 7], pc=True)
 
-    a.label(f"c_{p}reset")
-    E(push_list, [4, 5], lr=True)
-    E(mov_reg, 4, 0)
-    E(movs_imm, 5, 0)
-    a.label(f"{p}r_l")
-    E(mov_reg, 0, 4)
-    E(mov_reg, 1, 5)
-    E(adds_imm8, 1, v0)
-    vdef(2, 5)
-    E(bl, f"c_{p}put")
-    E(adds_imm8, 5, 1)
-    E(cmp_imm, 5, n)
-    E(b_cond, f"{p}r_l", "lo")
-    E(pop_list, [4, 5], pc=True)
+    if reset:
+        a.label(f"c_{p}reset")
+        E(push_list, [4, 5], lr=True)
+        E(mov_reg, 4, 0)
+        E(movs_imm, 5, 0)
+        a.label(f"{p}r_l")
+        E(mov_reg, 0, 4)
+        E(mov_reg, 1, 5)
+        E(adds_imm8, 1, v0)
+        vdef(2, 5)
+        E(bl, f"c_{p}put")
+        E(adds_imm8, 5, 1)
+        E(cmp_imm, 5, n)
+        E(b_cond, f"{p}r_l", "lo")
+        E(pop_list, [4, 5], pc=True)
 
 
 def install(img, report, base_addr, vol=False, move=False, px=False, glide=False, fade=False, sm=False, filt=True, aux=False):
