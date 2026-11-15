@@ -1,6 +1,6 @@
 # Rhythm Plus
 
-Rhythm Plus is a firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Track +** added: a track menu with pages of extra sound controls for each track. It also adds **Pattern Mutate**, a count-in and some workflow features.
+Rhythm Plus is a custom firmware for the **Novation Circuit Rhythm**. It is the original firmware 2.0.1 (build 5706) with **Track +** added: a track menu with pages of extra sound controls for each track. It also adds **Pattern Mutate**, a count-in and some workflow features.
 
 ## Credits
 
