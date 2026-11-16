@@ -189,6 +189,18 @@ def main():
         call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
         saved[(2,5,8)]=first
         print('PASS granular knob settings persist through companion save/load and restore exactly')
+        if gbytes==288:
+            # A card saved by A0206 holds a 224-byte GS v4 companion.
+            key=struct.unpack_from('<I',granular_project,META+4)[0];new=bytes(disk[f'1:/RP_AUTO/{key:08X}.RPS'])
+            v4=bytearray(changed[:224]);v4[2]=4;struct.pack_into('<I',v4,4,zlib.crc32(v4[8:]))
+            older=new[:-288]+bytes(v4);okey=zlib.crc32(older);disk[f'1:/RP_AUTO/{okey:08X}.RPS']=bytearray(older)
+            project=bytearray(granular_project);struct.pack_into('<II',project,META+4,okey,len(older))
+            struct.pack_into('<I',project,META+16,zlib.crc32(project[META:META+16]))
+            u.mem_write(gslot+404,b'\x07'*64)
+            assert load(bytes(project))==0
+            pointer=invoke('grsettings');assert bytes(u.mem_read(pointer,224))==bytes(v4)
+            assert bytes(u.mem_read(gslot+104,64))==changed[8:72] and bytes(u.mem_read(gslot+404,64))==bytes(64)
+            print('PASS A0206 224-byte GS v4 companion loads on a fine build with fine parts 0')
 
     # Run the real Content loop and native async completion bridge, not just
     # our wrapper in isolation. Only queue/post boundaries are injected here.

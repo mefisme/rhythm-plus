@@ -2,7 +2,7 @@
 from thumb import (Asm,bl,b_w,b_cond,bx_lr,mov_reg,movs_imm,movw,movt,
                    push_list,pop_list,ldr_sp,ldr_imm,ldrb_imm,strb_imm,
                    cmp_imm,cmp_reg,add_sp_imm,adds_imm8,subs_imm8,ands_reg,
-                   adds_reg,tst_reg,raw)
+                   adds_reg,tst_reg,raw,str_imm)
 import rhbuild
 import countin as C
 import tmenu as T
@@ -11,8 +11,8 @@ import tmenu as T
 SAVE_CALLS = {0x08037fd6: 0x080472e2, 0x08038734: 0x08047270}
 
 
-def install(img,report,base,persist=True,current=False,pages=False,track_views=False,reverse_cycle=False,editor_settings=False):
-    page_pad=31 if current else 29
+def install(img,report,base,persist=True,current=False,pages=False,track_views=False,reverse_cycle=False,editor_settings=False,no_burst=False,page_pad=None,shift_tap=False):
+    if page_pad is None:page_pad=31 if current else 29
     labels=report['granular']['arm_kernel']['labels'];bridge=report['granular']['bridge']
     native_state=int(bridge['labels']['c_gstate'],16);state='c_gustate'
     menu=int(report['tmenu']['slot'],16);root=int(report['rhstate']['block'],16)
@@ -76,6 +76,10 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
     if pages:
         for kind in ('button','button_release'):
             a.label('c_gu'+kind);saved();E(ldr_sp,6,4)
+            if kind=='button_release':
+                E(cmp_imm,6,23);E(b_cond,'clear_release_done','ne')
+                imm(0,menu+T.O_CLRR);call('clear_end')
+                a.label('clear_release_done')
             E(cmp_imm,6,19);E(b_cond,kind+'_arrow','eq')
             E(cmp_imm,6,20);E(b_cond,kind+'_pass','ne')
             a.label(kind+'_arrow');E(bl,state);E(cmp_imm,0,0);E(b_cond,kind+'_pass','eq');E(mov_reg,4,0)
@@ -95,10 +99,15 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
     a.label('frame_x');drop()
     a.label('c_gupad');saved();E(bl,state);E(cmp_imm,0,0);E(b_cond,'pad_pass','eq');E(mov_reg,4,0)
     E(bl,'c_gucontext');E(cmp_imm,0,8);E(b_cond,'pad_pass','hs');E(mov_reg,5,0)
+    if shift_tap:E(mov_reg,0,4);call('shift_used')
     modifiers();E(cmp_imm,0,0);E(b_cond,'pad_normal','eq')
     E(mov_reg,0,4);E(adds_imm8,0,96);call('ui_release')
     imm(0,T.CTRL+T.HELD);E(ldr_imm,0,0,0);imm(1,1<<23);E(tst_reg,0,1);E(b_cond,'pad_pass','eq')
-    E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);call('runtime_clear');commit_result();E(cmp_imm,0,0);E(b_cond,'pad_pass','eq');E(b_w,'pad_drop')
+    E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);call('runtime_clear');commit_result();E(cmp_imm,0,0);E(b_cond,'pad_pass','eq')
+    if editor_settings:
+        imm(0,int(report['pageclear']['slot'],16));imm(1,C.HAL_TICK);E(ldr_imm,1,1,0);E(str_imm,1,0,0)
+        E(ldr_sp,1,4);E(adds_imm8,1,1);E(strb_imm,1,0,4)
+    E(b_w,'pad_drop')
     a.label('pad_normal');E(ldr_sp,6,4);E(cmp_imm,6,page_pad);E(b_cond,'pad_dispatch','ne')
     E(mov_reg,0,4);E(mov_reg,1,5);call('runtime_page');E(cmp_imm,0,0);E(b_cond,'pad_dispatch','ne')
     imm(0,menu+T.O_KNOB);E(movs_imm,1,1);E(strb_imm,1,0,0)
@@ -114,7 +123,13 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
         imm(0,root);E(bl,int(report['tmenu']['labels']['c_tmsp'],16))
     E(b_w,'pad_drop')
     a.label('pad_next');E(cmp_imm,6,24);E(b_cond,'pad_drop','ne')
-    if reverse_cycle:
+    if shift_tap:
+        E(mov_reg,0,4);E(mov_reg,1,5);call('cycle_knob')
+    elif no_burst:
+        # The secondary page has six knobs; K7/K8 are not controls.
+        E(mov_reg,0,4);E(mov_reg,1,5);call('runtime_knob_page');E(movs_imm,1,8);E(cmp_imm,0,0);E(b_cond,'pad_count','eq');E(movs_imm,1,6)
+        a.label('pad_count');imm(6,menu+T.O_KNOB);E(ldrb_imm,0,6,0);call('cycle_next');E(strb_imm,0,6,0)
+    elif reverse_cycle:
         imm(6,menu+T.O_KNOB);E(ldrb_imm,0,6,0);E(movs_imm,1,8);call('cycle_next');E(strb_imm,0,6,0)
     else:
         imm(0,menu+T.O_KNOB);E(ldrb_imm,1,0,0);E(adds_imm8,1,1);E(cmp_imm,1,9);E(b_cond,'pad_knob','lo');E(movs_imm,1,1)
@@ -127,6 +142,7 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
     a.label('c_guknob');saved();E(ldr_sp,0,4);E(cmp_imm,0,8);E(b_cond,'knob_pass','hs')
     E(bl,state);E(cmp_imm,0,0);E(b_cond,'knob_pass','eq');E(mov_reg,4,0)
     E(bl,'c_gucontext');E(cmp_imm,0,8);E(b_cond,'knob_pass','hs');E(mov_reg,5,0)
+    if shift_tap:E(mov_reg,0,4);call('shift_used')
     E(mov_reg,0,4);E(mov_reg,1,5);call('runtime_page');E(cmp_imm,0,0);E(b_cond,'knob_pass','eq')
     modifiers();E(cmp_imm,0,0);E(b_cond,'knob_modifier','ne')
     shift();E(b_cond,'knob_shift','ne')
@@ -154,15 +170,20 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
     shift();imm(3,menu+T.O_KNOB);E(ldrb_imm,3,3,0);E(subs_imm8,3,1)
     E(cmp_imm,0,0);E(b_cond,'out_draw','eq');E(adds_imm8,3,8)
     a.label('out_draw');E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);call('runtime_draw')
-    E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);imm(3,menu+T.O_CLRR);call('clear_draw')
+    if not current:
+        E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);imm(3,menu+T.O_CLRR);call('clear_draw')
     a.label('out_x')
     if current:
         E(bl,'c_gunavcontext');E(cmp_imm,0,8);E(b_cond,'out_done','hs')
+        E(mov_reg,5,0)
         E(mov_reg,1,0);E(mov_reg,0,4);E(ldr_sp,2,4);imm(3,menu+T.O_KNOB);E(ldrb_imm,3,3,0);E(subs_imm8,3,1);call('lane_draw')
+        E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);imm(3,menu+T.O_CLRR);call('clear_draw')
         if report['tmenu'].get('steady_track'):
             E(mov_reg,0,4);E(bl,'c_gunavcontext');E(mov_reg,1,0);E(mov_reg,0,4);E(ldr_sp,2,4);call('menu_indicator')
         if track_views:
             E(bl,'c_gunavcontext');E(mov_reg,1,0);E(mov_reg,0,4);E(ldr_sp,2,4);call('track_views')
+        if editor_settings:
+            E(mov_reg,0,4);E(mov_reg,1,5);E(ldr_sp,2,4);imm(3,int(report['pageclear']['slot'],16));call('clear_views')
         a.label('out_done')
     drop()
     if editor_settings:
@@ -190,7 +211,7 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
         rhbuild.patch(img,site,f'bl #{target:#x}',bl(site,out[f'c_gusave{index}']))
     if editor_settings:
         rhbuild.patch(img,audition_site,'strb r7, [r5]|ldr.w r6, [r8]',b_w(audition_site,out['c_gusilent'])+b'\x00\xbf')
-    report['granular']['ui']=dict(bytes=len(code),menu=hex(menu),page_pad=page_pad,arrow_pages=pages,page_dependent_shift=current,settings_owner='active parameter pad view',stock_settings=editor_settings,per_track_view_colors=track_views,
+    report['granular']['ui']=dict(bytes=len(code),menu=hex(menu),page_pad=page_pad,arrow_pages=pages,page_dependent_shift=current,settings_owner='active parameter pad view',stock_settings=editor_settings,native_brightness=editor_settings,secondary_knobs=6 if no_burst else 8,shift_tap=shift_tap,per_track_view_colors=track_views,
         labels={key:hex(value) for key,value in out.items()},previous={key:hex(value) for key,value in previous.items()},
         scope='Virtual granular page; native page IDs remain unchanged')
     return out

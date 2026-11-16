@@ -20,7 +20,7 @@ def main():
         at=K['c_gr_'+name];u.hook_add(UC_HOOK_CODE,forbidden,None,at,at+1)
     E.call(u,UI['c_gustate'])
     ready,wait,upload=(int(b[k],16) for k in ('ready','wait','upload'))
-    assert wait==slot+404,'readiness counter overlaps runtime state'
+    assert wait==slot+(468 if g.get('fine_controls') else 404),'readiness counter overlaps runtime state'
     u.mem_write(ready,b'\xa0');u.mem_write(wait,b'\0');u.mem_write(upload,b'\0')
     for i in range(199):E.call(u,B['c_gframe'],E.C.CTRL,0x20005000)
     assert not any(frames),'DSP activated before private readiness interval'
@@ -53,20 +53,24 @@ def main():
         scratch=0x20001000
         E.call(u,K['c_gr_runtime_settings_store'],slot,scratch)
         assert u.reg_read(UC_ARM_REG_R0)==1
-        saved=bytes(u.mem_read(scratch,224))
-        assert saved[:2]==b'GS' and saved[2] in (2,3,4) and saved[3]==8
-        original=bytes(u.mem_read(slot,404))
+        fine=bool(g.get('fine_controls'));n,size=(288,468) if fine else (224,404)
+        if fine:u.mem_write(slot+404,bytes(range(16))*4)
+        E.call(u,K['c_gr_runtime_settings_store'],slot,scratch)
+        saved=bytes(u.mem_read(scratch,n))
+        assert saved[:2]==b'GS' and saved[2] in ((5,) if fine else (2,3,4)) and saved[3]==8
+        original=bytes(u.mem_read(slot,size))
         u.mem_write(scratch+15,bytes([saved[15]^1]))
         E.call(u,K['c_gr_runtime_settings_load'],slot,scratch)
         assert u.reg_read(UC_ARM_REG_R0)==0
-        assert bytes(u.mem_read(slot,404))==original,'corrupt settings partially changed runtime'
+        assert bytes(u.mem_read(slot,size))==original,'corrupt settings partially changed runtime'
         u.mem_write(scratch,saved)
         u.mem_write(slot+104,b'\x01'*64)
         E.call(u,K['c_gr_runtime_settings_load'],slot,scratch)
         assert u.reg_read(UC_ARM_REG_R0)==1
         assert bytes(u.mem_read(slot+104,64))==saved[8:72]
+        if fine:assert bytes(u.mem_read(slot+404,64))==saved[224:288]==bytes(range(16))*4
         E.call(u,K['c_gr_runtime_settings_store'],slot,scratch)
-        assert bytes(u.mem_read(scratch,224))==saved,'companion round-trip changed settings'
+        assert bytes(u.mem_read(scratch,n))==saved,'companion round-trip changed settings'
         print('PASS companion settings round-trip and corrupt-data rejection; no legacy tail access')
     E.call(u,UI['c_gucommit'],slot)  # Must never access fragmented legacy tail.
     SM.sel(u,2);u.mem_write(menu+E.T.O_OPEN,b'\x01')

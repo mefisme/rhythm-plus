@@ -7,7 +7,7 @@ from unicorn.arm_const import UC_ARM_REG_R0
 def main():
     u=F.setup();r=E.MAN['report'];g=r['granular'];K=g['arm_kernel']['labels'];slot=int(g['bridge']['slot'],16);menu=int(g['ui']['menu'],16)
     SM.sel(u,0);u.mem_write(menu+E.T.O_OPEN,b'\1');u.mem_write(G.CONT+0x264,b'\0')
-    G.pad(u,31);G.unpad(u,31)
+    G.pad(u,E.GP);G.unpad(u,E.GP)
     rec=SM.obj(u,0);pat=SM.pat(u,0);player=0x200470d4
     u.mem_write(slot+316,b'\1'+bytes(7))
     u.mem_write(pat+0x128,b'\x40'+b'\xff'*191)
@@ -15,9 +15,9 @@ def main():
     assert E.u32(u,slot+388)&1,'recorded custom control did not set feedback'
     # Native ownership gesture: selected Position -> tap its assigned lane off.
     before=bytes(u.mem_read(pat+0x128,192))
-    G.pad(u,31);E.press(u,19);E.release(u,19);G.unpad(u,31)
+    G.pad(u,E.GP);E.press(u,19);E.release(u,19);G.unpad(u,E.GP)
     G.pad(u,16);G.unpad(u,16);assert u.mem_read(slot+316,1)==b'\0'
-    G.pad(u,31);G.unpad(u,31)
+    G.pad(u,E.GP);G.unpad(u,E.GP)
     G.pad(u,0)
     E.led(u,int(r['tmenu']['labels']['c_tmled'],16))
     E.out(u,int(g['ui']['labels']['c_guout'],16))

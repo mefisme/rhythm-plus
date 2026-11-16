@@ -4,7 +4,7 @@ Use an SD-card pack. Granular is unavailable on internal-memory projects in this
 
 ## Open and enable
 
-Select a normal track and open the Track Parameter Editor. Tap **pad 32** for granular.
+Select a normal track and open the Track Parameter Editor. Tap **pad 32** for granular (from A0210: **pad 27**; see [the A0210 guide](granular-a0201.md)).
 Hold **pad 32** to show its sound settings on pads 17–24. While holding it,
 tap **pad 17** to turn the engine on or off. Pad 18 selects Triggered or Texture.
 After a hold, release pad 32 and the settings stay open. Tap pad 32 once to return to the value bar. The engine starts disabled on a new project.
@@ -142,12 +142,8 @@ The new settings are written only on explicit Save.
 
 ## Knob-cycle direction
 
-Tap pad 25 to select the next knob. In the Stock parameter pad view's value mode,
-Shift + pad 25 selects the previous knob; native sticky Shift works too.
-
-**Settings and assignment pages always cycle forward**, even while Shift is
-holding them open. The assignment selector still wraps across all 16 controls.
-This avoids using Shift for both access and direction at the same time.
+Tap pad 25 to select the next knob. From A0209 it always goes forward, with or
+without Shift, in every view and page. See [the A0209 guide](granular-a0201.md).
 
 On Granular, Shift opens settings before the cycle press, so the selector cycles
 forward while that layer is visible. Release Shift to return to values, unless

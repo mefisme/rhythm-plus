@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parents[1]
 os.environ.setdefault("RH_BUILD", Path(sys.argv[2]).parent.name if len(sys.argv) > 2 else "a0021")   # the build of the image tested
 os.environ.setdefault("RH_PROBES", "0")
 MAN = json.loads((HERE / "firmware" / os.environ["RH_BUILD"] / "manifest.json").read_text())
+GP = (((MAN.get("report") or {}).get("granular") or {}).get("ui") or {}).get("page_pad", 31)   # the Granular parameter pad view
 ROUTE = MAN["report"].get("upguard", {}).get("route")
 
 
@@ -69,6 +70,8 @@ os.environ["RH_AUTOPROT"] = "1" if "autoprot" in MAN["report"] else "0"
 os.environ["RH_AUTOBANK"] = "1" if "autobank" in MAN["report"] else "0"
 os.environ["RH_PROJECTPROBE"] = "1" if "projectprobe" in MAN["report"] else "0"
 os.environ["RH_STORAGESHADOW"] = "1" if "storageshadow" in MAN["report"] else "0"
+import layout_env  # noqa: E402
+layout_env.granular(MAN["report"])
 import ourram  # noqa: E402,F401
 with ourram.remix_imports():
     if SP:

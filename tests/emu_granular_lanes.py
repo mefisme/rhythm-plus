@@ -7,11 +7,11 @@ G,E,SM=F.G,F.E,F.SM
 def main():
     u=F.setup();g=E.MAN['report']['granular'];K=g['arm_kernel']['labels'];slot=int(g['bridge']['slot'],16);menu=int(g['ui']['menu'],16)
     SM.sel(u,0);u.mem_write(menu+E.T.O_OPEN,b'\x01');u.mem_write(G.CONT+0x264,b'\0')
-    G.pad(u,31);G.unpad(u,31)
+    G.pad(u,E.GP);G.unpad(u,E.GP)
     E.press(u,19);E.release(u,19)
     assert u.mem_read(slot+380,1)[0]&128==0,'Down alone entered assignment'
     E.press(u,20);E.release(u,20)
-    G.pad(u,31);E.press(u,19);E.release(u,19)
+    G.pad(u,E.GP);E.press(u,19);E.release(u,19)
     assert u.mem_read(slot+380,1)[0]&128,'held page + Down did not enter assignment'
     rec=SM.obj(u,0);pats=E.u32(u,rec+4);before=bytes(u.mem_read(pats,8*0xa28))
     G.pad(u,16);G.unpad(u,16)
@@ -20,8 +20,8 @@ def main():
     G.pad(u,24);G.unpad(u,24);G.pad(u,17);G.unpad(u,17)
     assert u.mem_read(slot+316,2)==b'\x01\x02','cycle did not select Size'
     G.pad(u,17);G.unpad(u,17);assert u.mem_read(slot+317,1)==b'\0','tap assigned lane did not restore stock'
-    G.unpad(u,31);assert u.mem_read(slot+380,1)[0]&128,'assignment did not latch'
-    G.pad(u,31);G.unpad(u,31);assert u.mem_read(slot+380,1)[0]&128==0,'tap did not exit assignment settings'
+    G.unpad(u,E.GP);assert u.mem_read(slot+380,1)[0]&128,'assignment did not latch'
+    G.pad(u,E.GP);G.unpad(u,E.GP);assert u.mem_read(slot+380,1)[0]&128==0,'tap did not exit assignment settings'
     E.press(u,20);E.release(u,20)
     u.mem_write(E.ptr(u,E.C.TRANSPORT,1),b'\x01')
     u.mem_write(E.ptr(u,E.C.TRANSPORT,0),b'\0')
@@ -136,7 +136,7 @@ def main():
     print('PASS Clear Track resets granular settings/ownership and native automation; other tracks preserved')
     print('PASS native sparse playback holds values, live listener records, stock Clear protected, granular Clear works')
     print('PASS all 16 destinations routed independently on all 8 tracks')
-    print('PASS pad 32, held-page assignment chord, lane cycle/toggle, no data changes on reassignment')
+    print(f'PASS pad {E.GP+1}, held-page assignment chord, lane cycle/toggle, no data changes on reassignment')
     print('PASS native stopped lock, borrowed-lane playback, stock recording exclusion; other cells preserved')
     print('ALL PASS')
 if __name__=='__main__':main()

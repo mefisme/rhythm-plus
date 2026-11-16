@@ -29,6 +29,7 @@ def install(img,report,base_addr,offload=False,automation=False):
         assert automation and offload and 'arm_kernel' in report['granular']
         defs['GR_STORE']=rhstate.ST+rhstate.OFF['granstore'][0]
         defs['GR_STATE']=rhstate.ST+rhstate.OFF['granular'][0]
+        if os.environ.get('RH_GRANULAR_FINE')=='1':defs.update(GR_SETTINGS_BYTES=288,GR_SINGLE_BUFFER=1)
         for name in ('settings_store','settings_valid'):
             defs['GR_'+name.upper()]=report['granular']['arm_kernel']['labels']['c_gr_runtime_'+name]
     cow=automation and report['automation3'].get('cow',False)

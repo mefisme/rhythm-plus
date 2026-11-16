@@ -6,6 +6,7 @@ G,E=F.G,F.E
 def main():
     u=F.setup();g=E.MAN['report']['granular'];K=g['arm_kernel']['labels'];slot=int(g['bridge']['slot'],16);buf=0x20001000
     E.call(u,int(g['ui']['labels']['c_gustate'],16));u.mem_write(slot+168,b'\x10')
+    dim=E.ptr(u,E.u32(u,E.C.CTRL+E.T.O_DIM),E.T.P_DIM);u.mem_write(dim,struct.pack('<I',E.u32(u,dim)&~1024))
     def draw(knob):
         u.mem_write(buf,struct.pack('<69I',*([0xffffff]*69)))
         E.call(u,K['c_gr_runtime_draw'],slot,0,buf,knob)

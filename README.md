@@ -12,7 +12,7 @@ Rhythm Plus is built on the work of **Ghillermo**, the author of **Circuit Remix
 
 Rhythm Plus is a separate project. It is not Circuit Remix, and it does not include the Circuit Remix features.
 
-> **Status: in development, no release yet.** A0201 adds track-wide value-bar tap/slide editing, two-finger center and silent step selection in Stock settings, retaining Granular and lane assignments. Emulator checks pass; hardware validation is pending. See [A0201 controls and settings](manual/granular-a0201.md).
+> **Status: A0213 is the stable build** (in the uploader). Development continues from it. A0213 made Freeze hold the whole sound while the knobs keep working. A0212 added up to 32 slices, with one lit pad per Slice and Lock choice. It gives Timing, Slice and Lock clear zones, makes Slice-mode scatter jump whole slices and draws the value bar at Stock brightness. It puts Granular on pad 27 and shows the value bar while a knob turns over open settings. It has fine adjust: Shift + turn moves six Granular knobs (Position, Size, Density, Scan, Position scatter, Pitch scatter) in 1/16 steps, saved in the SD companion. Burst is removed and the knob cycle pad only goes forward. It keeps lossless DSP compression, full Granular, parameter-view ownership, LED fixes and track settings, with 10,220 firmware bytes free. Tested on the unit. See [controls and settings](manual/granular-a0201.md).
 
 Legal note: the firmware from Novation is proprietary. This repository does not contain Novation's firmware or any file made from it. You supply the official firmware, and the build checks it. Do not install the result on any device other than a Circuit Rhythm.
 

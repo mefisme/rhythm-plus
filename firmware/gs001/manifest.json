@@ -1,0 +1,1444 @@
+{
+  "marker": "GS001",
+  "offline_only": true,
+  "flashable": false,
+  "image_size": "0x6f564",
+  "image_sha256": "c155eb7aef2c3f8ff25d8f9c6a74ff0ae61dfb484c252d9d8501eeb2ec27540d",
+  "free_to_0x70000": "0xa9c",
+  "report": {
+    "rhstate": {
+      "block": "0x2004ebd4",
+      "size": 2956,
+      "off": {
+        "magic": 0,
+        "granstore": 2508,
+        "granular": 2092,
+        "storageshadow": 1068,
+        "gfxmix": 596,
+        "stepmut": 564,
+        "mutset": 388,
+        "upguard": 384,
+        "trackreset": 164,
+        "pageclear": 156,
+        "tmenu": 100,
+        "clkci": 48,
+        "playfix": 32,
+        "countin": 24,
+        "vismet": 20,
+        "srcount": 12,
+        "smswitch": 8,
+        "cthresh": 4
+      },
+      "labels": {
+        "c_rst": "0x806a570"
+      },
+      "base": "0x806a570"
+    },
+    "fixedrec": {
+      "calls": [
+        "0x803cea0",
+        "0x8058fe0"
+      ],
+      "labels": {
+        "c_frbpm": "0x806a5d0"
+      },
+      "base": "0x806a5d0"
+    },
+    "playfix": {
+      "state": "0x2004ebf4",
+      "labels": {
+        "c_fxgate": "0x806a620"
+      },
+      "base": "0x806a620"
+    },
+    "countin": {
+      "btn_entry": "0x803d8b8",
+      "led_calls": [
+        "0x803e0b6",
+        "0x803e7d0"
+      ],
+      "prev": {
+        "btn": null,
+        "ledtask": "0x803e80c"
+      },
+      "labels": {
+        "c_cibtn_stock": "0x806a6a0",
+        "c_ciok": "0x806a6a8",
+        "c_cinew": "0x806a6c4",
+        "c_cisetsh": "0x806a6ce",
+        "c_cishift": "0x806a6e8",
+        "c_cistate": "0x806a6f8",
+        "c_cibtn": "0x806a716",
+        "c_ciledtask": "0x806a7b6"
+      },
+      "base": "0x806a6a0"
+    },
+    "vismet": {
+      "slot": "0x2004ebe8",
+      "count_click": "0x806a81c",
+      "prev_led": "0x806a7b6",
+      "labels": {
+        "c_vmbeat_stock": "0x806a8d0",
+        "c_vmbeat": "0x806a8d8",
+        "c_vmclick": "0x806a934",
+        "c_vmled": "0x806a968"
+      },
+      "base": "0x806a8d0"
+    },
+    "clkci": {
+      "slot": "0x2004ec04",
+      "prev_btn": "0x806a716",
+      "prev_led": "0x806a968",
+      "labels": {
+        "c_ckblk": "0x806a9e0",
+        "c_ckready": "0x806a9f8",
+        "c_ckmark": "0x806aa1a",
+        "c_ckclick": "0x806aa44",
+        "c_ckplay": "0x806aa5a",
+        "c_ckbegin": "0x806aa90",
+        "c_ckcancel": "0x806aaf8",
+        "c_ckabort": "0x806ab10",
+        "c_ckrelease": "0x806ab44",
+        "c_cktick": "0x806ab90",
+        "c_ckpulse": "0x806ac18",
+        "c_ckbeat": "0x806acbc",
+        "c_ckmstart": "0x806ad34",
+        "c_ckmstart_x": "0x806ad48",
+        "c_ckmcont": "0x806ad50",
+        "c_ckmcont_x": "0x806ad66",
+        "c_ckmstop": "0x806ad6e",
+        "c_ckmstop_x": "0x806ad84",
+        "c_ckmspp": "0x806ad8c",
+        "c_ckmspp_x": "0x806adaa",
+        "c_cksetmode": "0x806ade0",
+        "c_ckheld": "0x806ae16",
+        "c_ckrec": "0x806ae2e",
+        "c_ckplp0": "0x806ae48",
+        "c_ckpled": "0x806ae5e",
+        "c_ckbtn": "0x806ae70",
+        "c_ckled": "0x806aefe"
+      },
+      "base": "0x806a9e0"
+    },
+    "srcount": {
+      "slot": "0x2004ebe0",
+      "prev_btn": "0x806ae70",
+      "prev_led": "0x806aefe",
+      "labels": {
+        "c_srok": "0x806af80",
+        "c_srpad": "0x806afa8",
+        "c_srbtn": "0x806afe2",
+        "c_srled": "0x806b050"
+      },
+      "base": "0x806af80"
+    },
+    "stepload": {
+      "labels": {
+        "c_stload": "0x806b0a0"
+      },
+      "base": "0x806b0a0"
+    },
+    "cthresh": {
+      "ready_only": true,
+      "slot": "0x2004ebd8",
+      "labels": {
+        "c_drup0": "0x806b1f0",
+        "c_drup1": "0x806b20a"
+      },
+      "base": "0x806b1f0"
+    },
+    "rhrec": {
+      "tail": "0x29110",
+      "size": 884,
+      "off": {
+        "drumpat": 0,
+        "granmulti": 2,
+        "patchain": 64,
+        "sckn": 192,
+        "drumarp": 232,
+        "cscale": 300,
+        "trkcopy": 328,
+        "mfsess": 540,
+        "cthresh": 544,
+        "stockplus": 548,
+        "stockplus2": 680,
+        "granpage": 748,
+        "stepgate": 780,
+        "gmmode": 792,
+        "linein": 804,
+        "slink": 808,
+        "synth": 812
+      },
+      "labels": {
+        "c_rrt": "0x806b230"
+      },
+      "base": "0x806b230"
+    },
+    "pitchmod": {
+      "labels": {
+        "c_d1up": "0x806b280"
+      },
+      "blk_a": "0x806b2b4",
+      "blk_b": "0x806b794",
+      "core1_words": 413,
+      "start": "0xd34",
+      "rr": "0x1c3",
+      "trig": "0x2fd",
+      "y_base": "0x1610",
+      "load": true,
+      "shiboot": "0xdb5",
+      "loopxf": "0x534",
+      "loopxf_v": 4,
+      "probe": false,
+      "duck": false,
+      "landing": false,
+      "block": "0xd3c",
+      "y_idle": "0x1600",
+      "y_burn": "0x1601",
+      "y_blocks": "0x1602",
+      "base": "0x806b280"
+    },
+    "granular": {
+      "integration_version": 1,
+      "core1_start": "0xdb7",
+      "core1_end": "0xed1",
+      "core1_stages": {
+        "route": {
+          "words": 129,
+          "source_words": 99,
+          "clear_words": 30,
+          "labels": {
+            "source": 3511,
+            "snapshot_source": 3532,
+            "copy_end": 3551,
+            "copied": 3551,
+            "consumed": 3553,
+            "validate": 3557,
+            "invalid": 3565,
+            "silent": 3566,
+            "zero_end": 3573,
+            "buffer_address": 3575,
+            "zero_bus": 3585,
+            "bus_zero_end": 3590,
+            "stock_reader": 3591,
+            "fade": 3592,
+            "stock_fade": 3607,
+            "clear_output": 3610,
+            "clear": 3626,
+            "next": 3629,
+            "clear_end": 3638
+          }
+        },
+        "snapshot": {
+          "words": 99,
+          "labels": {
+            "update": 3640,
+            "export": 3645,
+            "idle": 3684,
+            "skip": 3687,
+            "export_end": 3691,
+            "request": 3700,
+            "request_end": 3713,
+            "bind_source": 3716,
+            "bind_note": 3719
+          }
+        },
+        "notes": {
+          "words": 23,
+          "labels": {
+            "note_on": 3739
+          }
+        },
+        "flow": {
+          "words": 31,
+          "body_words": 13,
+          "labels": {
+            "flow": 3762,
+            "dispatch": 3775
+          }
+        }
+      },
+      "native_core1_words": 131,
+      "core1_added_words": 282,
+      "core1_packed": true,
+      "core1_padding_words": 0,
+      "core0_segments": [
+        {
+          "start": "0x2100",
+          "words": 1975
+        },
+        {
+          "start": "0x29a0",
+          "words": 299
+        },
+        {
+          "start": "0x2b00",
+          "words": 373
+        },
+        {
+          "start": "0x2d00",
+          "words": 109
+        }
+      ],
+      "pool": {
+        "labels": {
+          "after_wait": 11008,
+          "host_params_end": 11096,
+          "host_track_end": 11100,
+          "count_next": 11146,
+          "count_end": 11161,
+          "track": 11176,
+          "load_state": 11200,
+          "load_sources": 11221,
+          "load_seen": 11227,
+          "retire_end": 11248,
+          "retired": 11248,
+          "before_save": 11250,
+          "save_state": 11262,
+          "save_sources": 11277,
+          "save_seen": 11283,
+          "next": 11283,
+          "host_payload_end": 11314,
+          "host_status_end": 11315,
+          "caps": 11372
+        },
+        "words": 373,
+        "producer": {
+          "labels": {
+            "after_wait": 10656,
+            "produce": 10663,
+            "forward_region": 10747,
+            "check_serial": 10843,
+            "restart": 10850,
+            "clear_grains": 10856,
+            "continue_voice": 10856,
+            "before_publish": 10874,
+            "restore": 10912,
+            "return": 10914,
+            "acknowledge": 10915,
+            "ack_active": 10941,
+            "ack_commit": 10943,
+            "ack_next": 10944,
+            "ack_end": 10952
+          },
+          "engine_words": 1975,
+          "producer_words": 299,
+          "tables": {
+            "SIZE_T": 10205,
+            "PT": 10333,
+            "GAIN_T": 10407
+          },
+          "in_place": true
+        },
+        "bounded": true,
+        "state_words": 2048,
+        "metadata_words": 640
+      },
+      "init": "0x2d00",
+      "first_pass": "0x2d1f",
+      "core0_initialized_regions": [
+        "granular route controls",
+        "granular native snapshots",
+        "granular working controls and voice",
+        "granular sample copy",
+        "granular sum",
+        "granular bound grain sources",
+        "granular per-grain pitch ratios",
+        "granular latched controls and lifetime",
+        "granular persistent track contexts",
+        "granular persistent grain metadata",
+        "granular narrow host mailbox",
+        "granular pool outer register saves",
+        "granular pool scheduling scratch",
+        "granular first-pass flag and r0 save",
+        "granular working register saves"
+      ],
+      "regions": [
+        {
+          "core": -1,
+          "space": "shared",
+          "start": "0x37400",
+          "words": 32,
+          "owner": "granular route controls"
+        },
+        {
+          "core": -1,
+          "space": "shared",
+          "start": "0x37420",
+          "words": 64,
+          "owner": "granular native snapshots"
+        },
+        {
+          "core": 1,
+          "space": "y",
+          "start": "0x1f80",
+          "words": 7,
+          "owner": "granular snapshot saves"
+        },
+        {
+          "core": 1,
+          "space": "y",
+          "start": "0x1f90",
+          "words": 8,
+          "owner": "granular accepted-note serials"
+        },
+        {
+          "core": 1,
+          "space": "y",
+          "start": "0x1f98",
+          "words": 2,
+          "owner": "granular note scratch"
+        },
+        {
+          "core": 1,
+          "space": "y",
+          "start": "0x1f9a",
+          "words": 1,
+          "owner": "granular Flow scratch"
+        },
+        {
+          "core": 0,
+          "space": "x",
+          "start": "0x4000",
+          "words": 256,
+          "owner": "granular working controls and voice"
+        },
+        {
+          "core": 0,
+          "space": "x",
+          "start": "0x1500",
+          "words": 256,
+          "owner": "granular sample copy"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1410",
+          "words": 32,
+          "owner": "granular sum"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1f80",
+          "words": 48,
+          "owner": "granular bound grain sources"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1fb0",
+          "words": 16,
+          "owner": "granular per-grain pitch ratios"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1fc0",
+          "words": 13,
+          "owner": "granular latched controls and lifetime"
+        },
+        {
+          "core": 0,
+          "space": "x",
+          "start": "0x2400",
+          "words": 2048,
+          "owner": "granular persistent track contexts"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x2800",
+          "words": 640,
+          "owner": "granular persistent grain metadata"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x2b00",
+          "words": 226,
+          "owner": "granular narrow host mailbox"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1f40",
+          "words": 24,
+          "owner": "granular pool outer register saves"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1fd0",
+          "words": 5,
+          "owner": "granular pool scheduling scratch"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1fd8",
+          "words": 2,
+          "owner": "granular first-pass flag and r0 save"
+        },
+        {
+          "core": 0,
+          "space": "y",
+          "start": "0x1440",
+          "words": 24,
+          "owner": "granular working register saves"
+        }
+      ],
+      "scope": "Granular restored with companion settings and explicit native sound-lane assignments",
+      "shared_tail_hardware_proved": false,
+      "arm_kernel": {
+        "origin": 134714736,
+        "bytes": 15544,
+        "labels": {
+          "c_gr_owner_init": 134718328,
+          "c_gr_owner_request": 134718790,
+          "c_gr_owner_observe": 134718354,
+          "c_gr_owner_poll": 134718578,
+          "c_gr_owner_forward": 134718238,
+          "c_gr_owner_packet": 134718446,
+          "c_gr_owner_quiesce": 134718752,
+          "c_gr_owner_held": 134718286,
+          "c_gr_owner_resume": 134718900,
+          "c_gr_owner_source": 134718962,
+          "c_gr_params_init": 134719020,
+          "c_gr_params_get": 134719000,
+          "c_gr_params_put": 134719058,
+          "c_gr_ui_init": 134728764,
+          "c_gr_ui_release": 134728772,
+          "c_gr_ui_down": 134728732,
+          "c_gr_ui_tick": 134728780,
+          "c_gr_shared_read": 134728424,
+          "c_gr_sample_read": 134728346,
+          "c_gr_dsp_write": 134715102,
+          "c_gr_runtime_init": 134724156,
+          "c_gr_level_word": 134718086,
+          "c_gr_runtime_mode": 134725078,
+          "c_gr_runtime_put": 134725916,
+          "c_gr_runtime_flags": 134722058,
+          "c_gr_runtime_seq_begin": 134726368,
+          "c_gr_runtime_seq_end": 134726442,
+          "c_gr_runtime_source": 134727682,
+          "c_gr_runtime_ui_pad": 134728068,
+          "c_gr_runtime_frame": 134722136,
+          "c_gr_runtime_message": 134724672,
+          "c_gr_runtime_page": 134725896,
+          "c_gr_runtime_granular_busy": 134724098,
+          "c_gr_runtime_knob_page": 134724382,
+          "c_gr_runtime_shift_layer": 134727320,
+          "c_gr_runtime_arrow": 134719096,
+          "c_gr_cycle_next": 134715018,
+          "c_gr_runtime_pad": 134725176,
+          "c_gr_lane_inner": 134717010,
+          "c_gr_lane_touch": 134717350,
+          "c_gr_runtime_release": 134725990,
+          "c_gr_runtime_ui_frame": 134727998,
+          "c_gr_runtime_turn": 134727854,
+          "c_gr_clear_step": 134714840,
+          "c_gr_clear_end": 134714826,
+          "c_gr_clear_draw": 134714736,
+          "c_gr_runtime_clear_knob": 134719686,
+          "c_gr_runtime_shift_turn": 134727534,
+          "c_gr_runtime_reset": 134726156,
+          "c_gr_runtime_track_reset": 134727710,
+          "c_gr_runtime_store_pending": 134727686,
+          "c_gr_runtime_clear": 134719634,
+          "c_gr_lane_clear_page": 134715296,
+          "c_gr_lane_nativeclear": 134717206,
+          "c_gr_runtime_draw": 134719894,
+          "c_gr_runtime_settings_valid": 134727012,
+          "c_gr_runtime_settings_store": 134726768,
+          "c_gr_runtime_replace_needed": 134726068,
+          "c_gr_runtime_load": 134724402,
+          "c_gr_runtime_settings_load": 134726448,
+          "c_gr_runtime_begin_replace": 134719266,
+          "c_gr_runtime_end_replace": 134721934,
+          "c_gr_editor_silent": 134715170,
+          "c_gr_lane_gate": 134716924,
+          "c_gr_lane_stockclear": 134717214,
+          "c_gr_lane_clear": 134715188,
+          "c_gr_lane_turn": 134717828,
+          "c_gr_lane_draw": 134715436,
+          "c_gr_lane_nativeview": 134717210,
+          "c_gr_clear_views": 134714912,
+          "c_gr_lane_stockview": 134717288,
+          "c_gr_menu_indicator": 134718104,
+          "c_gr_track_views": 134728586
+        },
+        "source_build_hash": "24e7ae38ba2d65208d5aff4c351623d58ded57b856076e95134362e8b719ceba",
+        "code_sha256": "19b8a1e9b90b58d15ff0e557e3d3f04d65250ed55924f1b8a755bb6eb2a2238a",
+        "binary": "D:\\GitHub\\rhythm-plus\\buildtmp\\granular-owner-08079570-pages-pad31-assign1\\kernel.bin",
+        "scope": "Standalone granular ownership candidate; not firmware"
+      },
+      "lane_assignments": {
+        "lanes": 8,
+        "tracks": 8,
+        "storage": "GS v4 companion; automation values remain native",
+        "automatic_assignment": false,
+        "mixer_lanes_preserved": true
+      },
+      "bridge": {
+        "slot": "0x2004f400",
+        "bytes": 414,
+        "labels": {
+          "c_gstate": "0x807ec60",
+          "state_x": "0x807ec72",
+          "c_ggranular_busy": "0x807ec74",
+          "busy_done": "0x807ec86",
+          "c_gready": "0x807ec88",
+          "ready_no": "0x807eca8",
+          "c_gboot_tick": "0x807ecac",
+          "boot_reset": "0x807ecdc",
+          "boot_done": "0x807ece8",
+          "c_gframe": "0x807ecea",
+          "frame_x": "0x807ed14",
+          "c_gmessage": "0x807ed16",
+          "message_policy": "0x807ed48",
+          "message_drop": "0x807ed5a",
+          "message_pass": "0x807ed5c",
+          "message_native": "0x807ed68",
+          "c_gsource": "0x807ed76",
+          "source_plain": "0x807edb0",
+          "source_native": "0x807edbc",
+          "c_gparam": "0x807edc4",
+          "param_pass": "0x807ede8",
+          "param_drop": "0x807edf4",
+          "param_native": "0x807edf6"
+        },
+        "ready": "0x2004ebd9",
+        "wait": "0x2004f594",
+        "upload": "0x2004ed54",
+        "previous_frame": "0x806c9dc"
+      },
+      "ui": {
+        "bytes": 1186,
+        "menu": "0x2004ec38",
+        "page_pad": 31,
+        "arrow_pages": true,
+        "page_dependent_shift": true,
+        "settings_owner": "active parameter pad view",
+        "stock_settings": true,
+        "native_brightness": true,
+        "per_track_view_colors": true,
+        "labels": {
+          "c_gustate": "0x807ee00",
+          "state_x": "0x807ee12",
+          "c_gucommit": "0x807ee14",
+          "c_gusave0": "0x807ee16",
+          "c_gusave0_native": "0x807ee24",
+          "c_gusave1": "0x807ee30",
+          "c_gusave1_native": "0x807ee3e",
+          "c_gureset": "0x807ee4a",
+          "reset_done": "0x807ee62",
+          "c_gucontext": "0x807ee6c",
+          "context_available": "0x807ee7a",
+          "context_return": "0x807ee90",
+          "c_gunavcontext": "0x807ee92",
+          "context_no": "0x807eebc",
+          "c_gubutton": "0x807eec0",
+          "button_arrow": "0x807eecc",
+          "button_pass": "0x807eef4",
+          "c_gubutton_release": "0x807ef00",
+          "clear_release_done": "0x807ef14",
+          "button_release_arrow": "0x807ef1c",
+          "button_release_pass": "0x807ef30",
+          "c_guframe": "0x807ef3c",
+          "frame_tick": "0x807ef7c",
+          "frame_x": "0x807efa2",
+          "c_gupad": "0x807efa4",
+          "pad_normal": "0x807f026",
+          "pad_dispatch": "0x807f044",
+          "pad_view": "0x807f064",
+          "pad_next": "0x807f074",
+          "pad_drop": "0x807f08a",
+          "pad_pass": "0x807f08c",
+          "c_gurelease": "0x807f098",
+          "release_pass": "0x807f0ae",
+          "c_guknob": "0x807f0ba",
+          "knob_modifier": "0x807f116",
+          "knob_clear_shift": "0x807f182",
+          "knob_clear": "0x807f184",
+          "knob_shift": "0x807f196",
+          "knob_commit": "0x807f1a6",
+          "knob_drop": "0x807f1ba",
+          "knob_pass": "0x807f1bc",
+          "c_guout": "0x807f1c8",
+          "out_draw": "0x807f1fe",
+          "out_x": "0x807f208",
+          "out_done": "0x807f26a",
+          "c_gusilent": "0x807f26c",
+          "silent_native": "0x807f294"
+        },
+        "previous": {
+          "pad": "0x80734fa",
+          "release": "0x8073888",
+          "knob": "0x807413c",
+          "frame": "0x807ecea",
+          "out": "0x807dd16",
+          "button": "0x8072470",
+          "button_release": "0x8073ac8"
+        },
+        "scope": "Virtual granular page; native page IDs remain unchanged",
+        "settings_cycle_forward": true
+      },
+      "lifecycle": {
+        "bytes": 692,
+        "labels": {
+          "c_glapply": "0x807f2b0",
+          "apply_fail": "0x807f304",
+          "apply_pass": "0x807f312",
+          "c_glpack": "0x807f31e",
+          "pack_fail": "0x807f366",
+          "pack_pass": "0x807f374",
+          "c_glupload": "0x807f380",
+          "upload_fail": "0x807f3c8",
+          "upload_pass": "0x807f3d6",
+          "c_glfree": "0x807f3e2",
+          "free_fail": "0x807f430",
+          "free_pass": "0x807f43e",
+          "c_glreset": "0x807f44a",
+          "reset_fail": "0x807f492",
+          "reset_pass": "0x807f4a0",
+          "c_glrecord": "0x807f4ac",
+          "record_guard": "0x807f4d8",
+          "record_fail": "0x807f514",
+          "record_pass": "0x807f522",
+          "apply_native": "0x807f52e",
+          "pack_native": "0x807f536",
+          "free_native": "0x807f540",
+          "reset_native": "0x807f54e",
+          "record_native": "0x807f55c"
+        },
+        "apply": "0x80378c6",
+        "pack": "0x8053e24",
+        "free": "0x8064460",
+        "reset": "0x8064416",
+        "record": "0x806446e",
+        "uploads": [
+          "0x8053e74",
+          "0x80460ba"
+        ],
+        "previous_upload": "0x80767e0",
+        "scope": "Idle acknowledgement barrier before native project apply/pack allocator reset/sample upload; nested calls hold until outer completion"
+      },
+      "base_build": "A0192",
+      "manual_activation": true,
+      "old_project_codec_installed": false,
+      "automation": true,
+      "settings_companion": true,
+      "sd_packs_only": true,
+      "navigation_persistent": true,
+      "movement_bar_feedback": true
+    },
+    "smswitch": {
+      "sm": true,
+      "sm0": 29,
+      "smblk_off": 384,
+      "smdefs": [
+        6
+      ],
+      "smf": "0x1830",
+      "loopfade": "0xda9",
+      "drone": "0xd4b",
+      "droff": "0xd99",
+      "ln": "0x1870",
+      "loff": "0x1878",
+      "blk": "0x1602",
+      "sm_dr": 8,
+      "loopxf": true,
+      "xfb": "0x18b0",
+      "xfs": "0x18a2",
+      "xf_n": 256,
+      "xf_words": {
+        "XR": "0x18a2",
+        "XA": "0x18a3",
+        "XE": "0x18a4",
+        "XS": "0x18a5",
+        "XN": "0x18a6",
+        "XQ": "0x18a7",
+        "WR4": "0x18a8",
+        "WS": "0x18a9",
+        "WL": "0x18aa",
+        "WB": "0x18ab"
+      },
+      "slot": "0x2004ebdc",
+      "prev_led": "0x806b050",
+      "labels": {
+        "c_smblk": "0x806b7a4",
+        "c_smsum": "0x806b7b6",
+        "c_smok": "0x806b7ce",
+        "c_smval": "0x806b7f0",
+        "c_smput": "0x806b82a",
+        "c_sww": "0x806b890",
+        "c_swdsp": "0x806b8a6",
+        "c_swled": "0x806b8e8",
+        "c_swframe": "0x806b8fc",
+        "c_fsval": "0x806b7f0",
+        "c_fsput": "0x806b82a"
+      },
+      "base": "0x806b7a0"
+    },
+    "pageclear": {
+      "viewsync": true,
+      "gran": false,
+      "shapes": false,
+      "filt": false,
+      "vol": false,
+      "scanfx": false,
+      "padmap": null,
+      "px": false,
+      "fade": false,
+      "page_values": [],
+      "stockonly": true,
+      "allreset": false,
+      "slot": "0x2004ec70",
+      "default_table": "0x806900c",
+      "labels": {
+        "c_pcsync": "0x806b970",
+        "c_pcstock": "0x806b9ba",
+        "c_pcreset": "0x806ba28",
+        "c_pcpress": "0x806ba36"
+      },
+      "base": "0x806b970"
+    },
+    "smpads": {
+      "clear_fit_reset": true,
+      "labels": {
+        "c_smpad": "0x806baa0",
+        "c_smled": "0x806bb20"
+      },
+      "sm": true,
+      "pads": {
+        "18": 1,
+        "19": 8,
+        "20": 4
+      },
+      "prev_led": "0x806b8e8",
+      "base": "0x806baa0"
+    },
+    "tmenu": {
+      "slot": "0x2004ec38",
+      "prev_btn": "0x806afe2",
+      "prev_led": "0x806bb20",
+      "prev_out": "0x803e8e6",
+      "stockplus": false,
+      "fpage": false,
+      "click": true,
+      "twoview": true,
+      "shiftled": true,
+      "bounce": true,
+      "pageclear": true,
+      "steadyreset": true,
+      "resetcue": true,
+      "stepmarker": true,
+      "trackpulse": true,
+      "steppage": true,
+      "softclear": true,
+      "viewlock": true,
+      "momhold": true,
+      "pulsesync": true,
+      "steady_track": true,
+      "reverse_cycle": true,
+      "page0": 25,
+      "x_idx": [
+        10,
+        5,
+        9,
+        4,
+        8
+      ],
+      "gran": false,
+      "perpage": false,
+      "pagecols": false,
+      "shapes": false,
+      "shapebar": false,
+      "filtpage": false,
+      "k78white": false,
+      "volpage": false,
+      "syncbar": false,
+      "depthfirst": false,
+      "scanfx": false,
+      "padmap": null,
+      "mixpage": false,
+      "pxrand": false,
+      "glide": false,
+      "fade": false,
+      "fclr": false,
+      "spn": null,
+      "maps": {
+        "sp": [
+          10,
+          0,
+          1,
+          6,
+          2,
+          3,
+          11,
+          7
+        ],
+        "f": [
+          12,
+          13,
+          14,
+          15,
+          16,
+          17
+        ],
+        "v": [
+          18,
+          19,
+          20
+        ]
+      },
+      "tmclick": 3,
+      "pages": [
+        "0xffffff"
+      ],
+      "labels": {
+        "c_tmview": "0x806bb90",
+        "c_tmallowed": "0x806bbbc",
+        "c_tmfill": "0x806bbc0",
+        "c_tmscl": "0x806bbda",
+        "c_tmtint": "0x806bc04",
+        "c_tmbtn": "0x806bc2a",
+        "c_tmpad": "0x806bd14",
+        "c_tmrel": "0x806bde2",
+        "c_tmheld": "0x806be12",
+        "c_tmlane": "0x806be3a",
+        "c_tmknob": "0x806be8a",
+        "c_tmown": "0x806beb8",
+        "c_tmkred": "0x806becc",
+        "c_tmrec": "0x806bf06",
+        "c_tmposition": "0x806bf88",
+        "c_tmrpad": "0x806bfe8",
+        "c_tmled": "0x806c058",
+        "c_tmout": "0x806c4fc"
+      },
+      "base": "0x806bb90"
+    },
+    "trackreset": {
+      "viewsync": true,
+      "softclear": true,
+      "slot": "0x2004ec78",
+      "size": 220,
+      "prev_btn": "0x806bc2a",
+      "prev_out": "0x806c4fc",
+      "labels": {
+        "c_trstate": "0x806c800",
+        "c_trphoto": "0x806c80e",
+        "c_trsample": "0x806c85a",
+        "c_trreset": "0x806c868",
+        "c_trreset_pages_call": "0x806c8c8",
+        "c_trbtn": "0x806c8f8",
+        "c_trrelease": "0x806c980",
+        "c_trload": "0x806c9c4",
+        "c_trled": "0x806c9dc",
+        "c_trpad": "0x806c9e8",
+        "c_trred": "0x806ca00",
+        "c_trout": "0x806ca20"
+      },
+      "base": "0x806c800"
+    },
+    "mutset": {
+      "slot": "0x2004ed58",
+      "hold_ms": 333,
+      "blk_off": 192,
+      "blk_len": 44,
+      "slot_len": 176,
+      "mutate": true,
+      "listpads": true,
+      "scenecut": true,
+      "pagebyte": true,
+      "dimrest": true,
+      "clearall": true,
+      "liststart": true,
+      "scenesave": true,
+      "greendup": true,
+      "pageclr": true,
+      "shiftstock": true,
+      "shiftpads": true,
+      "pclrv": true,
+      "scenefix": true,
+      "stocktrk": true,
+      "cleardark": true,
+      "clrnone": true,
+      "restlvl": 6,
+      "amount": true,
+      "norep": true,
+      "keep1": true,
+      "hidepause": true,
+      "vlock": true,
+      "seeds": true,
+      "live": true,
+      "clrdup": true,
+      "pending": true,
+      "scchain": true,
+      "scplay": true,
+      "livecol": true,
+      "views": true,
+      "bounce": true,
+      "shtrk": true,
+      "shtrkled": true,
+      "clrpage": true,
+      "shkeep": true,
+      "shmut": true,
+      "prev_btn": "0x806c8f8",
+      "labels": {
+        "c_mtsum": "0x806cb20",
+        "c_mtblk": "0x806cb38",
+        "c_mtw": "0x806cb5e",
+        "c_mtfix": "0x806cb8c",
+        "c_mtvals": "0x806cb96",
+        "c_mtbits": "0x806cbd4",
+        "c_mtls": "0x806cbfa",
+        "c_mtmake": "0x806cc2e",
+        "c_mtsb": "0x806cc72",
+        "c_mtnew": "0x806cc9e",
+        "c_mtsetkey": "0x806ccc4",
+        "c_mtgx": "0x806cce2",
+        "c_mtgk": "0x806ccf4",
+        "c_mtpk": "0x806cd34",
+        "c_mtcommit": "0x806cd4c",
+        "c_mtlive": "0x806cd60",
+        "c_mtcl": "0x806cdb2",
+        "c_mtrand": "0x806cdfc",
+        "c_mtrs": "0x806ce0e",
+        "c_mtpool": "0x806ce1e",
+        "c_mtgen": "0x806ce78",
+        "c_mtdo": "0x806d096",
+        "c_mtnext": "0x806d10a",
+        "c_scad": "0x806d268",
+        "c_scput": "0x806d2a0",
+        "c_scbits": "0x806d2c4",
+        "c_scsum": "0x806d2ea",
+        "c_scrd": "0x806d302",
+        "c_scwr": "0x806d342",
+        "c_scsave": "0x806d38a",
+        "c_scget": "0x806d3d8",
+        "c_sccopy": "0x806d44e",
+        "c_scclr": "0x806d494",
+        "c_scmsg2": "0x806d4a4",
+        "c_scmsg": "0x806d4a6",
+        "c_mtdone": "0x806d4f8",
+        "c_mtseek": "0x806d524",
+        "c_mtclall": "0x806d586",
+        "c_mxsig": "0x806d598",
+        "c_mxpad": "0x806d5be",
+        "c_mxpad_c": "0x806d5ea",
+        "c_mxpad_ld": "0x806d604",
+        "c_mxpad_x": "0x806d614",
+        "c_mxpr": "0x806d618",
+        "c_mxpr_c": "0x806d644",
+        "c_mxpr_ld": "0x806d65e",
+        "c_mxpr_x": "0x806d66e",
+        "c_msbtn": "0x806d672",
+        "c_msrel": "0x806d84a",
+        "c_msgpad": "0x806d8d2",
+        "c_msgrel": "0x806d948",
+        "c_mspad": "0x806d998",
+        "c_mspr": "0x806daf8",
+        "c_msout": "0x806db18",
+        "c_mtany": "0x806dd56",
+        "c_msmark": "0x806dd96",
+        "c_msred": "0x806ddac",
+        "c_mtclred": "0x806de28",
+        "c_mscltb": "0x806dea0",
+        "c_mslist": "0x806df44",
+        "c_msdraw": "0x806e744"
+      },
+      "base": "0x806cb20"
+    },
+    "stepmut": {
+      "slot": "0x2004ee08",
+      "blk_off": 404,
+      "blk_len": 100,
+      "code": 5064,
+      "offload": true,
+      "prev": {
+        "prev_btn": "0x806d672",
+        "prev_rel": "0x806d84a",
+        "prev_pad": "0x806d8d2",
+        "prev_padrel": "0x806d948",
+        "prev_out": "0x806db18"
+      },
+      "labels": {
+        "c_sm_store": "0x806f754",
+        "c_sm_fxread": "0x806eeca",
+        "c_sm_fxwrite": "0x806eed2",
+        "c_sm_fxsample": "0x806eece",
+        "c_sm_mut": "0x806eed6",
+        "c_sm_btn": "0x806ed20",
+        "c_sm_rel": "0x806f698",
+        "c_sm_pad": "0x806f3c8",
+        "c_sm_padrel": "0x806f5e2",
+        "c_sm_out": "0x806ef12"
+      },
+      "base": "0x806ed20"
+    },
+    "core0": {
+      "labels": {
+        "c_d0up": "0x80700e8"
+      },
+      "blocks": [
+        "0x8070188",
+        "0x80701c8",
+        "0x80703b8",
+        "0x8071ae4",
+        "0x8071e6c",
+        "0x80722d4",
+        "0x8072424",
+        "0x8072430",
+        "0x807243c"
+      ],
+      "ld": "0x3fe0",
+      "ld_words": 19,
+      "segs": [
+        [
+          "0x1fed",
+          163
+        ],
+        [
+          "0x2100",
+          1975
+        ],
+        [
+          "0x29a0",
+          299
+        ],
+        [
+          "0x2b00",
+          373
+        ],
+        [
+          "0x2d00",
+          109
+        ],
+        [
+          "0x0",
+          2
+        ],
+        [
+          "0x228",
+          2
+        ]
+      ]
+    },
+    "gfxsplit": {
+      "at": "0x50",
+      "words": 97,
+      "dry": "0x1400",
+      "pre": "0x50",
+      "post": "0x9e",
+      "cut": "0x1440",
+      "applied": "0x1450",
+      "controls": {
+        "capture": "0x1fed",
+        "br_reset": "0x1ffc",
+        "br_cancel": "0x2007",
+        "capture_audio": "0x200a",
+        "capture_e": "0x2015",
+        "returns": "0x2017",
+        "return_smp_e": "0x202f",
+        "returns_skip": "0x2032",
+        "returns_next": "0x2037",
+        "returns_e": "0x2038",
+        "split": "0x203b",
+        "split_part": "0x2044",
+        "blend": "0x204e",
+        "blend_e": "0x2063",
+        "ramp": "0x2065",
+        "blend_sample": "0x207b",
+        "blend_clean": "0x208a",
+        "blend_wet": "0x208d",
+        "blend_store": "0x208e"
+      },
+      "control_words": 163,
+      "control_at": "0x1fed",
+      "return_cut": "0x1458",
+      "blend": "0x145a",
+      "clean": "0x1480",
+      "control_block": "0x80701c8",
+      "total_words": 8336,
+      "retrigger": "0x145c",
+      "segmented": true
+    },
+    "gfxmix": {
+      "overdub": true,
+      "native_edges": true,
+      "input_trace": true,
+      "slot": "0x2004ee28",
+      "blk_off": 504,
+      "blk_len": 26,
+      "pk_off": 548,
+      "ps_off": 2,
+      "code": 17298,
+      "cut": "0x1440",
+      "prev_s1": "0x804aeee",
+      "prev_s4": "0x804b060",
+      "stubs": "0x8076798",
+      "prev": {
+        "prev_btn": "0x806ed20",
+        "prev_rel": "0x806f698",
+        "prev_out": "0x806ef12",
+        "prev_knob": "0x8050d2e",
+        "prev_pad": "0x806f3c8",
+        "prev_padrel": "0x806f5e2",
+        "prev_tknob": "0x806be8a"
+      },
+      "labels": {
+        "c_gx_autovalue": "0x807246c",
+        "c_gx_autodisplay": "0x8072458",
+        "c_gx_autotouch": "0x8072464",
+        "c_gx_autofx": "0x807245c",
+        "c_gx_autotrackclear": "0x8072468",
+        "c_gx_autodefaults": "0x8072444",
+        "c_gx_autored": "0x8072460",
+        "c_gx_noteon": "0x80726e8",
+        "c_gx_tick": "0x80740e4",
+        "c_gx_unl": "0x807470e",
+        "c_gx_s4": "0x8073c4a",
+        "c_gx_smread": "0x8073dcc",
+        "c_gx_smwrite": "0x807409a",
+        "c_gx_smsample": "0x8073e6e",
+        "c_gx_tmallowed": "0x80746ce",
+        "c_gx_granular_busy": "0x8072662",
+        "c_gx_pad": "0x80734fa",
+        "c_gx_padrel": "0x8073888",
+        "c_gx_rel": "0x8073ac8",
+        "c_gx_btn": "0x8072470",
+        "c_gx_tknob": "0x807413c",
+        "c_gx_knob": "0x8072666",
+        "c_gx_out": "0x8072728",
+        "c_gx_on_e": "0x8076798",
+        "c_gx_tick_e": "0x80767b4",
+        "c_gx_s4_e": "0x80767c6"
+      },
+      "base": "0x80700f0"
+    },
+    "upguard": {
+      "flag": "0x2004ed54",
+      "labels": {
+        "c_upw": "0x80767e0",
+        "c_dspw": "0x80767f8"
+      },
+      "calls": [
+        "0x8053e74",
+        "0x80460ba"
+      ],
+      "writers": [
+        "0x806b8a0"
+      ],
+      "base": "0x80767e0"
+    },
+    "pvloop": {
+      "pv": "0x374",
+      "env": "0x469",
+      "words": 266,
+      "room": 8,
+      "base": "0x8076810"
+    },
+    "rdiag": {
+      "hook": "0x8026de8",
+      "router_ptr": "0x20006f04",
+      "version": "0x5213",
+      "dsp": 2,
+      "readonly": true,
+      "mapped_ram_only": true,
+      "itcm_read": true,
+      "writes_disabled": [
+        6,
+        9
+      ],
+      "max_dsp_words": 24,
+      "guard": "0x8076a0c",
+      "labels": {
+        "c_rdin": "0x8076810",
+        "c_g32": "0x8076850",
+        "c_p32": "0x8076868",
+        "c_pbytes": "0x8076878",
+        "c_rdcmd": "0x8076896",
+        "rc_go": "0x807689c",
+        "rc_ping": "0x80768f2",
+        "rc_mem": "0x8076902",
+        "rc_info": "0x8076978",
+        "rc_read": "0x80769b0",
+        "rc_dspr": "0x8076a0c",
+        "ds_bad": "0x8076ad8",
+        "c_d16r": "0x8076ae4",
+        "rc_send": "0x8076b16"
+      },
+      "base": "0x8076810"
+    },
+    "automation3": {
+      "code": 8056,
+      "active": "0x1500",
+      "active_bytes": 456,
+      "snapshot": null,
+      "snapshot_bytes": 0,
+      "state": "0x3d40",
+      "state_bytes": 128,
+      "controls": 3,
+      "patterns": 8,
+      "steps": 32,
+      "microsteps": 6,
+      "sd_packs_only": true,
+      "native_lanes_used": [],
+      "labels": {
+        "c_a3_bankflush": "0x8076eaa",
+        "c_a3_bankread": "0x807723e",
+        "c_a3_bankinit": "0x8076f84",
+        "c_a3_bankget": "0x8076ec0",
+        "c_a3_bankset": "0x8077284",
+        "c_a3_bankpeek": "0x807711a",
+        "c_a3_banksnapshot": "0x807730c",
+        "c_a3_bankrelease": "0x8077278",
+        "c_a3_bankcompress": "0x8076ccc",
+        "c_a3_bankbulk": "0x8076b9c",
+        "c_a3_bankfilesize": "0x8076e66",
+        "c_a3_bankfile": "0x8076d1c",
+        "c_a3_bankimport": "0x8076f32",
+        "c_a3_bankmaintain": "0x8076fe6",
+        "c_a3_disarm": "0x80774aa",
+        "c_a3_reset": "0x8077a6e",
+        "c_a3_init": "0x80774e2",
+        "c_a3_manual": "0x80776d2",
+        "c_a3_clear": "0x8077402",
+        "c_a3_lock": "0x807764a",
+        "c_a3_bulk": "0x8077330",
+        "c_a3_record": "0x807785c",
+        "c_a3_value": "0x8077bc8",
+        "c_a3_available": "0x8076b98",
+        "c_a3_display": "0x80774ce",
+        "c_a3_controlvalue": "0x8077484",
+        "c_a3_red": "0x8077a08",
+        "c_a3_touch": "0x8077aaa",
+        "c_a3_play": "0x807771a",
+        "c_a3_listener": "0x8077562",
+        "c_a3_playerreset": "0x80777ec"
+      },
+      "trampoline": "0x8076b90",
+      "cow": true,
+      "pool": "0x16e0",
+      "pool_bytes": 9216,
+      "cache": "0x3b00",
+      "cache_bytes": 576,
+      "io": "0x3de0",
+      "io_bytes": 512,
+      "task_guard": "basepri-0xc0",
+      "base": "0x8076b90"
+    },
+    "heldlocks": {
+      "code": 436,
+      "tracks": 8,
+      "lanes": 12,
+      "labels": {
+        "c_hl_lock": "0x8078b58",
+        "c_hl_bridge": "0x8078b28",
+        "c_hl_tick": "0x8078bfc"
+      },
+      "trampolines": {
+        "TR_LOCK": "0x8078b10",
+        "TR_BRIDGE": "0x8078b18",
+        "TR_TICK": "0x8078b20"
+      },
+      "base": "0x8078b10"
+    },
+    "automation3_ops": {
+      "code": 1624,
+      "labels": {
+        "c_ao_patternpaste": "0x8078e26",
+        "c_ao_patternclear": "0x8078dce",
+        "c_ao_steppaste": "0x8078fac",
+        "c_ao_stepclear": "0x8078eee",
+        "c_ao_trackreset": "0x807912e",
+        "c_ao_trackclear": "0x80790c2",
+        "c_ao_pagecopy": "0x8078d00"
+      },
+      "trampolines": {
+        "TR_PATTERNPASTE": "0x8078cd0",
+        "TR_PATTERNCLEAR": "0x8078cd8",
+        "TR_STEPPASTE": "0x8078ce0",
+        "TR_STEPCLEAR": "0x8078ce8",
+        "TR_TRACKRESET": "0x8078cf0",
+        "TR_PAGECOPY": "0x8078cf8"
+      },
+      "clipboard_bytes": 0,
+      "base": "0x8078cd0"
+    },
+    "heldlights": {
+      "code": 574,
+      "previous": "0x8072728",
+      "labels": {
+        "c_hp_out": "0x8079330"
+      },
+      "visual_only": true,
+      "base": "0x8079330"
+    },
+    "storageshadow": {
+      "slot": "0x2004f000",
+      "bytes": 1024,
+      "fil": "0x400",
+      "fil_bytes": 4136,
+      "prev_out": "0x8079330",
+      "bounce": "0x2004f200",
+      "offload": true,
+      "native_settings_authoritative": false,
+      "directory": "1:/RP_AUTO",
+      "format": "SO v4 metadata + RA04 bundle with granular settings; reads SO v1/v2/v3",
+      "labels": {
+        "c_sh_grsettings": "0x807dccc",
+        "c_sh_autobank": "0x807d566",
+        "c_sh_block": "0x807db98",
+        "c_sh_backend": "0x807d5b6",
+        "c_sh_writebackend": "0x807de1c",
+        "c_sh_apply": "0x807d258",
+        "c_sh_out": "0x807dd16",
+        "c_sh_read": "0x807ddec",
+        "c_sh_write": "0x807de04"
+      },
+      "trampolines": {
+        "TR_APPLY": "0x807d230",
+        "TR_BACKEND": "0x807d238",
+        "TR_READ": "0x807d240",
+        "TR_WRITE": "0x807d248",
+        "TR_WRITEBACKEND": "0x807d250"
+      },
+      "runtime": "0x1440",
+      "runtime_bytes": 128,
+      "metadata_offset": 276,
+      "metadata_bytes": 20,
+      "reclaimed_offset": 404,
+      "reclaimed_bytes": 100,
+      "net_project_bytes": 80,
+      "automation_bytes": 4608,
+      "bundle_bytes": null,
+      "max_bundle_bytes": 5008,
+      "granular_settings_bytes": 224,
+      "base": "0x807d230",
+      "granular_settings_version": 4,
+      "granular_read_versions": [
+        2,
+        3,
+        4
+      ],
+      "navigation_bytes": 8,
+      "track_editor_settings": true
+    },
+    "sdyield": {
+      "block": "0x2004f064",
+      "after_ms": 2,
+      "labels": {
+        "c_sdy": "0x807eba0"
+      },
+      "base": "0x807eba0"
+    },
+    "unused_code_trim": {
+      "policy": "preserve exposed adapters; discard unreachable helpers",
+      "reference": "A0204",
+      "recovered_bytes": 1328
+    }
+  }
+}

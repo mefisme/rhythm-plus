@@ -17,7 +17,7 @@ FRAMES,STATE,OUTPUT=64,0x3a200,0x60000
 CAPTURE_COUNTS=0x65000
 
 
-def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host_mailbox=False):
+def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host_mailbox=False,settings=None):
     enabled=set(enabled);snapshot=controls(start=32,length=48)
     segs,meta=P.code(bounded=bounded,host_mailbox=host_mailbox);memory=[('x',0x3a,[32]),('y',STATE,[0,OUTPUT])]
     bus=[0x210000+i for i in range(512)];memory += [('y',G.TRK_BUF,bus)]
@@ -36,6 +36,8 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
     for track in range(8):
         values=[0]*256
         for name,value in {**G.DEFAULTS,'trk':track+1,'gate':0,'size':35,'dens':55,'scan':48,'pos':42}.items():values[G.NAMES.index(name)]=value
+        if settings:
+            for name,value in settings.items():values[name if isinstance(name,int) else G.NAMES.index(name)]=value
         values[G.P_KEY]=G.KEY
         if rebalance:values[G.P_DENS]=127
         sample=5+track;page=0x40+track*4

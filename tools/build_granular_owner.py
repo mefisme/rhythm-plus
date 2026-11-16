@@ -18,7 +18,7 @@ def elf(path,origin=ORIGIN):
     for _,kind,flags,address,offset,size,link,info,align,entry in sections:
         if flags&2 and size:
             assert kind!=8,'unexpected global BSS'
-            assert origin<=address<address+size<=min(origin+0x3f00,0x08080000)
+            assert origin<=address<address+size<=min(origin+0x4800,0x08080000)
             chunks.append((address,data[offset:offset+size]))
         if kind==2:
             strings=sections[link];table=data[strings[4]:strings[4]+strings[5]]
@@ -31,13 +31,14 @@ def elf(path,origin=ORIGIN):
     return bytes(code),labels
 
 
-def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,storage_address=0,held_address=0,menu_pulse=False,view_colors=False,remember_views=False,reverse_cycle=False,editor_settings=False,menu_address=0):
+def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,storage_address=0,held_address=0,menu_pulse=False,view_colors=False,remember_views=False,reverse_cycle=False,editor_settings=False,menu_address=0,trim_unused=False,fine_controls=False,fine_all=False,no_burst=False,turn_bar=False,dark_spare=False,easy_zones=False,stock_bar=False,zone_pads=False,full_freeze=False,shift_tap=False,sticky_assign=False):
     assert 0x08010000<=origin<=0x0807f000 and origin%4==0
     assert 26<=page_pad<=31
     source=ROOT/'modules/granular_owner.c'
     work=ROOT/(('buildtmp/granular-owner' if origin==ORIGIN else f'buildtmp/granular-owner-{origin:08x}')+('-pages' if pages else '')+f'-pad{page_pad}-assign{int(assign)}')
     work.mkdir(parents=True,exist_ok=True)
-    digest=hashlib.sha256(source.read_bytes()+b'zig0.13-thumb-m7-Oz-v3'+struct.pack('<13I',origin,pages,page_pad,assign,state_address,storage_address,held_address,menu_pulse,view_colors,remember_views,reverse_cycle,editor_settings,menu_address)).hexdigest()
+    policy=(b'trim-standalone-v1' if trim_unused else b'')+(b'fine-v1' if fine_controls else b'')+(b'fine-all-v1' if fine_all else b'')+(b'no-burst-v1' if no_burst else b'')+(b'turn-bar-v1' if turn_bar else b'')+(b'dark-spare-v1' if dark_spare else b'')+(b'easy-zones-v1' if easy_zones else b'')+(b'stock-bar-v1' if stock_bar else b'')+(b'zone-pads-v1' if zone_pads else b'')+(b'full-freeze-v1' if full_freeze else b'')+(b'shift-tap-v1' if shift_tap else b'')+(b'sticky-assign-v1' if sticky_assign else b'')
+    digest=hashlib.sha256(source.read_bytes()+b'zig0.13-thumb-m7-Oz-v3'+struct.pack('<13I',origin,pages,page_pad,assign,state_address,storage_address,held_address,menu_pulse,view_colors,remember_views,reverse_cycle,editor_settings,menu_address)+policy).hexdigest()
     metadata=work/'kernel.json'
     if metadata.exists():
         cached=json.loads(metadata.read_text())
@@ -45,6 +46,13 @@ def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,sto
     script=work/'kernel.ld'
     obsolete={'c_gr_'+n for n in ('project_save','project_load','levels_save','levels_load','shift_save','shift_load','runtime_store')}
     roots=set(re.findall(r'\b(c_gr_\w+)\([^;{}]*\)\s*\{',source.read_text()))-obsolete
+    if trim_unused:
+        assert editor_settings
+        # These are standalone test/inspection entry points or duplicate
+        # callable copies of already-inlined helpers. Real C references still
+        # retain any needed function. Historical/standalone builds keep them.
+        roots-={'c_gr_'+name for name in ('owner_size','owner_epoch','owner_mode','owner_flags',
+            'owner_set_flags','params_word','ui_size','ui_pad','runtime_size')}
     sections=(' '.join('KEEP(*(.text.'+name+'))' for name in sorted(roots))+' *(.text*) *(.rodata*)') if editor_settings else 'KEEP(*(.text*)) KEEP(*(.rodata*))'
     script.write_text(f'SECTIONS {{ . = 0x{origin:x}; .text : {{ {sections} }} /DISCARD/ : {{ *(.ARM.exidx*) *(.ARM.extab*) *(.comment*) *(.note*) }} }}')
     zig=Path(os.environ.get('RH_ZIG',ROOT/'buildtmp/zig-toolchain/ziglang/zig.exe'))
@@ -57,6 +65,24 @@ def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,sto
         # The companion-only build never calls the retired project-tail codec.
         # Retain every other public entry for adapters and ARM regression tests.
         args+=['-DG_EDITOR_SETTINGS=1','-DG_MENU='+str(menu_address),'-ffunction-sections','-fdata-sections','-Wl,--gc-sections']
+    if fine_controls:args+=['-DG_FINE_CONTROLS=1']
+    if fine_all:
+        assert fine_controls;args+=['-DG_FINE_ALL=1']
+    if no_burst:args+=['-DG_NO_BURST=1']
+    if turn_bar:
+        assert editor_settings;args+=['-DG_TURN_BAR=1']
+    if dark_spare:
+        assert no_burst;args+=['-DG_DARK_SPARE=1']
+    if easy_zones:
+        assert no_burst;args+=['-DG_EASY_ZONES=1']
+    if stock_bar:args+=['-DG_STOCK_BAR=1']
+    if zone_pads:
+        assert easy_zones and stock_bar;args+=['-DG_ZONE_PADS=1']
+    if full_freeze:args+=['-DG_FULL_FREEZE=1']
+    if shift_tap:
+        assert editor_settings and not reverse_cycle;args+=['-DG_SHIFT_TAP=1']
+    if sticky_assign:
+        assert assign and pages and not shift_tap;args+=['-DG_STICKY_ASSIGN=1']
     result=subprocess.run(args,env=env,capture_output=True,text=True)
     if result.returncode:raise RuntimeError(result.stdout+result.stderr)
     code,labels=elf(work/'kernel.elf',origin);(work/'kernel.bin').write_bytes(code)

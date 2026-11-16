@@ -41,8 +41,13 @@ if os.environ.get("RH_STORAGESHADOW") == "1":
 if os.environ.get("RH_GRANULAR") == "1" or os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1':
     # Prefix keeps all existing short offsets unchanged; the new adapter uses
     # its own absolute slot pointer. Historical builds leave this disabled.
-    SLOTS = ((("granstore",448),) if os.environ.get('RH_GRANULAR_COMPANION')=='1' else ()) + (("granular",416 if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1' else 316),) + SLOTS
+    fine=os.environ.get('RH_GRANULAR_FINE')=='1'
+    SLOTS = ((("granstore",288 if fine else 448),) if os.environ.get('RH_GRANULAR_COMPANION')=='1' else ()) + (("granular",480 if fine else 416 if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1' else 316),) + SLOTS
 # Volatile automation proof has a private enable word, initialized by c_rst.
+if os.environ.get('RH_DSPZIP') == '1':
+    # Prefix preserves every pre-existing absolute slot and SD DMA alignment.
+    # 240-byte circular history doubles as the SPI staging buffer; no ITCM use.
+    SLOTS = (("dspzip", 288),) + SLOTS
 if os.environ.get("RH_AUTOPROT") == "1":
     SLOTS += (("autoprot", 4),)
 if os.environ.get("RH_AUTOBANK") == "1":

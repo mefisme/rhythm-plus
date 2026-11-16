@@ -31,6 +31,8 @@ os.environ["RH_SMSWITCH"] = "1" if "smswitch" in MAN["report"] else "0"
 os.environ["RH_PROJECTPROBE"] = "1" if "projectprobe" in MAN["report"] else "0"
 os.environ["RH_STORAGESHADOW"] = "1" if "storageshadow" in MAN["report"] else "0"
 os.environ["RH_MUTSET"] = ("11" if MAN["report"]["mutset"].get("shmut") else "10" if MAN["report"]["mutset"].get("clrpage") else "9" if MAN["report"]["mutset"].get("shtrkled") else "8" if MAN["report"]["mutset"].get("shtrk") else "7" if MAN["report"]["mutset"].get("bounce") else "4" if MAN["report"]["mutset"].get("pending") else "3" if MAN["report"]["mutset"].get("seeds") else "2" if MAN["report"]["mutset"].get("mutate") else "1") if "mutset" in MAN["report"] else "0"
+import layout_env  # noqa: E402
+layout_env.granular(MAN["report"])
 import ourram  # noqa: E402,F401
 import countin as C  # noqa: E402
 import rhstate  # noqa: E402

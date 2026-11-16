@@ -34,7 +34,11 @@ def main():
             E.check(f'LED dim {dim}: available pad stays dimmer than reset',0<rgb[31]<red,(hex(rgb[31]),hex(red)))
         else:
             E.led(uc,head)
-            E.check(f'LED dim {dim}: no Clear All: pad 32 dark with Clear held',E.out(uc,outfn)[31]==0,hex(E.out(uc,outfn)[31]))
+            if 'c_gr_clear_views' in E.MAN['report'].get('granular',{}).get('arm_kernel',{}).get('labels',{}):
+                cue=E.scl(E.u32(uc,E.T.COLOURS+4*0x54),E.dim_mul(uc)-1)
+                E.check(f'LED dim {dim}: Granular reset cue shows on the Granular pad',E.out(uc,outfn)[E.GP]==cue)
+            else:
+                E.check(f'LED dim {dim}: no Clear All: pad 32 dark with Clear held',E.out(uc,outfn)[31]==0,hex(E.out(uc,outfn)[31]))
         E.pad(uc,25);E.unpad(uc,25);E.led(uc,head)
         E.check(f'LED dim {dim}: per-page flash matches held Clear red',E.out(uc,outfn)[25]==red)
         E.press(uc,t);E.release(uc,t)

@@ -15,12 +15,9 @@ import rh_fw  # noqa: E402
 # (name, kind, folder, Spanish, English); the first one is picked when the page opens.
 # Keep descriptions short: included features and key fixes; controls belong in the manual.
 BUILDS = (
-    ("A0120", "stable", HERE / "firmware" / "a0120",
-     "Pattern Mutate y el Track Parameter Editor con las páginas Filter, Mix, Pitch y FX. Probada en el aparato.",
-     "Pattern Mutate and the Track Parameter Editor with the Filter, Mix, Pitch and FX pages. Tested on the unit."),
-    ("A0201", "test", HERE / "firmware" / "a0201",
-     "Ajustes por pista: edición con toques/deslizamiento, centro con dos dedos y selección silenciosa. Conserva Granular.",
-     "Track settings: value-bar tap/slide editing, two-finger center and silent step selection. Retains Granular."),
+    ("A0213", "stable", HERE / "firmware" / "a0213",
+     "Granular con ajuste fino, Freeze y Slice hasta 32 porciones; Pattern y Step Mutate; ajustes guardados en la tarjeta SD. Probada en el aparato.",
+     "Granular with fine adjust, Freeze and Slice up to 32 slices; Pattern and Step Mutate; settings saved on the SD card. Tested on the unit."),
 )
 TEMPLATE = HERE / "tools" / "uploader_template.html"
 OUT = HERE / "tools" / "uploader.html"

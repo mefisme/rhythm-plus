@@ -5,6 +5,7 @@ Per-grain binding keeps old regions with old grains; native ratio is used withou
 rounding to semitones. A tighter copy bound supports stock pitch extremes in the existing256-word scratch.
 Native reverse is mapped through the region; sub8-sample regions remain rejected.
 """
+import os
 import granular0 as G
 import granular_source_binding as binding
 
@@ -187,6 +188,41 @@ def slice_start(result):
         ('label','stock_slice_whole'),'move y0,b',('label','stock_slice_off')]
 
 
+def slice_scatter(result):
+    # Slice mode: Position scatter moves whole slices and wraps, instead of moving the
+    # start inside a slice. V_SPR still holds the scatter offset (up to +-L/2) here.
+    head=result.index(('label','stock_slice_whole'))
+    start=result.index('move b1,x1',result.index(('jcc','eq','stock_slice_whole')))
+    V=lambda f:f'x:(r7+${f:x})'
+    result[start:head]=['move b1,x1',
+        # The slice the playhead is in, without scatter.
+        f'move {V(G.V_PH)},a',f'move {V(G.V_ZS)},x0','add x0,a','tst a',('jcc','ge','stock_ss_b0'),'clr a',('label','stock_ss_b0'),
+        'move a1,y0','clr a','move y0,a0','move x1,x0',('jsr','g_udiv'),'move a0,b',
+        'move y1,a','sub #>$1,a','move a1,x0','cmp x0,b','tgt x0,b',
+        'move x:(r6+$d),a','asr #19,a,a','and #>$f,a','move a1,x0','add x0,b',
+        # Scatter in whole slices, signed.
+        f'move {V(G.V_SPR)},a','tst a',('jcc','ge','stock_ss_pos'),
+        'neg a','move a1,y0','clr a','move y0,a0','move x1,x0',('jsr','g_udiv'),'move a0,x0','sub x0,b',('jmp','stock_ss_wrap'),
+        ('label','stock_ss_pos'),'move a1,y0','clr a','move y0,a0','move x1,x0',('jsr','g_udiv'),'move a0,x0','add x0,b',
+        # Wrap into 0..n-1; b is inside (-n, 3n).
+        ('label','stock_ss_wrap'),'move y1,x0','tst b',('jcc','ge','stock_ss_w1'),'add x0,b',('label','stock_ss_w1'),
+        'cmp x0,b',('jcc','lt','stock_ss_w2'),'sub x0,b',('label','stock_ss_w2'),
+        'cmp x0,b',('jcc','lt','stock_ss_w3'),'sub x0,b',('label','stock_ss_w3'),
+        'move b1,x0','mpy x0,x1,a','asr a','move a0,b',
+        f'move {V(G.V_L)},a','sub #>$4,a',f'move {V(G.V_SPAN)},x0','sub x0,a','move a1,x0','cmp x0,b','tgt x0,b',
+        ('jmp','stock_slice_off')]
+
+
+def slice_word7(result):
+    # Up to 32 slices: slices - 1 in word 7 bits 8..12, slice step in bits 13..17 (above the 7-bit zone).
+    head=result.index('asr #15,a,a',result.index(('label','g_sc1')))
+    assert result[head-1:head+2]==['move x:(r6+$d),a','asr #15,a,a','and #>$f,a']
+    result[head-1:head+2]=['move x:(r6+$7),a','asr #8,a,a','and #>$1f,a']
+    step=result.index('asr #19,a,a',head)
+    assert result[step-1:step+2]==['move x:(r6+$d),a','asr #19,a,a','and #>$f,a']
+    result[step-1:step+2]=['move x:(r6+$7),a','asr #13,a,a','and #>$1f,a']
+
+
 def burst(result):
     # A new voice plays its first grain again, BURST_LEFT grains in all, before the usual grains go on.
     # Each gap is the last one x (1 + (64 - Speed) / 128), from the grain interval.
@@ -236,6 +272,37 @@ def burst(result):
                ('label','stock_burst_root'),('words',[round(((k+1)/32)**.5*0x7fffff) for k in range(32)])]
 
 
+def fine(result,tab_at):
+    # Position 0..2047 and Scan -1024..1023 in sixteenths of a knob step;
+    # Size arrives as the grain length in samples, interpolated on the ARM.
+    at=result.index(f'move x:(r6+${G.P_POS:x}),a')
+    assert result[at+1]=='and #>$7f,a'
+    result[at+1]='and #>$7ff,a'
+    end=result.index('asr #7,a,a',at)
+    assert end-at==5,result[at:end+1]
+    result[end]='asr #11,a,a'
+    at=result.index(f'move x:(r6+${G.P_SCAN:x}),x0')
+    end=result.index('asl #18,a,a',at)
+    assert end-at==6,result[at:end+1]
+    result[end]='asl #10,a,a'
+    at=result.index(f'move x:(r6+${G.P_SIZE:x}),a')
+    assert result[at+1:at+6]==['and #>$7f,a',f'add #>${tab_at["SIZE_T"]:x},a','move a1,r0','nop','move p:(r0),x0']
+    result[at:at+6]=[f'move x:(r6+${G.P_SIZE:x}),x0']
+
+
+def fine_all(result):
+    # Density 0..1600 (sixteenths of the 0..100 word): squared, so shift 8 more.
+    at=result.index(f'move x:(r6+${G.P_DENS:x}),x0',result.index(('label','g_von')))
+    end=result.index('asr #18,a,a',at)
+    assert end-at==7,result[at:end+1]
+    result[end]='asr #26,a,a'
+    # Position and pitch scatter 0..2047: the same Q23 fraction from 11 bits.
+    for name,register in ((G.P_SPR,'a'),(G.P_PSPR,'b')):
+        at=result.index(f'move x:(r6+${name:x}),{register}')
+        assert result[at+1:at+3]==[f'and #>$7f,{register}',f'asl #16,{register},{register}'],result[at:at+3]
+        result[at+1:at+3]=[f'and #>$7ff,{register}',f'asl #12,{register},{register}']
+
+
 def pitch_sets():
     # Semitones -12..12 snapped to the nearest tone of each set, in all octaves.
     words=[]
@@ -254,7 +321,11 @@ def items(source,latched_source=False,raw_output=None,grain_cap=None,tab_at=None
     motion(result)
     lock(result)
     slice_start(result)
-    burst(result)
+    if os.environ.get('RH_GRANULAR_SLICE_SCATTER')=='1':slice_scatter(result)
+    if os.environ.get('RH_GRANULAR_SLICE_WORD7')=='1':slice_word7(result)
+    if os.environ.get('RH_GRANULAR_NOBURST')!='1':burst(result)
+    if os.environ.get('RH_GRANULAR_FINE')=='1':fine(result,tab_at)
+    if os.environ.get('RH_GRANULAR_FINE_ALL')=='1':fine_all(result)
     # Convert the 12-word grain offset to a slot index. The rounded-up Q23
     # reciprocal gives the exact quotient for all 16 valid offsets.
     ratio_address=['move r2,x0',f'move #>${G.GR0:x},a','neg a','add x0,a',

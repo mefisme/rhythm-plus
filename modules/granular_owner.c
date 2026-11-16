@@ -9,6 +9,42 @@
 #ifndef G_EDITOR_SETTINGS
 #define G_EDITOR_SETTINGS 0
 #endif
+#ifndef G_FINE_CONTROLS
+#define G_FINE_CONTROLS 0
+#endif
+#ifndef G_FINE_ALL
+#define G_FINE_ALL 0
+#endif
+#ifndef G_NO_BURST
+#define G_NO_BURST 0
+#endif
+#ifndef G_TURN_BAR
+#define G_TURN_BAR 0
+#endif
+#ifndef G_DARK_SPARE
+#define G_DARK_SPARE 0
+#endif
+#ifndef G_EASY_ZONES
+#define G_EASY_ZONES 0
+#endif
+#ifndef G_STOCK_BAR
+#define G_STOCK_BAR 0
+#endif
+#ifndef G_ZONE_PADS
+#define G_ZONE_PADS 0
+#endif
+#ifndef G_FULL_FREEZE
+#define G_FULL_FREEZE 0
+#endif
+#ifndef G_SHIFT_TAP
+#define G_SHIFT_TAP 0
+#endif
+#ifndef G_STICKY_ASSIGN
+#define G_STICKY_ASSIGN 0
+#endif
+/* ui.reserved: 1 latched, 2 opened by Shift, 4 Stock's settings, 8 Down held
+ * in settings, 16 a Shift press closed a latched menu (quiet until release). */
+enum { G_UI_DOWN=8,G_UI_QUIET=16 };
 
 enum { G_OFF=0,G_TRIGGERED=1,G_TEXTURE=2,G_QUIET=1,G_REPLACE=2,G_HELD=3,G_PASSHELD=5 };
 enum { G_STOP=1,G_INVALIDATE=2,G_APPLY=4,G_START=8 };
@@ -252,11 +288,25 @@ uint32_t c_gr_levels_load(const uint8_t *tail,uint8_t *levels) {
 }
 enum { GR_SHIFT_OFFSET=436,GR_SHIFT_BYTES=72,G_SHIFT_COUNT=7,G_SHIFT_TIMING=1,G_SHIFT_SLICE=3,G_SHIFT_LOCK=4,G_SHIFT_BURST=5,G_SHIFT_SPEED=6,G_TIMING_MIDDLE=64,G_BURST_FADE=16,G_BURST_PITCH=32 };
 /* Shift knob k keeps its value in shift[k-1]. */
-static uint32_t gr_shift_live(uint32_t knob) { return knob<=G_SHIFT_SPEED+1; }
+/* Assignable controls: 8 primary + live secondary. */
+enum { G_DESTS=G_NO_BURST?14:16 };
+static uint32_t gr_shift_live(uint32_t knob) { return knob<=(G_NO_BURST?G_SHIFT_LOCK:G_SHIFT_SPEED)+1; }
 /* Shift K3 Timing and K8 Burst Speed read from the middle. */
 static uint32_t gr_shift_centred(uint32_t knob) { return knob==G_SHIFT_TIMING+1 || knob==G_SHIFT_SPEED+1; }
 /* Slice and Burst: 0..7 off, then 2..16, eight values a step. */
+#if G_ZONE_PADS
+/* Slice: 0..7 off, 8..15 two slices (pad 17); then one zone per pad 18..24: 3, 4, 6, 8, 12, 16, 32. */
+static uint32_t gr_count(uint32_t value) { return value<16?(value<8?0:2):(const uint8_t[]){3,4,6,8,12,16,32}[(value>>4)-1]; }
+static uint32_t gr_lock_amount(uint32_t value) { return value<43?0:value<85?96:127; }
+#elif G_EASY_ZONES
+/* Slice: one zone per value-bar pad (16 knob steps each): off, 2, 3, 4, 6, 8, 12, 16 slices. */
+static uint32_t gr_count(uint32_t value) { return (const uint8_t[]){0,2,3,4,6,8,12,16}[value>>4&7]; }
+/* Lock: thirds of the knob. Off; loose (a grain's seed changes with chance 31/128); locked. */
+static uint32_t gr_lock_amount(uint32_t value) { return value<43?0:value<85?96:127; }
+#else
 static uint32_t gr_count(uint32_t value) { return value<8?0:2+(value-8)/8; }
+#define gr_lock_amount(value) (value)
+#endif
 /* After the Level record: 'GS', version, count, 7 Shift values and 1 setting per track, CRC32.
  * Setting: bit 0 Bounce, bits 1..3 Pitch Set 0..4, bit 4 Burst fade, bits 5..6 Burst pitch 0 off, 1 up, 2 down. */
 static uint32_t gr_setting_ok(uint32_t setting) { return ((setting>>1)&7)<=4 && setting>>5<=2; }
@@ -341,9 +391,19 @@ typedef struct {
     uint8_t lanes[8][8],assignment[8];
     uint16_t recording_leds[8];
 #endif
+#if G_FINE_CONTROLS
+    uint8_t fine[8][8];
+#endif
 } GRuntime;
+#if G_FINE_CONTROLS
+/* Fine applies to primary Position, Size and Scan; G_FINE_ALL adds Density and both scatters.
+ * Each holds 0..15 sixteenths of one knob step; the knob value stays the 7-bit coarse part. */
+enum { G_FINE_KNOBS=G_FINE_ALL?0x3f:0x0b,G_FINE_STEPS=16 };
+_Static_assert(sizeof(GRuntime)<=468,"readiness byte at slot+468");
+#endif
 #if G_LANE_ASSIGN
 static void gr_lane_changed(uint32_t t,uint32_t k);
+void c_gr_lane_clear_page(GRuntime *s,uint32_t t,uint32_t first,uint32_t last);
 #if G_EDITOR_SETTINGS
 static void gr_editor_value(GRuntime *s,uint32_t t,uint32_t k,uint32_t value);
 uint32_t c_gr_lane_inner(uint32_t object,uint32_t id,uint32_t value,uint32_t flag);
@@ -413,6 +473,9 @@ void c_gr_runtime_init(GRuntime *state) {
 #if G_LANE_ASSIGN
     for(uint32_t t=0;t<8;t++) { state->assignment[t]=0;state->recording_leds[t]=0;for(uint32_t k=0;k<8;k++)state->lanes[t][k]=0; }
 #endif
+#if G_FINE_CONTROLS
+    for(uint32_t i=0;i<64;i++)((uint8_t *)state->fine)[i]=0;
+#endif
     state->tick=state->bpm=0;
     state->tail_at=state->started_at=0;state->playing=state->tail=state->scan=0;
 #if G_KNOB_PAGES
@@ -434,10 +497,19 @@ uint32_t c_gr_level_word(uint32_t level) {
 /* Sequencer ticks (24 a beat) a step, slow to fast, eight knob values each. */
 static const uint8_t gr_step_ticks[8]={48,24,16,12,8,6,4,3};
 /* Timing: 63..65 is off. Above, ticks per grain. */
+#if G_EASY_ZONES
+/* Timing: 63..65 is off. Above, quarter ticks per grain: 1, 2/3, 1/2, 1/3, 1/4, 1/6, 1/8, 1/12 step. */
+static const uint8_t gr_timing_quarters[8]={24,16,12,8,6,4,3,2};
+static uint32_t gr_timing_ticks(const GRuntime *state,uint32_t track) {
+    int32_t step=(int32_t)state->shift[track][G_SHIFT_TIMING]-66;
+    return step<0?0:gr_timing_quarters[step/8];
+}
+#else
 static uint32_t gr_timing_ticks(const GRuntime *state,uint32_t track) {
     int32_t step=(int32_t)state->shift[track][G_SHIFT_TIMING]-66;
     return step<0?0:gr_step_ticks[step/8];
 }
+#endif
 /* With Slice on, Scan steps one slice per this many ticks: 63..65 stops, right forward, left backward. */
 static uint32_t gr_slice_ticks(const GRuntime *state,uint32_t track) {
     uint32_t scan=state->parameters.knob[track][3];
@@ -455,16 +527,40 @@ static uint32_t gr_slice_step(const GRuntime *state,uint32_t track) {
 static uint32_t gr_timing_interval(const GRuntime *state,uint32_t track) {
     uint32_t value=state->shift[track][G_SHIFT_TIMING];
     if(value<63) return (24000*(20-(63-value)%10)/20)>>((63-value)/10);
+#if G_EASY_ZONES
+    return 30000*gr_timing_ticks(state,track)/(state->bpm?state->bpm:120);
+#else
     return 120000*gr_timing_ticks(state,track)/(state->bpm?state->bpm:120);
+#endif
 }
 /* Chance per Timing step, 8..128 of 128; follows Density. */
 static uint32_t gr_timing_chance(const GRuntime *state,uint32_t track) {
     uint32_t density=c_gr_params_word(&state->parameters,track,2);
     return 8+density*(200-density)*120/10000;
 }
+#if G_FINE_CONTROLS
+/* Grain length in samples for each Size step: 240 x 100^(v/127), 5..500 ms. */
+static const uint16_t gr_size_samples[128]={240,249,258,268,277,288,298,309,321,333,345,358,371,385,399,413,429,445,461,478,496,514,533,553,573,594,616,639,662,687,712,739,766,794,823,854,885,918,952,987,1024,1061,1101,1141,1183,1227,1272,1319,1368,1419,1471,1525,1582,1640,1701,1763,1829,1896,1966,2039,2114,2192,2273,2357,2444,2534,2628,2725,2825,2930,3038,3150,3266,3387,3512,3642,3776,3916,4060,4210,4366,4527,4694,4867,5047,5234,5427,5627,5835,6050,6274,6506,6746,6995,7253,7521,7799,8087,8385,8695,9016,9349,9694,10052,10423,10808,11207,11621,12050,12495,12957,13435,13931,14446,14979,15532,16106,16701,17317,17957,18620,19307,20020,20760,21526,22321,23145,24000};
+static uint32_t gr_fine_value(const GRuntime *state,uint32_t track,uint32_t knob) {
+    return state->parameters.knob[track][knob]*G_FINE_STEPS+state->fine[track][knob];
+}
+static uint32_t gr_native_shift(void) {
+    uint32_t store=*(volatile uint32_t *)(0x200487c8+0x0c);
+    return *(uint8_t *)((void *(*)(uint32_t,uint32_t))0x0803fc59)(store,0)!=0;
+}
+/* Shift + turn on a primary fine knob: manual only, never recorded (as stock fine Start/Length). */
+static uint32_t gr_fine_turn(const GRuntime *state,uint32_t track,uint32_t knob) {
+    return knob<8 && (G_FINE_KNOBS>>knob&1) && !(state->reserved>>track&1) && gr_native_shift();
+}
+#endif
 static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
     static const uint8_t indices[16]={255,255,255,1,0,2,3,255,255,5,6,4,7,255,255,255};
+#if G_FULL_FREEZE
+    /* Freeze: the playhead stops; Lock below holds every random choice, scatter included. */
+    if(field==6 && (state->config[track]&64)) return 0;
+#else
     if((field==6 || field==11) && (state->config[track]&64)) return 0;
+#endif
     if(field==6 && gr_count(state->shift[track][G_SHIFT_SLICE])) return 0;
     if(field==1) return gr_timing_interval(state,track)|((uint32_t)state->sync[track]<<18);
     if(field==8) return state->shift[track][0]|((uint32_t)state->shift[track][2]<<8)|(gr_timing_chance(state,track)<<16);
@@ -473,12 +569,43 @@ static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
     if(field==13) return ((state->config[track]>>3)&1)|((state->config[track]>>5)&2)|(state->owner.track[track].mode==G_TRIGGERED)
                          |(state->owner.track[track].mode==G_TEXTURE && !((state->playing>>track)&1))|(((uint32_t)state->tail>>track&1)<<3)
                          |((state->setting[track]&1u)<<4)|((uint32_t)(state->setting[track]>>1&7)<<5)
-                         |((uint32_t)state->shift[track][G_SHIFT_LOCK]<<8)|(gr_count(state->shift[track][G_SHIFT_SLICE])?gr_count(state->shift[track][G_SHIFT_SLICE])-1:0)<<15
-                         |gr_slice_step(state,track)<<19;
+                         |((uint32_t)(G_FULL_FREEZE && (state->config[track]&64)?127:gr_lock_amount(state->shift[track][G_SHIFT_LOCK]))<<8)
+#if !G_ZONE_PADS
+                         |(gr_count(state->shift[track][G_SHIFT_SLICE])?gr_count(state->shift[track][G_SHIFT_SLICE])-1:0)<<15
+                         |gr_slice_step(state,track)<<19
+#endif
+                         ;
     if(field==14) return c_gr_level_word(state->level[track]);
+#if G_FINE_ALL
+    if(indices[field]<8 && (G_FINE_KNOBS>>indices[field]&1)) {
+        uint32_t knob=indices[field],step=state->parameters.knob[track][knob],part=state->fine[track][knob];
+        uint32_t value=step*G_FINE_STEPS+part;
+        if(knob==3) return (value-64*G_FINE_STEPS)&0xffffff;
+        if(knob==1) return step>=127?gr_size_samples[127]:gr_size_samples[step]+(gr_size_samples[step+1]-gr_size_samples[step])*part/G_FINE_STEPS;
+        if(knob==2) {
+            uint32_t low=(step*100+63)/127,high=step>=127?low:((step+1)*100+63)/127;
+            return low*G_FINE_STEPS+(high-low)*part;
+        }
+        return value;
+    }
+#elif G_FINE_CONTROLS
+    if(field==3 || field==4 || field==6) {
+        uint32_t knob=indices[field],value=gr_fine_value(state,track,knob);
+        if(field==4) return value;
+        if(field==6) return (value-64*G_FINE_STEPS)&0xffffff;
+        uint32_t step=value/G_FINE_STEPS,part=value%G_FINE_STEPS;
+        if(step>=127) return gr_size_samples[127];
+        return gr_size_samples[step]+(gr_size_samples[step+1]-gr_size_samples[step])*part/G_FINE_STEPS;
+    }
+#endif
     if(indices[field]!=255) return c_gr_params_word(&state->parameters,track,indices[field]);
     if(field==0) return track+1;
     // Zone 127; bits 8..11 Burst grains - 1 (0 off), bits 12..18 Burst Speed, bit 19 fade, bits 20..21 pitch.
+#if G_ZONE_PADS
+    /* Zone 127; bits 8..12 slices - 1 (0 off), bits 13..17 slice step. */
+    if(field==7) { uint32_t n=gr_count(state->shift[track][G_SHIFT_SLICE]);return 127|(n?n-1:0)<<8|gr_slice_step(state,track)<<13; }
+#endif
+    if(G_NO_BURST && field==7) return 127;
     if(field==7) { uint32_t grains=gr_count(state->shift[track][G_SHIFT_BURST]),setting=state->setting[track];
         return 127|(grains?grains-1:0)<<8|(uint32_t)state->shift[track][G_SHIFT_SPEED]<<12|(setting>>4&1)<<19|(setting>>5)<<20; }
     if(field==15) return 0x6a7a4b;
@@ -535,8 +662,8 @@ uint32_t c_gr_runtime_ui_pad(GRuntime *state,uint32_t track,uint32_t pad) {
     else if(pad==20) { config^=64;state->dirty|=1u<<track; }
     else if(pad==21) { uint32_t set=state->setting[track];
         state->setting[track]=(uint8_t)((set&~14u)|((set>>1&7)>=4?0:(set&14)+2));state->dirty|=1u<<track; }
-    else if(pad==22) { state->setting[track]^=G_BURST_FADE;state->dirty|=1u<<track; }
-    else if(pad==23) { uint32_t set=state->setting[track];
+    else if(pad==22 && !G_NO_BURST) { state->setting[track]^=G_BURST_FADE;state->dirty|=1u<<track; }
+    else if(pad==23 && !G_NO_BURST) { uint32_t set=state->setting[track];
         state->setting[track]=(uint8_t)((set&31)|((set>>5>=2?0:set+G_BURST_PITCH)&96));state->dirty|=1u<<track; }
     else return G_UI_TAKEN;
     state->config[track]=(uint8_t)config;
@@ -566,11 +693,16 @@ static void gr_tempo_frame(GRuntime *state) {
     state->tick=tick;
     for(uint32_t track=0;track<8;track++) {
         if(state->owner.track[track].mode==G_OFF) continue;
-        if((sliced&(1u<<track)) && !(tick%gr_slice_ticks(state,track))) gr_write(GR_POOL+256*track+13,gr_field(state,track,13));
+        if((sliced&(1u<<track)) && !(G_FULL_FREEZE && (state->config[track]&64)) && !(tick%gr_slice_ticks(state,track))) gr_write(GR_POOL+256*track+(G_ZONE_PADS?7:13),gr_field(state,track,G_ZONE_PADS?7:13));
         if(!(locked&(1u<<track))) continue;
+#if G_EASY_ZONES
+        /* Every zone fits a whole number of grains in a beat (24 ticks). */
+        if(tick%24) continue;
+#else
         uint32_t ticks=gr_timing_ticks(state,track),period=ticks;
         while(period<24) period+=ticks;
         if(tick%period) continue;
+#endif
         state->sync[track]=(state->sync[track]+1)&63;
         gr_write(GR_POOL+256*track+1,gr_field(state,track,1));
     }
@@ -648,7 +780,12 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
         }
     // One track a frame: a voice that ended while playing starts again on the next frame.
     if(state->playing && (uint32_t)(now-state->started_at)>=G_START_SETTLE_MS) {
+#if G_SHIFT_TAP
+        state->scan=(uint8_t)((state->scan&~7u)|((state->scan+1)&7));
+        uint32_t track=state->scan&7;
+#else
         uint32_t track=state->scan=(state->scan+1)&7;
+#endif
         const GTrack *owner=&state->owner.track[track];
         if((state->playing&(1u<<track)) && (state->running&(1u<<track)) &&
            c_gr_shared_read(GR_SNAPSHOT+8*track)==0x674732 && c_gr_shared_read(GR_SNAPSHOT+8*track+1)==owner->epoch)
@@ -722,6 +859,37 @@ uint32_t c_gr_runtime_knob_page(const GRuntime *state,uint32_t track) {
 /* Shift is an entry layer belonging to the active parameter page, never a
  * global granular menu. Effective native Shift includes sticky Shift. The
  * origin bit lets release close Shift entry without undoing pad-held latches. */
+#if G_SHIFT_TAP
+/* A Shift tap (press and release with nothing else) opens or closes the active
+ * view's settings. Shift held is a modifier only. state->scan bits 3..4. */
+enum { G_SHIFT_DOWN=8,G_SHIFT_USED=16,G_SHIFT_BUTTON=27 };
+static uint32_t gr_effective_shift(void) {
+    uint32_t store=*(volatile uint32_t *)(0x200487c8+0x0c);
+    return *(uint8_t *)((void *(*)(uint32_t,uint32_t))0x0803fc59)(store,0)!=0;
+}
+void c_gr_shift_used(GRuntime *state) { if(state->scan&G_SHIFT_DOWN)state->scan|=G_SHIFT_USED; }
+void c_gr_runtime_shift_layer(GRuntime *state,uint32_t track) {
+    uint32_t held=*(volatile uint32_t *)(0x200487c8+0xa0);
+    if(track>=8) { state->scan&=7;return; }
+    /* Another track closes open settings and leaves their assignments. */
+    if(state->ui.shown && state->ui.track<8 && state->ui.track!=track) { state->assignment[state->ui.track]&=15;c_gr_ui_release(&state->ui); }
+    if(held>>G_SHIFT_BUTTON&1) {
+        if(!(state->scan&G_SHIFT_DOWN))state->scan=(uint8_t)((state->scan&7)|G_SHIFT_DOWN);
+        else if(held&0xffffff00u&~(1u<<G_SHIFT_BUTTON))state->scan|=G_SHIFT_USED;
+        return;
+    }
+    if(!(state->scan&G_SHIFT_DOWN)) return;
+    uint32_t tap=!(state->scan&G_SHIFT_USED);
+    state->scan&=7;
+    if(!tap) return;
+    if(state->ui.track<8)state->assignment[state->ui.track]&=15;
+    uint32_t open=state->ui.shown && state->ui.track==track;
+    c_gr_ui_release(&state->ui);
+    if(open) return;
+    state->ui.track=(uint8_t)track;state->ui.shown=1;
+    state->ui.reserved=(uint8_t)(1|(G_EDITOR_SETTINGS && !c_gr_runtime_page(state,track)?4:0));
+}
+#else
 void c_gr_runtime_shift_layer(GRuntime *state,uint32_t track) {
 #if G_LANE_ASSIGN
     uint32_t store=*(volatile uint32_t *)(0x200487c8+0x0c);
@@ -731,6 +899,14 @@ void c_gr_runtime_shift_layer(GRuntime *state,uint32_t track) {
         return;
     }
     if(active) {
+#if G_STICKY_ASSIGN
+        if(state->ui.reserved&G_UI_QUIET) return;
+        if(!(state->ui.reserved&2) && state->ui.shown && (state->ui.reserved&1)) {
+            if(state->ui.track<8)state->assignment[state->ui.track]&=15;
+            c_gr_ui_release(&state->ui);
+            state->ui.track=(uint8_t)track;state->ui.reserved=2|G_UI_QUIET;return;
+        }
+#endif
         if(state->ui.track!=track || (G_EDITOR_SETTINGS && (!!(state->ui.reserved&4)==!!c_gr_runtime_page(state,track)))) { if(state->ui.track<8)state->assignment[state->ui.track]&=15;c_gr_ui_release(&state->ui); }
         state->ui.track=(uint8_t)track;state->ui.shown=1;state->ui.reserved|=2;
         if(G_EDITOR_SETTINGS && !c_gr_runtime_page(state,track))state->ui.reserved|=4;
@@ -742,9 +918,23 @@ void c_gr_runtime_shift_layer(GRuntime *state,uint32_t track) {
     (void)state;(void)track;
 #endif
 }
+#endif
 uint32_t c_gr_runtime_arrow(GRuntime *state,uint32_t track,uint32_t button) {
+#if G_SHIFT_TAP
+    c_gr_shift_used(state);
+#endif
     if(G_EDITOR_SETTINGS && track<8 && !c_gr_runtime_page(state,track) && state->ui.shown)return 1;
     if(!c_gr_runtime_page(state,track) || (button!=19 && button!=20)) return 0;
+#if G_STICKY_ASSIGN
+    if(state->ui.track==track && state->ui.shown && !state->ui.held) {
+        if(state->assignment[track]&128) { if(button==20)state->assignment[track]&=15;return 1; }
+        if(button==19) {
+            state->reserved|=(uint8_t)(1u<<track);
+            state->ui.pressed_at=*(volatile uint32_t *)0x20000820;state->ui.reserved|=G_UI_DOWN;
+        } else state->reserved&=(uint8_t)~(1u<<track);
+        return 1;
+    }
+#endif
 #if G_LANE_ASSIGN
     if(state->ui.track==track && (state->ui.held || state->ui.shown)) {
         state->ui.shown=1;state->ui.reserved|=(state->ui.reserved&2)?2:1;
@@ -759,14 +949,40 @@ uint32_t c_gr_runtime_arrow(GRuntime *state,uint32_t track,uint32_t button) {
     return 1;
 }
 #endif
-#if G_REVERSE_CYCLE
+#if G_SHIFT_TAP
+/* Pad 25: next knob; with Shift held, the previous one. */
 uint32_t c_gr_cycle_next(uint32_t selected,uint32_t count) {
+    return gr_effective_shift()?(selected>1?selected-1:count):(selected<count?selected+1:1);
+}
+/* Granular settings cycle every control on both pages; elsewhere the shown page. */
+void c_gr_cycle_knob(GRuntime *state,uint32_t track) {
+    uint8_t *knob=&((uint8_t *)G_MENU)[8];
+    if(track>=8 || (state->ui.shown && state->ui.track==track && (state->assignment[track]&128))) return;
+    uint32_t granular=c_gr_runtime_page(state,track),page=c_gr_runtime_knob_page(state,track),selected=*knob;
+    if(selected<1 || selected>8) selected=1;
+    if(granular && state->ui.shown && state->ui.track==track) {
+        uint32_t index=c_gr_cycle_next((page?8:0)+selected,G_DESTS);
+        page=index>8;selected=page?index-8:index;
+        if(page)state->reserved|=(uint8_t)(1u<<track);
+        else state->reserved&=(uint8_t)~(1u<<track);
+    } else selected=c_gr_cycle_next(selected,granular && page?G_DESTS-8:8);
+    *knob=(uint8_t)selected;
+}
+#elif G_REVERSE_CYCLE || G_NO_BURST
+uint32_t c_gr_cycle_next(uint32_t selected,uint32_t count) {
+    const GRuntime *state=(const GRuntime *)G_STATE;
+#if G_REVERSE_CYCLE
     uint32_t store=*(volatile uint32_t *)(0x200487c8+0x0c);
     uint32_t shift=*(uint8_t *)((void *(*)(uint32_t,uint32_t))0x0803fc59)(store,0);
     /* Shift is already the access modifier while a settings/assignment page
      * is visible. It must not also reverse that page's knob selector. */
-    const GRuntime *state=(const GRuntime *)G_STATE;
-    if(count==16 || (state->magic==GR_MAGIC && state->ui.shown))shift=0;
+    if(count==G_DESTS || (state->magic==GR_MAGIC && state->ui.shown))shift=0;
+#else
+    const uint32_t shift=0;
+#endif
+    /* In assignments the cycle pad moves the destination only. */
+    if(G_NO_BURST && count!=G_DESTS && state->magic==GR_MAGIC && state->ui.shown &&
+       state->ui.track<8 && (state->assignment[state->ui.track]&128))return selected;
     if(shift)return selected>1?selected-1:count;
     return selected<count?selected+1:1;
 }
@@ -799,10 +1015,10 @@ uint32_t c_gr_runtime_pad(GRuntime *state,uint32_t track,uint32_t pad) {
 #if G_LANE_ASSIGN
     if(c_gr_runtime_page(state,track) && (state->assignment[track]&128) && pad!=G_PAGE_PAD) {
         if(pad==24) {
-#if G_REVERSE_CYCLE
-            state->assignment[track]=128|(c_gr_cycle_next((state->assignment[track]&15)+1,16)-1);
+#if G_REVERSE_CYCLE || G_SHIFT_TAP
+            state->assignment[track]=128|(c_gr_cycle_next((state->assignment[track]&15)+1,G_DESTS)-1);
 #else
-            state->assignment[track]=128|((state->assignment[track]+1)&15);
+            state->assignment[track]=128|(G_NO_BURST?((state->assignment[track]&15)+1)%G_DESTS:(state->assignment[track]+1)&15);
 #endif
         }
         if(pad>=16 && pad<24) {
@@ -850,6 +1066,15 @@ uint32_t c_gr_runtime_release(GRuntime *state,uint32_t pad) {
 void c_gr_runtime_ui_frame(GRuntime *state,uint32_t track,uint32_t eligible) {
     c_gr_ui_tick(&state->ui,track,*(volatile uint32_t *)0x20000820,
                  eligible && (G_EDITOR_SETTINGS || c_gr_runtime_page(state,track)));
+#if G_STICKY_ASSIGN
+    /* Down held for the hold time opens assignments, latched past Shift's release. */
+    if((state->ui.reserved&G_UI_DOWN) && state->ui.shown && state->ui.track==track) {
+        if(!(*(volatile uint32_t *)(0x200487c8+0xa0)>>19&1)) state->ui.reserved&=~G_UI_DOWN;
+        else if((uint32_t)(*(volatile uint32_t *)0x20000820-state->ui.pressed_at)>=G_HOLD_MS) {
+            state->ui.reserved=(uint8_t)((state->ui.reserved&~G_UI_DOWN)|1);state->assignment[track]|=128;
+        }
+    }
+#endif
 #if G_LANE_ASSIGN
     for(uint32_t t=0;t<8;t++)if(!state->ui.shown || !state->ui.reserved || state->ui.track!=t)state->assignment[t]&=15;
 #endif
@@ -861,12 +1086,32 @@ uint32_t c_gr_runtime_turn(GRuntime *state,uint32_t track,uint32_t knob,int32_t 
     state->assignment[track]=(uint8_t)knob;
 #endif
     if(delta>127) delta=127;if(delta< -127) delta=-127;
+#if G_FINE_CONTROLS
+    if(gr_fine_turn(state,track,knob)) {
+        int32_t value=(int32_t)gr_fine_value(state,track,knob)+delta;
+        if(value<0) value=0;if(value>127*G_FINE_STEPS+G_FINE_STEPS-1) value=127*G_FINE_STEPS+G_FINE_STEPS-1;
+        uint8_t part=(uint8_t)(value%G_FINE_STEPS);
+        if(state->fine[track][knob]!=part) { state->fine[track][knob]=part;state->dirty|=1u<<track;state->flags|=GR_DIRTY; }
+        c_gr_runtime_put(state,track,knob,(uint32_t)value/G_FINE_STEPS);return 1;
+    }
+#endif
     int32_t value=(int32_t)c_gr_params_get(&state->parameters,track,knob)+delta;
     if(value<0) value=0;if(value>127) value=127;
     c_gr_runtime_put(state,track,knob,(uint32_t)value);return 1;
 }
 #define G_PAGE_RGB 0x9eff59u
 static uint32_t gr_rgb(uint32_t rgb,uint32_t level);
+static uint32_t gr_brightness(uint32_t rgb);
+static uint32_t gr_dim_factor(void) {
+    uint32_t store=*(volatile uint32_t *)(0x200487c8+0x88);
+    uint32_t dim=*(uint32_t *)((void *(*)(uint32_t,uint32_t))0x0803fc59)(store,2);
+    return (dim&1024)?141:256;
+}
+static uint32_t gr_palette(uint32_t slot) {
+    uint32_t rgb=((uint32_t *)0x20003974)[slot],factor=gr_dim_factor(),result=0;
+    for(uint32_t shift=0;shift<24;shift+=8)result|=(((rgb>>shift&255)*factor)>>8)<<shift;
+    return result;
+}
 enum { G_CLEAR_CLICKS=40,G_CLEAR_RIGHT=0x0e,G_CLEAR_LEFT=0x55 };
 /* counters[0..7] count right turns, counters[8..15] left. Returns 1 when a right
  * turn reaches the stop. The menu zeroes the counters when Clear is released. */
@@ -879,13 +1124,17 @@ uint32_t c_gr_clear_step(uint8_t *counters,uint32_t knob,int32_t delta) {
     *mine=G_CLEAR_CLICKS;*other=0;
     return delta>0?1:(G_LANE_ASSIGN?2:0);
 }
-void c_gr_clear_draw(const GRuntime *state,uint32_t track,uint32_t *out,const uint8_t *counters) {
+void c_gr_clear_end(uint8_t *counters) {
+    for(uint32_t i=0;i<16;i++)counters[i]=0;
+}
+void c_gr_clear_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint8_t *counters) {
+    if(!(*(volatile uint32_t *)(0x200487c8+0xa0)&(1u<<23))) {
+        c_gr_clear_end(counters);return;
+    }
     if(track>=8 || !c_gr_runtime_page(state,track)) return;
-    const uint32_t *colours=(const uint32_t *)0x20003974;
-    uint32_t level=out[G_PAGE_PAD]&255;
     for(uint32_t i=0;i<8;i++) {
-        if(counters[8+i]==G_CLEAR_CLICKS) out[60+i]=gr_rgb(colours[G_CLEAR_LEFT],level);
-        else if(counters[i]==G_CLEAR_CLICKS) out[60+i]=gr_rgb(colours[G_CLEAR_RIGHT],level);
+        uint32_t slot=counters[8+i]==G_CLEAR_CLICKS?G_CLEAR_LEFT:counters[i]==G_CLEAR_CLICKS?G_CLEAR_RIGHT:0;
+        if(slot)out[60+i]=gr_palette(slot);
     }
 }
 uint32_t c_gr_runtime_clear_knob(GRuntime *state,uint32_t track,uint32_t knob,uint32_t shifted) {
@@ -898,6 +1147,9 @@ uint32_t c_gr_runtime_clear_knob(GRuntime *state,uint32_t track,uint32_t knob,ui
         return 1;
     }
     GParameters defaults;c_gr_params_init(&defaults);
+#if G_FINE_CONTROLS
+    if(state->fine[track][knob]) { state->fine[track][knob]=0;state->dirty|=1u<<track;state->flags|=GR_DIRTY; }
+#endif
     c_gr_runtime_put(state,track,knob,defaults.knob[track][knob]);
     return 1;
 }
@@ -919,6 +1171,9 @@ void c_gr_runtime_reset(GRuntime *state,uint32_t track) {
     if(track>=8) return;
     GParameters defaults;c_gr_params_init(&defaults);
     for(uint32_t k=0;k<8;k++) state->parameters.knob[track][k]=defaults.knob[track][k];
+#if G_FINE_CONTROLS
+    for(uint32_t k=0;k<8;k++) state->fine[track][k]=0;
+#endif
     state->config[track]&=G_EDITOR_SETTINGS?183:51;state->level[track]=G_LEVEL_DEFAULT;gr_shift_defaults(state,track);
     c_gr_runtime_flags(state,track,0);state->dirty|=1u<<track;c_gr_ui_release(&state->ui);
 }
@@ -937,6 +1192,9 @@ uint32_t c_gr_runtime_store_pending(const GRuntime *state) {
 }
 uint32_t c_gr_runtime_clear(GRuntime *state,uint32_t track,uint32_t pad) {
     if(track>=8 || pad!=G_PAGE_PAD) return 0;
+#if G_LANE_ASSIGN
+    c_gr_lane_clear_page(state,track,1,16);
+#endif
     c_gr_runtime_reset(state,track);state->taken|=1u<<pad;return 1;
 }
 static uint32_t gr_brightness(uint32_t rgb) {
@@ -952,18 +1210,72 @@ static uint32_t gr_knob_scale(uint32_t value,uint32_t centred) {
     if(centred) { value=value>=64?(value-64)*2:(64-value)*2;if(value>127) value=127; }
     return (value*0x1cc+0x1a00)>>8;
 }
+#if G_EASY_ZONES
+/* Slice lights the pad of its zone; Lock fills none, half or all of the bar. */
+static int32_t gr_zone_display(uint32_t knob,int32_t value) {
+    if(knob==G_SHIFT_SLICE+1) return value>>4?((value>>4)+1)*16:0;
+    if(knob==G_SHIFT_LOCK+1) return value<43?0:value<85?64:127;
+    return value;
+}
+#endif
+#if G_ZONE_PADS
+/* Slice and Lock light one pad: their zone's pad. Off is pad 17 in Stock's rest white. */
+static uint32_t gr_zone_pads(uint32_t *out,uint32_t color,uint32_t level,uint32_t knob,uint32_t value) {
+    int32_t pad;
+    if(knob==G_SHIFT_SLICE+1) pad=value<8?-1:(int32_t)(value>>4);
+    else if(knob==G_SHIFT_LOCK+1) pad=value<43?-1:value<85?3:7;
+    else return 0;
+    for(int32_t i=0;i<8;i++)out[16+i]=0;
+    out[16+(pad<0?0:pad)]=pad<0?gr_rgb(0xffffff,level*70/255):gr_rgb(color,level);
+    return 1;
+}
+#endif
+#if G_STOCK_BAR
+/* Value bar on pads 17-24 at Stock's levels: rest pads white 70/255, an empty
+ * middle pad 41/255 of the bar colour, and an edge pad's fill at least 77/255. */
+static void gr_bar(uint32_t *out,uint32_t color,uint32_t level,int32_t value,uint32_t centred) {
+    for(int32_t i=0;i<8;i++) {
+        int32_t fill=centred?(value>=64?(i>=4?value-64-(i-4)*16:0):(i<4?64-value-(3-i)*16:0)):value-i*16;
+        if(fill<0)fill=0;if(fill>16)fill=16;
+        uint32_t edge=centred?(i==3 || i==4):(i==0),scale=level*(uint32_t)fill/16;
+        if(edge && !fill) {
+            out[16+i]=(centred?value==64:value==0)?gr_rgb(0xffffff,level*70/255):centred?gr_rgb(color,level*41/255):0;
+            continue;
+        }
+        if(edge && scale<level*77/255)scale=level*77/255;
+        out[16+i]=gr_rgb(color,scale);
+    }
+}
+#endif
 static uint32_t gr_shift_value(const GRuntime *state,uint32_t track,uint32_t knob) {
     return knob?state->shift[track][knob-1]:state->level[track];
 }
+/* Settings pads own the bar pads, except for 500 ms after a knob turn (the
+ * editor's movement tick), when the value bar shows. Assignments never yield. */
+#if G_TURN_BAR
+static uint32_t gr_settings_visible(const GRuntime *state,uint32_t track) {
+    if(!state->ui.shown || state->ui.track!=track) return 0;
+    return (state->assignment[track]&128) ||
+           (uint32_t)(*(volatile uint32_t *)0x20006f3c-*(volatile uint32_t *)(G_MENU+16))>=500;
+}
+#else
+#define gr_settings_visible(gs,gt) ((gs)->ui.shown && (gs)->ui.track==(gt))
+#endif
 void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32_t knob) {
     if(track>=8) return;
     uint32_t level=gr_brightness(out[25]);
+#if G_EDITOR_SETTINGS
+    /* Clear cues and reset flashes may dim/hide the Stock pad. They must not
+     * become the brightness source for an entire other parameter view. */
+    level=gr_dim_factor()-1;
+#else
     uint32_t p=gr_brightness(out[28]);if(p>level) level=p;
     p=gr_brightness(out[30]);if(p>level) level=p;
+#endif
     out[G_PAGE_PAD]=gr_rgb(G_PAGE_RGB,level/16);
     if(!c_gr_runtime_page(state,track)) {
 #if G_EDITOR_SETTINGS
-        if(state->ui.shown && state->ui.track==track) {
+        if(gr_settings_visible(state,track)) {
             for(uint32_t i=0;i<8;i++)out[16+i]=i<2?gr_rgb(0xffffff,level/((state->config[track]&(i?128:4))?1:8)):0;
             out[51]=out[52]=0;
         }
@@ -989,6 +1301,7 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
                             level/(d==selected?1:opposite?8:d?4:8));
             uint32_t active=k==((selected-1)&7);
             out[60+k]=gr_rgb(G_PAGE_RGB,level/(active?1:8));
+            if(G_DARK_SPARE && selected>8 && !gr_shift_live(k))out[60+k]=0;
         }
         out[51]=gr_rgb(G_PAGE_RGB,level/(selected>8?1:32));
         out[52]=gr_rgb(G_PAGE_RGB,level/(selected<=8?1:32));
@@ -1007,7 +1320,7 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
         else if(shifted) out[60+i]=gr_shift_live(i)?gr_rgb(G_PAGE_RGB,level*gr_knob_scale(gr_shift_value(state,track,i),gr_shift_centred(i))/255):0;
         else out[60+i]=gr_rgb(G_PAGE_RGB,level*gr_knob_scale(state->parameters.knob[track][i],i==3)/255);
     }
-    if(state->ui.shown && state->ui.track==track) {
+    if(gr_settings_visible(state,track)) {
         const GTrack *owner=&state->owner.track[track];
         uint32_t config=state->config[track];
         uint32_t blink=owner->phase==G_QUIET && (*(volatile uint32_t *)0x20000820&128);
@@ -1020,16 +1333,30 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
         static const uint32_t pitch_sets[5]={G_PAGE_RGB,0xffffff,0x59d6ff,0xffc859,0xff59c2};
         uint32_t set=state->setting[track],pitch=set>>5;
         out[21]=gr_rgb(pitch_sets[set>>1&7],set>>1&7?level:level/4);
+#if G_NO_BURST
+        (void)pitch;out[22]=out[23]=0;
+#else
         out[22]=gr_rgb(G_PAGE_RGB,set&G_BURST_FADE?level:level/4);
         static const uint32_t burst_pitches[3]={G_PAGE_RGB,0x59d6ff,0xff59c2};
         out[23]=gr_rgb(burst_pitches[pitch],pitch?level:level/4);
+#endif
     } else {
         int32_t value=shifted?gr_shift_value(state,track,knob):state->parameters.knob[track][knob];
         uint32_t centred=shifted?gr_shift_centred(knob):knob==3,bar=color;
         // Timing steps by half a pad on the tempo side.
         if(shifted && knob==2 && value>=63) value=value<66?64:64+8*((value-66)/8+1);
         // Slice and Burst show their count in half pads.
+#if G_EASY_ZONES
+        if(shifted) value=gr_zone_display(knob,value);
+#else
         if(shifted && (knob==G_SHIFT_SLICE+1 || knob==G_SHIFT_BURST+1)) value=(int32_t)gr_count((uint32_t)value)*8;
+#endif
+#if G_ZONE_PADS
+        if(!(shifted && gr_zone_pads(out,bar,level,knob,(uint32_t)gr_shift_value(state,track,knob))))
+#endif
+#if G_STOCK_BAR
+        gr_bar(out,bar,level,value,centred);
+#else
         for(int32_t i=0;i<8;i++) {
             int32_t fill;
             if(centred) fill=value>=64?(i>=4?value-64-(i-4)*16:0):(i<4?64-value-(3-i)*16:0);
@@ -1038,16 +1365,22 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
             out[16+i]=gr_rgb(bar,level*(uint32_t)fill/16);
             if(!fill && (centred?(i==3 || i==4):(i==0))) out[16+i]=gr_rgb(0xffffff,level/32);
         }
+#endif
     }
 }
 /* Companion settings are self-contained. No project-tail offsets, pointers,
- * DSP epochs or transient modal state are serialized. Validate before mutation. */
+ * DSP epochs or transient modal state are serialized. Validate before mutation.
+ * GS v5 appends 64 fine bytes (track x knob, 0..15) at 224..287. */
+enum { G_GS_VERSION=G_LANE_ASSIGN?(G_FINE_CONTROLS?5:G_EDITOR_SETTINGS?4:G_NAV_PERSIST?3:2):1 };
 uint32_t c_gr_runtime_settings_valid(const uint8_t *b) {
-    if(!b || b[0]!='G' || b[1]!='S' || (b[2]!=(G_LANE_ASSIGN?(G_EDITOR_SETTINGS?4:G_NAV_PERSIST?3:2):1) && !(G_NAV_PERSIST && (b[2]==2 || (G_EDITOR_SETTINGS && b[2]==3)))) || b[3]!=8) return 0;
-    if(gr_crc(b+8,G_LANE_ASSIGN?216:152)!=((uint32_t)b[4]|(uint32_t)b[5]<<8|(uint32_t)b[6]<<16|(uint32_t)b[7]<<24)) return 0;
+    if(!b || b[0]!='G' || b[1]!='S' || (b[2]!=G_GS_VERSION && !(G_NAV_PERSIST && (b[2]==2 || (G_EDITOR_SETTINGS && (b[2]==3 || (G_FINE_CONTROLS && b[2]==4)))))) || b[3]!=8) return 0;
+    if(gr_crc(b+8,G_FINE_CONTROLS && b[2]>=5?280:G_LANE_ASSIGN?216:152)!=((uint32_t)b[4]|(uint32_t)b[5]<<8|(uint32_t)b[6]<<16|(uint32_t)b[7]<<24)) return 0;
+#if G_FINE_CONTROLS
+    if(b[2]>=5)for(uint32_t i=224;i<288;i++)if(b[i]>=G_FINE_STEPS)return 0;
+#endif
     for(uint32_t i=8;i<72;i++) if(b[i]>127) return 0;
     for(uint32_t t=0;t<8;t++) {
-        if((b[72+t]&3)>G_TEXTURE || (b[72+t]&~(G_EDITOR_SETTINGS && b[2]==4?0xefu:0x6bu)) || b[80+t]>127 || !gr_setting_ok(b[144+t])) return 0;
+        if((b[72+t]&3)>G_TEXTURE || (b[72+t]&~(G_EDITOR_SETTINGS && (G_FINE_CONTROLS?b[2]>=4:b[2]==4)?0xefu:0x6bu)) || b[80+t]>127 || !gr_setting_ok(b[144+t])) return 0;
     }
     for(uint32_t i=88;i<144;i++) if(b[i]>127) return 0;
 #if G_LANE_ASSIGN
@@ -1060,7 +1393,7 @@ uint32_t c_gr_runtime_settings_valid(const uint8_t *b) {
 }
 uint32_t c_gr_runtime_settings_store(GRuntime *state,uint8_t *b) {
     if(!b || state->magic!=GR_MAGIC || state->replace_depth) return 0;
-    b[0]='G';b[1]='S';b[2]=G_LANE_ASSIGN?(G_EDITOR_SETTINGS?4:G_NAV_PERSIST?3:2):1;b[3]=8;
+    b[0]='G';b[1]='S';b[2]=G_GS_VERSION;b[3]=8;
     for(uint32_t i=0;i<64;i++) b[8+i]=((uint8_t *)&state->parameters)[i];
     for(uint32_t t=0;t<8;t++) { b[72+t]=state->config[t]&(G_EDITOR_SETTINGS?0xef:0x6b);b[80+t]=state->level[t];b[144+t]=state->setting[t]; }
     for(uint32_t i=0;i<56;i++) b[88+i]=((uint8_t *)state->shift)[i];
@@ -1070,7 +1403,10 @@ uint32_t c_gr_runtime_settings_store(GRuntime *state,uint8_t *b) {
 #else
     for(uint32_t i=152;i<160;i++)b[i]=0;
 #endif
-    uint32_t sum=gr_crc(b+8,G_LANE_ASSIGN?216:152);
+#if G_FINE_CONTROLS
+    for(uint32_t i=0;i<64;i++)b[224+i]=((uint8_t *)state->fine)[i];
+#endif
+    uint32_t sum=gr_crc(b+8,G_GS_VERSION>=5?280:G_LANE_ASSIGN?216:152);
     for(uint32_t i=0;i<4;i++) b[4+i]=(uint8_t)(sum>>(8*i));
     return c_gr_runtime_settings_valid(b);
 }
@@ -1095,6 +1431,9 @@ uint32_t c_gr_runtime_load(GRuntime *state,const uint8_t *tail) {
     uint32_t loaded=!G_EDITOR_SETTINGS && tail?c_gr_project_load(tail,&state->parameters,state->config):0;
     if(loaded!=1) {
         c_gr_params_init(&state->parameters);
+#if G_FINE_CONTROLS
+        for(uint32_t i=0;i<64;i++)((uint8_t *)state->fine)[i]=0;
+#endif
         for(uint32_t track=0;track<8;track++) state->config[track]=0;
     }
     if(G_EDITOR_SETTINGS || !tail || !c_gr_levels_load(tail,state->level))
@@ -1125,8 +1464,11 @@ uint32_t c_gr_runtime_settings_load(GRuntime *state,const uint8_t *b) {
 #endif
     if(b) {
         for(uint32_t i=0;i<64;i++) ((uint8_t *)&state->parameters)[i]=b[8+i];
-        for(uint32_t t=0;t<8;t++) { state->config[t]=b[72+t];state->level[t]=b[80+t];state->setting[t]=b[144+t];state->sync[t]=0;state->owner.track[t].settings=1|((state->config[t]>>2)&2); }
+        for(uint32_t t=0;t<8;t++) { state->config[t]=b[72+t];state->level[t]=b[80+t];state->setting[t]=b[144+t]&(G_NO_BURST?15:255);state->sync[t]=0;state->owner.track[t].settings=1|((state->config[t]>>2)&2); }
         for(uint32_t i=0;i<56;i++) ((uint8_t *)state->shift)[i]=b[88+i];
+#if G_FINE_CONTROLS
+        if(b[2]>=5)for(uint32_t i=0;i<64;i++)((uint8_t *)state->fine)[i]=b[224+i];
+#endif
 #if G_NAV_PERSIST
         if(b[2]>=3)for(uint32_t t=0;t<8;t++) {
             state->config[t]|=(b[216+t]&1)<<4;
@@ -1206,6 +1548,9 @@ static void gr_editor_value(GRuntime *s,uint32_t t,uint32_t k,uint32_t value) {
     *(uint32_t *)(G_MENU+16)=GW(0x20006f3c);
     if(c_gr_runtime_page(s,t)) {
         uint32_t page=c_gr_runtime_knob_page(s,t);
+#if G_FINE_CONTROLS
+        if(!page && s->fine[t][k]) { s->fine[t][k]=0;s->dirty|=1u<<t;s->flags|=GR_DIRTY; }
+#endif
         gr_dest_put(s,t,k+8*page,value);c_gr_lane_touch(s,t,k,page);
     } else {
         c_gr_lane_inner(0x20043700,t*16+k,value,1);
@@ -1252,7 +1597,15 @@ void c_gr_lane_touch(GRuntime *s,uint32_t t,uint32_t knob,uint32_t page) {
         ((uint16_t *)GW(player+0x4c))[lane]=0xffff;
     }
     if(!(gr_item(0x200122b0,1)&255))return;
-    s->recording_leds[t]|=1u<<(d-1);
+#if G_EDITOR_SETTINGS
+    /* A short movement indication belongs to the bar and the moving knob,
+     * never a sticky lamp. Keep only the latest source so track/page changes cannot
+     * borrow another control's recent movement timestamp. */
+    for(uint32_t n=0;n<8;n++)s->recording_leds[n]=0;
+    if(held>=32 && (!(gr_item(0x200122b0,0)&255) || (gr_item(0x200122b0,2)&255)))return;
+    *(uint32_t *)(G_MENU+16)=GW(0x20006f3c);
+#endif
+    s->recording_leds[t]=1u<<(d-1);
     uint32_t value=gr_dest_value(s,t,d-1),rec=GW(0x2003d380+4*t);
     if(((uint32_t (*)(uint32_t))(G_HELD_FN|1))(t)<32)
         ((void (*)(uint32_t,uint32_t,uint32_t))0x08047d83)(rec,lane,value);
@@ -1283,6 +1636,21 @@ void c_gr_lane_clear(GRuntime *s,uint32_t t,uint32_t knob,uint32_t page) {
         c_gr_lane_nativeclear(rec,k,0,0);
     }
 }
+/* Parameter-view resets follow destination ownership, not the native lane's
+ * original knob. Explicit ranges keep future views from clearing each other.
+ * Like Stock Clear+pad, clear whole lanes in the viewed pattern even if a
+ * step is held; individual Clear+turn retains native held-step scope. */
+void c_gr_lane_clear_page(GRuntime *s,uint32_t t,uint32_t first,uint32_t last) {
+    if(t>=8 || !first || first>last || !gr_lane_state())return;
+    uint32_t rec=GW(0x2003d380+4*t);
+    uint8_t *scope=(void *)((uint32_t (*)(uint32_t,uint32_t))0x0803fc59)(GW(rec+0x40),0);
+    uint8_t old=*scope;*scope=0;
+    for(uint32_t k=0;k<8;k++) {
+        uint32_t d=s->lanes[t][k];
+        if(d>=first && d<=last) {c_gr_lane_nativeclear(rec,k,0,0);gr_lane_changed(t,k);}
+    }
+    *scope=old;s->recording_leds[t]=0;
+}
 #endif
 
 #if G_LANE_ASSIGN
@@ -1299,22 +1667,34 @@ uint32_t c_gr_lane_turn(GRuntime *s,uint32_t t,uint32_t k,int32_t delta) {
             }
         }
     }
+#if G_FINE_CONTROLS
+    uint32_t fine=gr_fine_turn(s,t,k);
+#else
+    uint32_t fine=0;
+#endif
     uint32_t result=page?c_gr_runtime_shift_turn(s,t,k,delta):c_gr_runtime_turn(s,t,k,delta);
-    if(result && delta)c_gr_lane_touch(s,t,k,page);
+#if G_TURN_BAR
+    /* Every turn is the latest movement; recording turns mark themselves again in touch. */
+    if(result && delta) { GW(G_MENU+16)=GW(0x20006f3c);for(uint32_t n=0;n<8;n++)s->recording_leds[n]=0; }
+#endif
+    if(result && delta && !fine)c_gr_lane_touch(s,t,k,page);
     return result;
 }
 void c_gr_lane_draw(GRuntime *s,uint32_t t,uint32_t *out,uint32_t selected) {
     if(t>=8 || !gr_lane_state())return;
     if(!c_gr_runtime_page(s,t)) {
+        /* Native Clear previews and acknowledgements are already correct. */
+        if(GW(0x200487c8+0xa0)&(1u<<23))return;
         uint32_t color=((const uint32_t *)0x20003974)[(const uint8_t[]){0x43,0x2f,0x47,0x4b,0x37,0x25,0x12,0x3b}[t]];
         for(uint32_t k=0;k<8;k++)if(s->lanes[t][k]) {
             uint32_t rgb=out[60+k];
+            if(!((rgb>>16&255)>(rgb>>8&255)*4 && (rgb>>16&255)>(rgb&255)*4))continue;
             /* Preserve native blue Clear-reset acknowledgement. Borrowed
              * automation is never shown as stock red or granular green. */
             if((rgb&255)>(rgb>>16&255)*2 && (rgb&255)>(rgb>>8&255)*2)continue;
             out[60+k]=gr_rgb(k==selected?color:0xffffff,gr_brightness(rgb));
         }
-        if(selected<8 && s->lanes[t][selected] && !(s->ui.shown && s->ui.track==t))for(uint32_t i=0;i<8;i++) {
+        if(selected<8 && s->lanes[t][selected] && !gr_settings_visible(s,t))for(uint32_t i=0;i<8;i++) {
             uint32_t rgb=out[16+i],r=rgb>>16&255,g=rgb>>8&255,b=rgb&255;
             if(r>g*4 && r>b*4)out[16+i]=gr_rgb(color,gr_brightness(rgb));
         }
@@ -1327,6 +1707,12 @@ void c_gr_lane_draw(GRuntime *s,uint32_t t,uint32_t *out,uint32_t selected) {
     uint32_t owned=0;
     for(uint32_t n=0;n<8;n++)if(s->lanes[t][n])owned|=1u<<(s->lanes[t][n]-1);
     s->recording_leds[t]&=(uint16_t)owned;
+    uint32_t moving=0;
+#if G_EDITOR_SETTINGS
+    moving=(uint32_t)(GW(0x20006f3c)-GW(G_MENU+16))<500 &&
+           !(GW(0x200487c8+0xa0)&(1u<<23));
+#endif
+
     for(uint32_t k=0;k<8;k++) { uint32_t d=k+8*page+1,v=255;
         for(uint32_t n=0;n<8;n++)if(s->lanes[t][n]==d && held<32 && pat<8) {
             const uint8_t *b=(void *)(GW(rec+4)+pat*0xa28+0x128+n*192+held*6);
@@ -1334,24 +1720,56 @@ void c_gr_lane_draw(GRuntime *s,uint32_t t,uint32_t *out,uint32_t selected) {
         }
         uint32_t level=gr_brightness(out[G_PAGE_PAD]);
         if(v<128)out[60+k]=gr_rgb(G_PAGE_RGB,level*gr_knob_scale(v,page?gr_shift_centred(k):k==3)/255);
-        if(v<128 || (s->recording_leds[t]&(1u<<(d-1))))out[60+k]=gr_rgb(0xff2a1a,k==selected?level:gr_brightness(out[60+k]));
-        if(v<128 && k==selected && !(s->ui.shown && s->ui.track==t)) {
+        if(v<128 || (moving && (s->recording_leds[t]&(1u<<(d-1)))))out[60+k]=gr_rgb(0xff0000,k==selected?level:gr_brightness(out[60+k]));
+        if(v<128 && k==selected && !gr_settings_visible(s,t)) {
             uint32_t centred=page?gr_shift_centred(k):k==3;
+#if G_ZONE_PADS
+            uint32_t raw=v;
+#endif
             uint32_t color=((const uint32_t *)0x20003974)[(const uint8_t[]){0x43,0x2f,0x47,0x4b,0x37,0x25,0x12,0x3b}[t]];
             if(page && k==2 && v>=63)v=v<66?64:64+8*((v-66)/8+1);
+#if G_EASY_ZONES
+            if(page)v=(uint32_t)gr_zone_display(k,(int32_t)v);
+#else
             if(page && (k==G_SHIFT_SLICE+1 || k==G_SHIFT_BURST+1))v=gr_count(v)*8;
+#endif
+#if G_ZONE_PADS
+            if(!(page && gr_zone_pads(out,color,level,k,raw)))
+#endif
+#if G_STOCK_BAR
+            gr_bar(out,color,level,(int32_t)v,centred);
+#else
             for(int32_t i=0;i<8;i++) {int32_t fill=centred?(v>=64?(i>=4?(int32_t)v-64-(i-4)*16:0):(i<4?64-(int32_t)v-(3-i)*16:0)):(int32_t)v-i*16;
                 if(fill<0)fill=0;if(fill>16)fill=16;
                 out[16+i]=gr_rgb(color,level*(uint32_t)fill/16);
                 if(!fill && (centred?(i==3 || i==4):i==0))out[16+i]=gr_rgb(0xffffff,level/32);
             }
+#endif
         }
     }
+#if G_EDITOR_SETTINGS
+    if(selected<8 && !gr_settings_visible(s,t) &&
+       (s->recording_leds[t]&(1u<<(selected+8*page))) &&
+       moving) {
+        for(uint32_t i=0;i<8;i++)out[16+i]=gr_rgb(0xff0000,gr_brightness(out[16+i]));
+    }
+#endif
 }
 #endif
 
 #if G_LANE_ASSIGN
 __attribute__((naked,noinline)) uint32_t c_gr_lane_nativeview(uint32_t a,uint32_t t,uint32_t k,uint32_t step) { __asm__ volatile("movs r0,#0\n bx lr"); }
+#if G_EDITOR_SETTINGS
+/* Share Stock's reset cue and confirmation cadence without using a pad LED
+ * as the brightness source for the rest of the parameter view. */
+void c_gr_clear_views(GRuntime *s,uint32_t t,uint32_t *out,const uint32_t *pc) {
+    if(t>=8)return;
+    if(*(volatile uint32_t *)(0x200487c8+0xa0)&(1u<<23))out[25]=out[G_PAGE_PAD]=gr_palette(0x54);
+    uint32_t pad=((const uint8_t *)pc)[4],elapsed=*(volatile uint32_t *)0x20006f3c-pc[0];
+    if((pad==26 || pad==G_PAGE_PAD+1) && elapsed<384)
+        out[pad-1]=(elapsed&64)?0:gr_palette(0x55);
+}
+#endif
 uint32_t c_gr_lane_stockview(uint32_t a,uint32_t t,uint32_t k,uint32_t step) {
     GRuntime *s=gr_lane_state();
     if(s && t<8 && k<8 && s->lanes[t][k])return 0;

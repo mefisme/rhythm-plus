@@ -6,6 +6,7 @@ import rhbuild
 import rhstate
 import countin as C
 import cthresh
+import os
 
 MESSAGE,SOURCE,PARAM=0x080406a8,0x0804b060,0x0804070e
 
@@ -13,12 +14,13 @@ MESSAGE,SOURCE,PARAM=0x080406a8,0x0804b060,0x0804070e
 def install(img,report,base,current=False):
     kernel=report['granular']['arm_kernel']['labels']
     slot=rhstate.ST+rhstate.OFF['granular'][0]
-    assert rhstate.OFF['granular'][1]==(416 if current else 316)
+    fine=current and os.environ.get('RH_GRANULAR_FINE')=='1'
+    assert rhstate.OFF['granular'][1]==(480 if fine else 416 if current else 316)
     reset=int(report['rhstate']['labels']['c_rst'],16)
     previous=rhbuild.bl_target(img,C.LED_CALLS[0])
     assert all(rhbuild.bl_target(img,address)==previous for address in C.LED_CALLS)
     ready=rhstate.ST+rhstate.OFF['cthresh'][0]+1
-    wait=slot+404 if current else rhstate.ST+rhstate.OFF['spwait'][0]
+    wait=slot+(468 if fine else 404) if current else rhstate.ST+rhstate.OFF['spwait'][0]
     upload=rhstate.ST+rhstate.OFF['upguard'][0]
     a=Asm(base);E=a.emit
     def imm(register,value):E(movw,register,value&65535);E(movt,register,value>>16)

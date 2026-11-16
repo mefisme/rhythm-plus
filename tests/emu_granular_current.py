@@ -81,14 +81,53 @@ def main():
         print('PASS early boot clears only shared metadata; first-pass private clearing preserves all Grid FX buffers and relocation guards')
     # Use the actual stage-loaded program, not just regenerated candidates.
     reference,_=POOL.run((0,),bounded=True,host_mailbox=True)
+    # Fine builds take Position/Scan (and Density, both scatters) in sixteenths
+    # and Size in samples. The pool fixture's 7-bit values, scaled, must render
+    # identically, including against a reference engine that still has Burst.
+    fine=bool(g.get('fine_controls'));every=fine and len(g['fine_controls']['knobs'])==6
+    scaled={'size':G.tables()['SIZE_T'][35],'pos':42*16,'scan':48*16} if fine else None
+    if every:
+        scaled['dens']=55*16
+        scattered,_=POOL.run((0,),bounded=True,host_mailbox=True,settings={'spr':20,'pspr':20})
     original=P.code
     try:
         P.code=lambda **kwargs:(copy.deepcopy(segs),copy.deepcopy(g['pool']))
         with CURRENT.allocated():
-            relocated,meta=POOL.run((0,),bounded=True,host_mailbox=True)
+            relocated,meta=POOL.run((0,),bounded=True,host_mailbox=True,settings=scaled)
             assert relocated==reference and any(relocated[0])
+            if fine:
+                steps=[('pos',42*16+8),('scan',48*16+8),('size',(G.tables()['SIZE_T'][35]+G.tables()['SIZE_T'][36])//2)]
+                if every:
+                    base={**scaled,'spr':320,'pspr':320}
+                    same,_=POOL.run((0,),bounded=True,host_mailbox=True,settings=base)
+                    assert same==scattered,'scaled scatter words differ from the 7-bit engine'
+                    steps+=[('dens',55*16+8)]
+                for name,value in steps:
+                    moved,_=POOL.run((0,),bounded=True,host_mailbox=True,settings={**scaled,name:value})
+                    assert moved!=reference,('fine step did not reach the engine',name)
+                if every:
+                    for name in ('spr','pspr'):
+                        moved,_=POOL.run((0,),bounded=True,host_mailbox=True,settings={**base,name:328})
+                        assert moved!=scattered,('fine step did not reach the engine',name)
+                print(f"PASS fine 0 renders bit-for-bit like the 7-bit engine; half-step {', '.join(g['fine_controls']['knobs'])} each change the audio")
+            if g.get('easy_zones'):
+                # Word 13: slices - 1 in bits 15..18, Lock in bits 8..14. 8 slices; scatter below one slice snaps to the playhead's slice.
+                word7=g['easy_zones'].get('slice_word')==7
+                def run(slices,spr=0,lock=0,step=0):
+                    words={7:127|(slices-1)<<8|step<<13,13:lock<<8} if word7 else {13:(slices-1)<<15|lock<<8|step<<19}
+                    return POOL.run((0,),bounded=True,host_mailbox=True,settings={**scaled,**words,'spr':spr})[0]
+                sliced=run(8);assert any(sliced[0]) and sliced!=reference,'Slice did not change the audio'
+                assert run(8,400)==sliced,'scatter below one slice moved the start in Slice mode'
+                wide=run(8,2047);assert any(wide[0]) and wide!=sliced,'full scatter did not jump slices'
+                assert run(8,2047,127)!=wide,'Lock did not reach Slice mode scatter'
+                for step in (3,7):assert any(run(8,2047,0,step)[0]),('wrapped slice silent',step)
+                if word7:
+                    many=run(32);assert any(many[0]) and many!=run(16),'32 slices render like 16'
+                    assert run(32,0,0,17)!=run(32,0,0,1),'slice step above 15 was cut to 4 bits'
+                    assert any(run(32,2047,0,31)[0]),'last 32-slice step silent'
+                print('PASS Slice mode: scatter below one slice keeps the slice; full scatter jumps whole slices and wraps; Lock repeats it'+('; 32 slices and steps above 16 play' if word7 else ''))
             assert sum(meta['live_grains'])<=16
-            _,meta=POOL.run((0,),bounded=True,host_mailbox=True,rebalance=True)
+            _,meta=POOL.run((0,),bounded=True,host_mailbox=True,rebalance=True,settings=scaled)
             for frame in range(POOL.FRAMES):
                 active=8 if 24<=frame<48 else 1
                 counts=meta['block_counts'][frame*8:frame*8+active]

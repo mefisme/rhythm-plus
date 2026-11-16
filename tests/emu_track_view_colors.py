@@ -26,7 +26,7 @@ def main():
             else:assert rgb and (rgb&255)==(rgb>>8&255)==(rgb>>16&255),('stock view',selected,t,hex(rgb))
     # Real pad selections update only the selected track's remembered view.
     for t in (0,7,3,5):
-        SM.sel(u,t);G.pad(u,31);G.unpad(u,31);views[t]=True
+        SM.sel(u,t);G.pad(u,E.GP);G.unpad(u,E.GP);views[t]=True
         for selected in range(8):check(selected)
     for t in (7,0):
         SM.sel(u,t);G.pad(u,25);G.unpad(u,25);views[t]=False

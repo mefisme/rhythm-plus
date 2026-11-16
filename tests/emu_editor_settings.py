@@ -30,12 +30,22 @@ def main():
     out=0x20001000;u.mem_write(out,struct.pack('<69I',*([0xffffff]*69)))
     E.call(u,K['c_gr_menu_indicator'],s,0,out)
     assert E.u32(u,out+25*4)!=0xffffff and E.u32(u,out+32*4)==0xffffff
-    shift(True);shift(False);assert u.mem_read(s+102,1)==b'\1','Shift erased hold latch'
-    tap(25);assert u.mem_read(s+102,1)==b'\0'
-    for physical in (True,False):
-        shift(True,physical);assert u.mem_read(s+102,1)==b'\1'
+    if g['ui'].get('sticky_assign'):
+        shift(True);shift(False);assert u.mem_read(s+102,1)==b'\0','Shift did not close the pad menu'
+    else:
+        shift(True);shift(False);assert u.mem_read(s+102,1)==b'\1','Shift erased hold latch'
+        tap(25);assert u.mem_read(s+102,1)==b'\0'
+    if g['ui'].get('shift_tap'):
+        # A physical Shift tap toggles; Stock settings never open assignments.
+        shift(True,True);assert u.mem_read(s+102,1)==b'\0','holding Shift opened settings'
+        shift(False);assert u.mem_read(s+102,1)==b'\1'
         E.press(u,19);E.release(u,19);assert not u.mem_read(s+380,1)[0]&128
-        shift(False);assert u.mem_read(s+102,1)==b'\0'
+        shift(True,True);shift(False);assert u.mem_read(s+102,1)==b'\0'
+    else:
+        for physical in (True,False):
+            shift(True,physical);assert u.mem_read(s+102,1)==b'\1'
+            E.press(u,19);E.release(u,19);assert not u.mem_read(s+380,1)[0]&128
+            shift(False);assert u.mem_read(s+102,1)==b'\0'
     print('PASS Stock hold latch, tap exit, physical/sticky Shift, settings LEDs and pulse')
     u.mem_write(E.ptr(u,E.C.TRANSPORT,1),b'\0');u.mem_write(E.ptr(u,E.C.TRANSPORT,0),b'\0')
     u.mem_write(m+8,b'\1');store=E.u32(u,E.C.CTRL+E.T.KSTORES)
@@ -67,15 +77,24 @@ def main():
     c=colors();assert c[60]>>16&255>(c[60]>>8&255)*4,'Stock live recording feedback missing'
     assert bytes(u.mem_read(p,0x128))==notes_before
     u.mem_write(E.ptr(u,E.C.TRANSPORT,1),b'\0');u.mem_write(E.ptr(u,E.C.TRANSPORT,0),b'\0')
-    tap(31);u.mem_write(m+8,b'\1');tap(23);assert u.mem_read(s+104,1)==b'\x7f'
+    tap(E.GP);u.mem_write(m+8,b'\1');tap(23);assert u.mem_read(s+104,1)==b'\x7f'
     E.press(u,19);E.release(u,19);tap(16);assert u.mem_read(s+212,1)==b'\0'
     G.pad(u,19);G.pad(u,20);assert u.mem_read(s+212,1)==b'@'
     G.unpad(u,19);G.unpad(u,20)
     # Settings and assignment pads remain controls, never value taps.
-    shift(True);E.press(u,19);E.release(u,19);manual=bytes(u.mem_read(s+104,64))
+    tapmode=g['ui'].get('shift_tap')
+    shift(True,tapmode)
+    if tapmode:shift(False)
+    if g['ui'].get('sticky_assign'):
+        G.held(u,19,True);E.press(u,19);u.mem_write(0x20000820,struct.pack('<I',E.u32(u,0x20000820)+400))
+        E.call(u,K['c_gr_runtime_ui_frame'],s,0,1);G.held(u,19,False);E.release(u,19)
+    else:E.press(u,19);E.release(u,19)
+    manual=bytes(u.mem_read(s+104,64))
     for _ in range(8):tap(24)
     tap(16);assert u.mem_read(s+316,1)==b'\x09' and bytes(u.mem_read(s+104,64))==manual
+    if tapmode:shift(True,True)
     shift(False)
+    if g['ui'].get('sticky_assign'):shift(True,True);shift(False);assert u.mem_read(s+102,1)==b'\0','Shift did not close sticky assignments'
     u.mem_write(E.ptr(u,E.C.TRANSPORT,1),b'\1');u.mem_write(E.ptr(u,E.C.TRANSPORT,0),b'\1')
     p=SM.pat(u,0);u.mem_write(p+0x128,b'\xff'*192)
     G.pad(u,5);snapshot=bytes(u.mem_read(p,0xa28));tap(22)
@@ -105,18 +124,19 @@ def main():
     u.mem_write(m+E.T.O_OPEN,b'\1')
     print('PASS silent selection keeps held step and suppresses only TPE audition')
     # No additional storage: settings use spare config bits, checked by CRC.
-    E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytes(u.mem_read(buf,224))
-    assert saved[:4]==b'GS\x04\x08' and saved[72]&0x84==0x84
+    fine=bool(g.get('fine_controls'))
+    E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytes(u.mem_read(buf,288 if fine else 224))
+    assert saved[:4]==(b'GS\x05\x08' if fine else b'GS\x04\x08') and saved[72]&0x84==0x84
     E.call(u,K['c_gr_runtime_settings_load'],s,0);assert u.mem_read(s+168,1)==b'\0'
     E.call(u,K['c_gr_runtime_settings_load'],s,buf);assert u.mem_read(s+168,1)[0]&0x84==0x84
     for version in (2,3):
-        old=bytearray(saved);old[2]=version
+        old=bytearray(saved[:224]);old[2]=version
         for t in range(8):old[72+t]&=0x6b
         if version==2:old[216:224]=bytes(8)
         struct.pack_into('<I',old,4,zlib.crc32(old[8:]));u.mem_write(buf,bytes(old))
         E.call(u,K['c_gr_runtime_settings_load'],s,buf)
         assert u.reg_read(UC_ARM_REG_R0)==1 and not u.mem_read(s+168,1)[0]&0x84
     E.call(u,K['c_gr_runtime_track_reset'],s,0);assert not u.mem_read(s+168,1)[0]&0x84
-    print('PASS GS v4 exact-size persistence, v2/v3 migration defaults and Clear Track reset')
+    print(f'PASS GS v{saved[2]} exact-size persistence, v2/v3 migration defaults and Clear Track reset')
     print('ALL PASS')
 if __name__=='__main__':main()

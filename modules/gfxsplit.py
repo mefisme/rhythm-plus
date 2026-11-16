@@ -180,7 +180,7 @@ def install(img, report, base_addr=None, track=TRACK, sends=False, controls=Fals
             # No DSP sound instruction or control address is changed.
             start=(DP.BASE+len(img)+3)&~3
             core0.install(img,report,start,counter=False,loader=True,segs=[(CTRL_AT,extra)])
-            block=int(report['core0']['blocks'][1],16)
+            block=int(report['core0']['blocks'][1],16) if not report.get('dspzip') else core0.BLK0
             count=len(ws)+len(extra)
         else:
             block, count = DP.relocate(img, ws, extra)
@@ -201,8 +201,18 @@ def program(img,g):
     The segmented boot loader remains separately resident above this range.
     The actual loader/ARM stream is independently tested in emu_flashspace.
     """
-    _,words=DP.core0(img)
+    _,_,words=core0.block_words(img)
     if not g.get('segmented'):return words
+    import dspzip
+    if dspzip.is_packed(img):
+        raw=dspzip.raw_stream(img);i=(len(words)+2)*3
+        while i<len(raw):
+            n=int.from_bytes(raw[i:i+3],'big');address=int.from_bytes(raw[i+3:i+6],'big')
+            if address==CTRL_AT:
+                assert n==g['control_words']
+                return words+[int.from_bytes(raw[j:j+3],'big') for j in range(i+6,i+6+3*n,3)]
+            i+=(n+2)*3
+        raise AssertionError('compressed Grid FX segment missing')
     at=int(g['control_block'],16)-DP.BASE
     n=int.from_bytes(img[at:at+3],'big');address=int.from_bytes(img[at+3:at+6],'big')
     assert address==CTRL_AT==len(words) and n==g['control_words']

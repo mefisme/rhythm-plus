@@ -19,9 +19,20 @@ enum {MAGIC,ACTIVE,PENDING,MODE,STAGE,NSAVE,NLOAD,WRITES,READS,VERIFIED,MISSING,
 #define SNAP ((u8 *)0x3de0u)
 #define AST ((u32 *)0x3d40u)
 #ifdef GR_STORE
-#define PAYLOAD 5008u
+#ifndef GR_SETTINGS_BYTES
+#define GR_SETTINGS_BYTES 224u
+#endif
+#define PAYLOAD (4784u+GR_SETTINGS_BYTES)
 #define GR_LIVE ((u8 *)GR_STORE)
+#ifdef GR_SINGLE_BUFFER
+/* The native Content worker serializes full project backends. The snapshot
+ * is built in this buffer only inside writebackend, consumed before return;
+ * loading fills it only inside backend, before native project apply. No UI
+ * frame mutates it. ACTIVE guards reject reentrant project backends. */
+#define GR_FROZEN GR_LIVE
+#else
 #define GR_FROZEN ((u8 *)(GR_STORE+224u))
+#endif
 #else
 #define PAYLOAD 4784u
 #endif
@@ -43,7 +54,7 @@ static u32 crc_more(u32 c,const volatile u8 *b,u32 n){
 static u32 crc(const volatile u8 *b,u32 n){return ~crc_more(0xffffffffu,b,n);}
 static void auto_reset(void){
 #ifdef GR_STORE
-    for(u32 i=0;i<224;i++)GR_LIVE[i]=0;
+    for(u32 i=0;i<GR_SETTINGS_BYTES;i++)GR_LIVE[i]=0;
 #endif
 ((void (*)(void *,void *))(A3_INIT|1))(AST,BANK);}
 static void auto_guards(void){
@@ -53,7 +64,7 @@ static int auto_ok(void){return AST[0]==AMAGIC && *(u32 *)0x3dbc==AMAGIC && *(u3
     *(u32 *)0x3ae0==AMAGIC && *(u32 *)0x3fe0==AMAGIC && *(u32 *)0x1500==0x37575043u && *(u32 *)0x16c4==0x37575043u;}
 static u32 frozen_size(void){return ((u32 (*)(void))(A3_BANKFILESIZE|1))()
 #ifdef GR_STORE
-    +224u
+    +GR_SETTINGS_BYTES
 #endif
 ; }
 static int empty_bank(void){
@@ -233,10 +244,19 @@ static u32 load_file(u32 version,u32 size,u32 key){
         }
 #ifdef GR_STORE
         if(!result && version==4) {
+#if GR_SETTINGS_BYTES==224
             if(size-total!=224)result=0x103;
             else result=read_part(GR_LIVE,224,&checksum);
             if(!result && !((u32 (*)(const void *))(GR_SETTINGS_VALID|1))(GR_LIVE))result=0x103;
             total+=224;
+#else
+            /* Older saves hold 224 settings bytes; the GS version inside says which. */
+            u32 settings_size=size-total;
+            if(settings_size!=224 && settings_size!=GR_SETTINGS_BYTES)result=0x103;
+            else result=read_part(GR_LIVE,settings_size,&checksum);
+            if(!result && !((u32 (*)(const void *))(GR_SETTINGS_VALID|1))(GR_LIVE))result=0x103;
+            total+=settings_size;
+#endif
         }
 #endif
         if(!result && total!=size)result=0x103;
@@ -282,6 +302,9 @@ u32 c_sh_backend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a,u32 
     if(*(u32 *)item!=2 || offset || length!=0x29484 || !record_ok(buffer) || buffer!=*(volatile u32 *)0x2003c0cc)
         return ((fn7)(TR_BACKEND|1))(item,offset,buffer,length,actual,a,b);
     int enabled=ready();
+#ifdef GR_SINGLE_BUFFER
+    if(enabled && S->m[ACTIVE])return 5;
+#endif
     if(enabled){R->state=LOADING;S->m[31]=LOADING;S->m[ACTIVE]=1;S->m[MODE]=0;S->m[START]=now();S->m[NLOAD]++;
         S->m[PACK]=((u32 *)item)[2]&255;S->m[PROJECT]=((u32 *)item)[1];}
     u32 result=((fn7)(TR_BACKEND|1))(item,offset,buffer,length,actual,a,b);
@@ -299,6 +322,9 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
         if(claimed((const u8 *)(buffer+TAIL+META))){if(actual)*(u32 *)actual=0;return 5;}
         return ((fn7)(TR_WRITEBACKEND|1))(item,offset,buffer,length,actual,a,b);
     }
+#ifdef GR_SINGLE_BUFFER
+    if(S->m[ACTIVE]){if(actual)*(u32 *)actual=0;return 5;}
+#endif
     S->m[NSAVE]++;S->m[START]=now();S->m[ACTIVE]=1;S->m[MODE]=1;S->m[PROJECT]=((u32 *)item)[1];S->m[PACK]=((u32 *)item)[2]&255;
     if(R->state!=READY || R->record!=buffer || !valid(R->block)){
         error(0x111);S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;

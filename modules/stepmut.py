@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -60,12 +61,16 @@ def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS
     work = ROOT / "buildtmp" / name
     work.mkdir(parents=True, exist_ok=True)
     flags = [f"-D{k}={v:#x}" for k, v in sorted(defs.items())]
-    key = hashlib.sha256(src.read_bytes() + json.dumps([origin] + flags).encode() + b"zig0.13-m7-Oz").hexdigest()
+    trim=os.environ.get('RH_TRIM_UNUSED')=='1'
+    roots=sorted(set(re.findall(r'\b('+re.escape(prefix)+r'\w+)\([^;{}]*\)\s*\{',src.read_text()))|set(need)) if trim else []
+    cache_policy=json.dumps(['trim-v1',prefix,roots]).encode() if trim else b''
+    key = hashlib.sha256(src.read_bytes() + json.dumps([origin] + flags).encode() + b"zig0.13-m7-Oz"+cache_policy).hexdigest()
     meta, binf = work / f"{key[:16]}.json", work / f"{key[:16]}.bin"
     if meta.exists() and binf.exists():
         return binf.read_bytes(), {k: int(v, 16) for k, v in json.loads(meta.read_text()).items()}
     ld = work / f"{name}.ld"
-    ld.write_text(f"SECTIONS {{ . = {origin:#x}; .text : {{ KEEP(*(.text*)) *(.rodata*) }} "
+    sections=(' '.join('KEEP(*(.text.'+name+'))' for name in roots)+' *(.text*) *(.rodata*)') if trim else 'KEEP(*(.text*)) *(.rodata*)'
+    ld.write_text(f"SECTIONS {{ . = {origin:#x}; .text : {{ {sections} }} "
                   "/DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) *(.comment*) *(.note*) } }")
     zig = Path(os.environ.get("RH_ZIG", ROOT / "buildtmp/zig-toolchain/ziglang/zig.exe"))
     env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(work / "zig-global"), ZIG_LOCAL_CACHE_DIR=str(work / "zig-local"))
@@ -73,6 +78,7 @@ def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS
     args = [str(zig), "cc", "-I", str(ROOT / "modules"), "-target", "thumb-freestanding-eabi", "-mcpu=cortex_m7", "-mthumb", "-mfloat-abi=soft", "-Oz", "-g", "-fno-lto",
             "-ffreestanding", "-fno-builtin", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-fno-stack-protector",
             "-nostdlib", "-Wall", "-Werror", *flags, str(src), f"-Wl,-T,{ld}", f"-Wl,--entry={need[0]}", "-o", str(elf)]
+    if trim:args+=['-ffunction-sections','-fdata-sections','-Wl,--gc-sections']
     res = subprocess.run(args, env=env, capture_output=True, text=True)
     if res.returncode:
         raise SystemExit(f"{src.name}: " + res.stdout + res.stderr)
