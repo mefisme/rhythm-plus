@@ -8,7 +8,7 @@ It starts from the official firmware 2.0.1 (build 5706) and keeps what the stock
 - **Find new ideas:** Pattern Mutate and Step Mutate change the order of your patterns, or the steps inside them, so a beat can grow in ways you would not write by hand. Pattern Mutate leaves your patterns as they are; Step Mutate changes the steps, so duplicate a pattern first to keep it.
 - **Sequence more of the sound:** Grid FX can play in time with the pattern from its own track, and each track can be kept out of Grid FX.
 
-If you know the stock Circuit Rhythm, you already know how to use Rhythm Plus. The new features are there when you want them.
+The new features have their own controls; the [manual](manual/rhythm_plus_manual.pdf) shows how to use each one.
 
 Rhythm Plus is not affiliated with Novation or Focusrite. Novation and Focusrite do not endorse it.
 
