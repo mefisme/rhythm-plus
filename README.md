@@ -5,7 +5,7 @@ Rhythm Plus is a custom firmware for the **Novation Circuit Rhythm**. Its goal i
 It starts from the official firmware 2.0.1 (build 5706) and keeps what the stock firmware does. On top of that it has three aims:
 
 - **Go deeper with samples:** a granular engine, time stretch that keeps the pitch, and more control over each track's sample.
-- **Find new ideas:** Pattern Mutate and Step Mutate change the order of your patterns, or the steps inside them, so a beat can grow in ways you would not write by hand. Your own patterns stay safe.
+- **Find new ideas:** Pattern Mutate and Step Mutate change the order of your patterns, or the steps inside them, so a beat can grow in ways you would not write by hand. Pattern Mutate leaves your patterns as they are; Step Mutate changes the steps, so duplicate a pattern first to keep it.
 - **Sequence more of the sound:** Grid FX can play in time with the pattern from its own track, and each track can be kept out of Grid FX.
 
 If you know the stock Circuit Rhythm, you already know how to use Rhythm Plus. The new features are there when you want them.
