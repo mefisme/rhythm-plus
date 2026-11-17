@@ -115,7 +115,7 @@ def main():
     if ZONE_PADS:g['easy_zones'].update(slices=[0]*8+[2]*8+[n for n in (3,4,6,8,12,16,32) for _ in range(16)],slice_word=7,zone_pads=True)
     if TRIM_UNUSED:b.report['unused_code_trim']=dict(policy='preserve exposed adapters; discard unreachable helpers',reference='A0204',recovered_bytes=1328)
     if '--release' in sys.argv:
-        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232') and BASE=='a0192' and CONNECT and PAGES and STORE
+        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232','a0233') and BASE=='a0192' and CONNECT and PAGES and STORE
         out=b.finish(ROOT/'firmware'/NAME)
         for f in out.glob(f'circuitrhythm-5706-{NAME.upper()}.*'):f.replace(out/f'rhythmplus-{NAME.upper()}{f.suffix}')
         return

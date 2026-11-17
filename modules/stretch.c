@@ -84,11 +84,14 @@ static const u32 RGB[NLEN] = { 0xE6D166, 0xCCDA66, 0xB3E466, 0x99ED66, 0x80F666,
 #define GR_ON_RGB 0x35DF74                  /* Granular's editor: its on / off pad */
 #define GR_OFF_RGB 0xFF3040
 
-/* the project block: "ST", check, version, then 3 B a track: bit 7 on, bit 3 the part fits, bits 0-2 the choice (0 Follow, 1-6 a length);
-   Follow's tempo x 10 (u16): the tempo at which the sample plays at its own speed. No good block: every track off. */
+/* the project block: "ST", check, version, then 3 B a track: bit 7 on, bits 4-6 Granular's Scan length (0 none, 1-6), bit 3 the
+   part fits, bits 0-2 the choice (0 Follow, 1-6 a length); Follow's tempo x 10 (u16): the tempo at which the sample plays at its
+   own speed. No good block: every track off. */
 #define BLK_LEN (4 + 8 * 3)
 #define VERSION 1
 #define ON 0x80
+#define GLEN 0x70
+#define GLEN_AT 4
 #define PART 0x08
 
 #define SENT_TGT 0x80000000u                /* sent[t]: the length sent, with this bit, or the speed */
@@ -228,8 +231,8 @@ static void words_granular(u32 t)           /* Granular's own values for words 0
 }
 static void granular_follow(u32 t, u32 bpm)  /* a length pad's Scan follows the tempo and the sample until Scan is turned */
 {
-    u32 r = rec(t), ch = r & 7;
-    if (!(r & ON) || !ch || ch > NLEN || !S->gscan[t])
+    u32 r = rec(t), ch = (r & GLEN) >> GLEN_AT;
+    if (!ch || ch > NLEN || !S->gscan[t])
         return;
     u32 now = SCAN(GSTATE, t, ~0u), v = scan_for(src_len(t, 1), length_of(ch - 1, bpm));
     if (now == S->gscan[t] && v != ~0u && v != now) {
@@ -308,7 +311,7 @@ static void draw(volatile u32 *out, u32 t, u32 bpm)
         out[PAD_FIT] = 0;
         for (u32 k = 0; k < NLEN; k++) {
             u32 ok = now != ~0u && scan_for(n, length_of(k, bpm)) != ~0u;
-            u32 chosen = on && ch == k + 1 && now == S->gscan[t];
+            u32 chosen = (r & GLEN) >> GLEN_AT == k + 1 && now == S->gscan[t];
             out[PAD_LEN + k] = ok ? scl(RGB[k], chosen ? full : lo) : cue;
         }
         return;
@@ -351,7 +354,7 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
     if (pad < PAD_ON || pad > PAD_GRAN || !RST())
         return ((hook_fn)FN(PREV_PAD))(sub, pad, vel, a3);
     u32 t = sel_track(), bpm = tempo(), r = rec(t), ch = r & 7, t10 = r >> 8, part = r & PART;
-    u32 off = (r & ~ON & 0xFF) | t10 << 8, follow = ON | part | (bpm * 10) << 8;    /* Follow takes the tempo each time it starts */
+    u32 glen = r & GLEN, off = (r & ~ON & 0xFF) | t10 << 8, follow = ON | glen | part | (bpm * 10) << 8;    /* Follow takes the tempo each time it starts */
     u32 back = ch ? ON | (r & 0xFF) | t10 << 8 : follow;                            /* on again: the kept length */
     if (pad == PAD_GRAN) {                  /* Granular and stretch turn each other off */
         GSWITCH(GSTATE, t, !GSWITCH(GSTATE, t, ~0u));
@@ -367,10 +370,10 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
         if (pad < PAD_LEN)
             return 0;
         u32 k = pad - PAD_LEN, now = SCAN(GSTATE, t, ~0u), ours = S->gscan[t] && now == S->gscan[t];
-        if (ours && (r & ON) && ch == k + 1) {  /* the chosen pad again: Scan back to before, the choice kept */
+        if (ours && glen >> GLEN_AT == k + 1) {  /* the chosen pad again: Scan back to before */
             SCAN(GSTATE, t, S->gprev[t] ? S->gprev[t] : SCAN_DEFAULT);
             S->gscan[t] = 0;
-            rec_put(t, (r & ~ON & 0xFF) | t10 << 8);
+            rec_put(t, (r & ~GLEN & 0xFF) | t10 << 8);
             return 0;
         }
         u32 v = now == ~0u ? ~0u : scan_for(src_len(t, 1), length_of(k, bpm));
@@ -379,7 +382,7 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
                 S->gprev[t] = (u16)now;
             SCAN(GSTATE, t, v);
             S->gscan[t] = (u16)v;
-            rec_put(t, ON | part | (k + 1) | t10 << 8);
+            rec_put(t, (r & ~GLEN & 0xFF) | (k + 1) << GLEN_AT | t10 << 8);
         }
         return 0;
     }
@@ -390,7 +393,7 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
     } else if ((r & ON) && ch == pad - PAD_LEN + 1) {
         rec_put(t, follow);
     } else if (reachable(src_len(t, part), length_of(pad - PAD_LEN, bpm))) {
-        rec_put(t, ON | part | (pad - PAD_LEN + 1) | t10 << 8);
+        rec_put(t, ON | glen | part | (pad - PAD_LEN + 1) | t10 << 8);
     }
     return 0;
 }

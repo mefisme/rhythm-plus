@@ -8,7 +8,7 @@ import struct
 import sys
 from pathlib import Path
 
-os.environ.setdefault("RH_BUILD", Path(sys.argv[2]).parent.name if len(sys.argv) > 2 else "a0232")
+os.environ.setdefault("RH_BUILD", Path(sys.argv[2]).parent.name if len(sys.argv) > 2 else "a0233")
 import emu_tmenu as ET  # noqa: E402  (ourram's layout from the build's manifest)
 from emu_tmenu import C, T, call, check, ptr, u32  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
@@ -368,8 +368,8 @@ def main():
     call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
     back = uc.reg_read(UC_ARM_REG_R0)
     f = out(uc)
-    check("Granular: the chosen pad again: Scan back to 1100, the pad dim, stretch off with the choice kept",
-          back == 1100 and f[12] == scl(RGB[3], lo) and rec(uc, o)[1] & 0xFF == 3, (back, hex(f[12]), hex(rec(uc, o)[1])))
+    check("Granular: the chosen pad again: Scan back to 1100, the pad dim, no Scan length kept",
+          back == 1100 and f[12] == scl(RGB[3], lo) and not rec(uc, o)[1] & 0x70, (back, hex(f[12]), hex(rec(uc, o)[1])))
     out(uc)
     call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
     check("Granular: released: Scan no longer follows", uc.reg_read(UC_ARM_REG_R0) == 1100, uc.reg_read(UC_ARM_REG_R0))
@@ -378,7 +378,11 @@ def main():
     def granular_on():
         call(uc, KER["c_gr_stretch_switch"], GSTATE, o, 0xFFFFFFFF)
         return uc.reg_read(UC_ARM_REG_R0)
-    r0 = rec(uc, o)[1]
+    before = rec(uc, o)[1]
+    pad(uc, 12)
+    r0 = rec(uc, o)[1] & ~ON
+    check("Granular: pad 13: Scan's 1 bar in its own bits (4-6), stretch's untouched",
+          r0 & 0x70 == 3 << 4 and rec(uc, o)[1] & ~0x70 == before & ~0x70, (hex(before), hex(rec(uc, o)[1])))
     STOCK.clear()
     pad(uc, 8)
     check("Granular on, pad 9: Granular off, stretch on with the kept length", not granular_on() and rec(uc, o)[1] == ON | r0 and STOCK == [],
@@ -390,6 +394,13 @@ def main():
           (granular_on(), hex(rec(uc, o)[1]), STOCK))
     pad(uc, 16)
     check("pad 17 again: Granular off, stretch stays off", not granular_on() and rec(uc, o)[1] == r0, (granular_on(), hex(rec(uc, o)[1])))
+    pad(uc, 8)
+    pad(uc, 16)
+    f = out(uc)
+    call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
+    scan3 = uc.reg_read(UC_ARM_REG_R0)
+    check("pad 9 then pad 17: Granular on again: pad 13 still chosen, Scan where it was", granular_on() and f[12] == scl(RGB[3], full)
+          and scan3 == want and rec(uc, o)[1] & 0x70 == 3 << 4, (hex(f[12]), scan3, hex(rec(uc, o)[1])))
 
     print("FAILED: " + ", ".join(ET.FAILS) if ET.FAILS else "ALL PASS")
     return 1 if ET.FAILS else 0

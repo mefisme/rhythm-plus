@@ -18,7 +18,7 @@ BUILDS = (
     ("A0213", "stable", HERE / "firmware" / "a0213",
      "Granular con ajuste fino, Freeze y Slice hasta 32 porciones; Pattern y Step Mutate; ajustes guardados en la tarjeta SD. Probada en el aparato.",
      "Granular with fine adjust, Freeze and Slice up to 32 slices; Pattern and Step Mutate; settings saved on the SD card. Tested on the unit."),
-    ("A0232", "test", HERE / "firmware" / "a0232",
+    ("A0233", "test", HERE / "firmware" / "a0233",
      "A0213 con time stretch: modo Sample, pads 9-17, la longitud sigue el tempo sin cambiar el tono; se activa sin clic. Clear + pista devuelve el sonido de la pista a sus valores de fábrica. Versión de prueba.",
      "A0213 with time stretch: Sample mode pads 9-17, the length follows the tempo with no change to the pitch; it turns on and off with no click. Clear + track sets the track's sound back to the factory defaults. Test build."),
 )

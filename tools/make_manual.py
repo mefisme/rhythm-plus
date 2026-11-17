@@ -3,7 +3,7 @@ Print it to PDF with:  chrome --headless --print-to-pdf=manual/rhythm_plus_manua
 from html import escape
 from pathlib import Path
 
-FIRMWARE = "A0175"
+FIRMWARE = "A0233"
 OUT = Path(__file__).resolve().parents[1] / "manual" / "rhythm_plus_manual.html"
 
 GRAD = ["ffc866", "ffd966", "fff766", "e5ff66", "c7ff66", "a6ff66", "87ff66", "66ff66"]   # the probability page's colours
@@ -582,7 +582,8 @@ one time; in Gated mode it stops at the end of the note. Each track keeps its ow
 <p>You can turn stretch on and off while the sample plays. On: the sound goes on from where it is. Off: it goes on at the sample's own
 speed to the end of the note; the next note plays without stretch. Each change fades over about 5 ms, so it does not click.</p>
 <p>On a Granular track, pads 11-16 set Scan, so the playhead moves through the part from K2 to K3 in that length, at the tempo. Tap
-the bright pad again: Scan goes back to the value it had before. If you turn Scan, the pad is no longer chosen. Pad 9 is dim red and
+the bright pad again: Scan goes back to the value it had before. If you turn Scan, the pad is no longer chosen. The track keeps its
+Scan length when Granular is turned off and on, apart from the stretch length. Pad 9 is dim red and
 pad 10 is dark. While Slice is on, pads 11-16 are dim red.</p>"""))
 
     pages.append(page(f"""
