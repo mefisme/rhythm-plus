@@ -24,9 +24,13 @@ Rhythm Plus is a work in progress.
 ## Risks
 
 - You install modified firmware at your own risk.
-- Make a full copy of the SD card (projects, packs and samples) before you install.
+- Make a full copy of the SD card (projects, packs and samples) on a computer before you install.
+- Rhythm Plus keeps some project settings in the `RP_AUTO` folder on the SD card. When you back up, copy the whole card with this folder. A backup made with Components may not include it.
+- Projects saved with Rhythm Plus are not tested on the official firmware.
 - A test build can have errors that damage stored projects or samples. Do not use a test build on important projects.
 - Install Rhythm Plus only on a Circuit Rhythm.
+
+**Tip:** you can copy your SD card onto a second card and use the second card for Rhythm Plus. Your projects from the official firmware then stay as they are.
 
 ## Get started
 
