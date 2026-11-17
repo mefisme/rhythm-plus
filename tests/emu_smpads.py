@@ -167,7 +167,7 @@ def main():
     clear(uc, False)
     check("Clear + pad 1 at pitch 64: pitch kept, «applied» to none", pitch(uc, t) == 64 and UNAPPLIED == [fit] and STOCK_PADS == [])
     setpitch(uc, t, 70)
-    for i in (2, 7, 8, 9, 14, 15, 31):
+    for i in (2, 7, 31) if "arm" in ET.MAN["report"].get("stretch", {}) else (2, 7, 8, 9, 14, 15, 31):   # pads 9-16: stretch's (emu_stretch_arm)
         for held in (False, True):
             clear(uc, held)
             pad(uc, t, i)

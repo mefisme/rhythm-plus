@@ -17,7 +17,8 @@ GRAIN_META_WORDS=B.WORDS+G.MAXG
 HOST_CONTROL,HOST_SNAPSHOT,HOST_PARAMS,HOST_ALLOC=0x2b00,0x2b20,0x2b60,0x2be0
 
 
-def code(bounded=True,host_mailbox=False):
+def code(bounded=True,host_mailbox=False,stretch_entry=None):
+    """stretch_entry: a P address called after the Granular tracks, before the acknowledgement."""
     segments,producer=P.code(in_place=True,grain_cap=TEMP+1 if bounded else None)
     metadata_address=[f'move y:>${TEMP:x},a','asl #4,a,a','move a1,x0',
                       'asl #2,a,a','add x0,a',f'add #>${META:x},a']
@@ -70,7 +71,8 @@ def code(bounded=True,host_mailbox=False):
               f'move #>${P.SEEN:x},r0','do #$4,${save_seen:x}',
               'move y:(r0)+,a','move a,y:(r1)+',('label','save_seen'),
               ('label','next'),f'move y:>${TEMP:x},a','add #>$1,a',f'move a1,y:>${TEMP:x}',
-              'cmp #>$8,a',('jcc','lt','track'),('jsr',producer['labels']['acknowledge'])]
+              'cmp #>$8,a',('jcc','lt','track'),*([('jsr',stretch_entry)] if stretch_entry else []),
+              ('jsr',producer['labels']['acknowledge'])]
     if bounded:
         at=items.index(('label','track'))+1
         items[at:at]=[f'move y:>${TEMP+3:x},a',f'move y:>${TEMP+4:x},x0','and x0,a',('jcc','eq','next')]

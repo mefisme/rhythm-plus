@@ -13,6 +13,8 @@ def main():
     u=E.setup(fw,(ROOT/'remix/stock/rhythm-ram-frd1-synced.bin').read_bytes())
     r=E.MAN['report']['heldlights'];fn=int(r['labels']['c_hp_out'],16);previous=int(r['previous'],16)
     root=E.rhbuild.bl_target(bytearray(fw),E.T.OUT_CALL)
+    st=E.MAN['report'].get('stretch',{}).get('arm')
+    if st and root==int(st['labels']['c_st_out'],16):root=int(st['prev']['prev_out'],16)   # stretch's head calls the chain first
     if root!=fn:
         gui=E.MAN['report']['granular']['ui']
         shadow=E.MAN['report']['storageshadow']

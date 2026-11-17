@@ -16,6 +16,9 @@ def read(n):
     d=ROOT/'firmware'/n
     return (d/f'rhythmplus-{n.upper()}.bin').read_bytes(),json.loads((d/'manifest.json').read_text())['report']
 
+def flat_p(stream):
+    return {a+i:w for sp,a,ws in rhdsp1.parse(stream)[0] if sp=='p' for i,w in enumerate(ws)}
+
 def main():
     name=sys.argv[1] if len(sys.argv)>1 else 'dz001'
     image,rep=read(name);old,orep=read('a0205')
@@ -30,7 +33,14 @@ def main():
     assert Z.raw_stream(image)==raw
     assert hashlib.sha256(raw).hexdigest()==rep['dspzip']['raw_sha256']
     assert core0.sent(image,rep)==(loader,stream)
-    assert rhdsp1.sent(bytearray(image),rep,'pitchmod')==rhdsp1.sent(bytearray(old),orep,'pitchmod')
+    if 'stretch' in rep:    # time stretch changes the packed granular stages only (emu_stretch_route)
+        lo,hi=int(rep['granular']['core1_start'],16),int(rep['granular']['core1_end'],16)
+        mine,base=(flat_p(rhdsp1.sent(bytearray(i),r,'pitchmod')) for i,r in ((image,rep),(old,orep)))
+        hooks={0x122,0x23d,0x25c,0x25d,0x22f,0x230,0x231,0x232,0x233,0x2f3,0x4e6}     # their targets move with the stages
+        keep=lambda a:not lo<=a<hi and a not in hooks
+        assert {a:w for a,w in mine.items() if keep(a)}=={a:w for a,w in base.items() if keep(a) and a<max(mine)+1}
+    else:
+        assert rhdsp1.sent(bytearray(image),rep,'pitchmod')==rhdsp1.sent(bytearray(old),orep,'pitchmod')
     print('PASS core0 loader and all core1 words equal A0205; core0 stream decodes exactly' if fine else
           'PASS every core0/core1 program word equals A0205; no sound algorithm or grain capacity change')
     u=machine(image,(ROOT/'remix/stock/rhythm-ram-frd1-synced.bin').read_bytes(),mclass=True)
@@ -62,6 +72,8 @@ def main():
     assert len(native)==1 and native[0][0]==int(rep['dspzip']['loader'],16)
     assert max(chunks[1:])==240
     print(f'PASS cold native upload: {len(raw)} exact bytes, 240-byte circular history doubles as SPI staging')
+    if rep['dspzip']['format']=='RZ2':
+        print(f"PASS the stream moves to its rest at {rep['dspzip']['rest']} after {rep['dspzip']['cut']} bytes")
     slot=int(rep['dspzip']['scratch'],16);size=rep['dspzip']['scratch_bytes']
     # Preserve all automation ITCM and all SRAM outside the dedicated slot,
     # including unsaved settings, native heap, stack gap and storage DMA buffer.
@@ -107,6 +119,7 @@ def main():
         compressed=Z._pack(payload)
         assert Z.unpack_stream(compressed,len(payload))==payload
         blob=Z.MAGIC+struct.pack('<II',len(payload)//3,zlib.crc32(payload))+compressed
+        if rep['dspzip']['format']=='RZ2':blob=Z.SPLIT+blob[4:12]+bytes(8)+blob[12:]   # its decoder reads a 20-byte header
         u.mem_write(0x08001000,blob);groups.clear();call(u,decoder,0x08001000,0)
         assert len(groups)==1 and bytes(groups[0][1])==payload
     print('PASS actual ARM decoder edge cases: overlap, 240-byte wrap, long matches, random literals and partial final chunks')

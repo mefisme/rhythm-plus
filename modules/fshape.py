@@ -101,6 +101,11 @@ SM0, NSM = 29, 1                                         # (sm) value 29: the Sa
 SM_XF, SM_RD, SM_EF = 1, 2, 4                            # its bits: loop crossfade, retrigger de-click, end fade
 SMDEF = (SM_RD | SM_EF,)
 SMBLK_OFF, SMBLK_LEN = 384, 4 + 2 * NSM * 8              # "SM", the check byte, 0, 8 tracks x 1 halfword; after OFF54's blocks
+REMIX_ONLY54 = {"modmx"}                                  # Remix modules Rhythm Plus never installs: their bytes are ours
+def remix54():
+    """The (offset, length) of each OFF54 block a Rhythm Plus build can install."""
+    import rhrec
+    return [v for k, v in rhrec.OFF54.items() if k not in REMIX_ONLY54]
 SMMARK0, SMMARK1 = ord("S"), ord("M")
 SMF = PS.ENV_Y + 2 * PS.STRIDE + 0x30                    # (sm) core 1's Y, + t: the switches (past envelope 2's points)
 SMON = [False]                                           # set by strip(sm=True)
@@ -1212,7 +1217,7 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
     assert getattr(PS, "FILT", None), "fshape.strip() before pitchmod"
     assert "fshape" in rhstate.OFF and rhstate.OFF["fshape"][1] >= 8, "fshape needs ourram's slot (RH_FSHAPE=1)"
     rhrec.check_layout()
-    assert all(o + n <= BLK_OFF for o, n in rhrec.OFF54.values()) and BLK_OFF + BLK_LEN <= 530, "the block between Remix's and the page block"
+    assert all(o + n <= BLK_OFF for o, n in remix54()) and BLK_OFF + BLK_LEN <= 530, "the block between Remix's and the page block"
     if vol:
         assert len(PS.FILT) > 2 and report["pshape"].get("vol"), "vol: strip(vol=True) and pshape's vol"
         gm, pc = rhrec.OFF["granmulti"], rhrec.OFF["patchain"]
@@ -1230,7 +1235,7 @@ def install(img, report, base_addr, vol=False, move=False, px=False, glide=False
         pc = rhrec.OFF["patchain"]
         assert glide and FADE[0] and PXBLK_OFF + PXBLK_LEN <= FIBLK_OFF and FIBLK_OFF + FIBLK_LEN <= pc[0] + pc[1] and FIBLK_OFF < 256, "fade: strip(fade=True)"
     if sm:
-        assert fade and SMON[0] and all(o + n <= SMBLK_OFF for o, n in rhrec.OFF54.values()) and SMBLK_OFF + SMBLK_LEN <= BLK_OFF, "sm: strip(sm=True)"
+        assert fade and SMON[0] and all(o + n <= SMBLK_OFF for o, n in remix54()) and SMBLK_OFF + SMBLK_LEN <= BLK_OFF, "sm: strip(sm=True)"
     code, labels = arm_code(base_addr, L, vol, move, px, glide, fade, sm, filt=filt)
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4:

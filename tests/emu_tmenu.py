@@ -60,6 +60,7 @@ os.environ["RH_TMCLICK"] = str(MAN["report"].get("tmenu", {}).get("tmclick", int
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / d) for d in ("modules", "builds", "tests", "remix/tools")]
 os.environ["RH_PAGECLEAR"] = "1" if MAN["report"].get("tmenu", {}).get("pageclear") else "0"
 os.environ["RH_TRACKRESET"] = "1" if MAN["report"].get("trackreset") else "0"
+os.environ["RH_TRACKWIPE"] = "1" if MAN["report"].get("trackreset", {}).get("wipe") else "0"
 os.environ["RH_GRAIN"] = "1" if "grain" in MAN["report"] else "0"
 os.environ["RH_PSHAPE"] = "1" if "pshape" in MAN["report"] else "0"
 os.environ["RH_FSHAPE"] = "1" if "fshape" in MAN["report"] else "0"

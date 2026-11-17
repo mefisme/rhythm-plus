@@ -64,7 +64,11 @@ def main():
     uc.mem_write(E.C.CTRL + 0xA0, struct.pack('<I', held | (1 << 23)))
     E.press(uc, t); E.release(uc, t); E.press(uc, t); E.release(uc, t)
     E.check('confirmed reset updates stock knob control value', E.kval(uc, t, 4) == defaults[4], E.kval(uc, t, 4))
-    E.check('confirmed reset updates level/pan/send controls to load snapshot', tuple(read(gid) for _, gid in ids) == baseline, tuple(read(gid) for _, gid in ids))
+    if E.MAN['report']['trackreset'].get('wipe'):
+        want = tuple(stock[default_table + p] for p, _ in ids)
+        E.check('confirmed wipe updates level/pan/send controls to their defaults', tuple(read(gid) for _, gid in ids) == want, tuple(read(gid) for _, gid in ids))
+    else:
+        E.check('confirmed reset updates level/pan/send controls to load snapshot', tuple(read(gid) for _, gid in ids) == baseline, tuple(read(gid) for _, gid in ids))
     print('ALL PASS' if not E.FAILS else f'{len(E.FAILS)} FAILED')
     if E.FAILS: raise SystemExit(1)
 

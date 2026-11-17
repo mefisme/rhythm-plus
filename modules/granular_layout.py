@@ -24,10 +24,12 @@ class Region:
 REGIONS=(
     Region(-1,'shared',0x37400,32,'granular route controls'),
     Region(-1,'shared',0x37420,64,'granular native snapshots'),
+    Region(-1,'shared',0x37460,8,'granular native reader positions'),
     Region(1,'y',0x1f80,7,'granular snapshot saves'),
     Region(1,'y',0x1f90,8,'granular accepted-note serials'),
     Region(1,'y',0x1f98,2,'granular note scratch'),
     Region(1,'y',0x1f9a,1,'granular Flow scratch'),
+    Region(1,'y',0x1fa0,16,'stretch crossfade gains and native reader flags'),
     Region(0,'x',0x1400,256,'granular working controls and voice'),
     Region(0,'x',0x1500,256,'granular sample copy'),
     Region(0,'y',0x1410,32,'granular sum'),

@@ -188,7 +188,7 @@ def install(img, report, base_addr):
     assert not any(k in report for k in ("stockplus", "pshape", "fshape")), "smswitch replaces fshape's switches"
     assert "smswitch" in rhstate.OFF and "cthresh" in rhstate.OFF, "smswitch needs ourram's slots (RH_SMSWITCH=1)"
     rhrec.check_layout()
-    assert all(o + n <= FS.SMBLK_OFF for o, n in rhrec.OFF54.values()) and FS.SMBLK_OFF + FS.SMBLK_LEN <= FS.BLK_OFF
+    assert all(o + n <= FS.SMBLK_OFF for o, n in FS.remix54()) and FS.SMBLK_OFF + FS.SMBLK_LEN <= FS.BLK_OFF
     lab = lambda m, k: int(report[m]["labels"][k], 16)                         # noqa: E731
     prev = rhbuild.bl_target(img, CI.LED_CALLS[0])
     assert all(rhbuild.bl_target(img, c) == prev for c in CI.LED_CALLS)

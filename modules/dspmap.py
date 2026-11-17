@@ -169,6 +169,13 @@ def regions(rep):
     if "autobank" in rep:
         for region in rep["autobank"]["regions"]:
             add(region["core"], region["space"], int(region["start"], 16), region["words"], "autobank: opt-in candidate-bank proof")
+    if rep.get('stretch'):
+        for region in rep['stretch']['regions']:
+            add(0,region['space'],int(region['start'],16),region['words'],'stretch: '+region['owner'])
+    if rep.get('c0idle'):
+        ci=rep['c0idle']
+        add(0,'p',int(ci['at'],16),ci['words'],'c0idle: idle counter')
+        add(0,'y',int(ci['y_idle'],16),1,'c0idle: idle passes')
     granular=rep.get('granular')
     if granular and granular.get('integration_version')==1:
         for region in granular['regions']:

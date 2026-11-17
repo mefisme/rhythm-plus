@@ -415,6 +415,9 @@ enum { GR_MAGIC=0x31524743,GR_READY=1,GR_INITIALIZED=2,GR_STARTING=4,GR_DIRTY=8 
 enum { G_TAIL_MS=1200,G_START_SETTLE_MS=250 };
 #define GR_CONTROL 0x37400u
 #define GR_SNAPSHOT 0x37420u
+#if G_STRETCH
+#define G_STRETCHED(t) ((*(volatile uint8_t *)G_STRETCH_ON>>(t))&1)  /* stretch sends the track's route and words 0, 2, 15 */
+#endif
 #define GR_POOL 0x2400u
 typedef void (*GNative1)(uint32_t);
 static uint32_t gr_narrow_read(uint32_t host_address) {
@@ -623,6 +626,36 @@ uint32_t c_gr_runtime_put(GRuntime *state,uint32_t track,uint32_t knob,uint32_t 
     if(changed) { state->dirty|=1u<<track;state->flags|=GR_DIRTY; }
     return changed;
 }
+#if G_FINE_CONTROLS
+/* Scan in sixteenths of a knob step (1024 = still) for stretch's length pads: value sets it, ~0 only reads.
+ * ~0 back while Slice is on, where Scan picks the slice step instead of a speed. */
+uint32_t c_gr_runtime_scan(GRuntime *state,uint32_t track,uint32_t value) {
+    c_gr_runtime_init(state);
+    if(track>=8 || gr_count(state->shift[track][G_SHIFT_SLICE])) return ~0u;
+    if(value<128*G_FINE_STEPS && value!=gr_fine_value(state,track,3)) {
+        state->parameters.knob[track][3]=(uint8_t)(value/G_FINE_STEPS);state->fine[track][3]=(uint8_t)(value%G_FINE_STEPS);
+        state->dirty|=1u<<track;state->flags|=GR_DIRTY;
+    }
+    return gr_fine_value(state,track,3);
+}
+#endif
+#if G_STRETCH
+/* Granular's own route word 3 for a track stretch hands back: 1 while a One Shot ends with its sample, else 0. */
+uint32_t c_gr_route_word(GRuntime *state,uint32_t track) {
+    return track<8?(state->one_shot>>track)&1:0;
+}
+/* Sample mode's pad 17: Granular on (in its last mode) or off, as the editor's pad 17 sets it; on = ~0 only reads. 1: on. */
+uint32_t c_gr_stretch_switch(GRuntime *state,uint32_t track,uint32_t on) {
+    c_gr_runtime_init(state);
+    if(track>=8) return 0;
+    uint32_t config=state->config[track];
+    if(on<2 && state->owner.track[track].phase<G_REPLACE) {
+        state->config[track]=(uint8_t)((config&~3u)|(on?((config&32)?G_TEXTURE:G_TRIGGERED):0));
+        state->flags|=GR_DIRTY;
+    }
+    return (state->config[track]&3)!=0;
+}
+#endif
 uint32_t c_gr_runtime_flags(GRuntime *state,uint32_t track,uint32_t flags) {
     if(track>=8 || flags>3) return 0;
     state->config[track]=(state->config[track]&~8u)|(uint8_t)((flags&2)<<2);
@@ -728,11 +761,23 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
             for(uint32_t track=0;track<8;track++) requested|=state->config[track]&3;
             if(!requested) return;
             // Leave stock playback in charge until the DSP has published status.
+#if G_STRETCH
+            uint32_t acked=0;  // a stretched track shows stretch's tags, so any track's acknowledgement
+            for(uint32_t track=0;track<8 && !acked;track++) {
+                uint32_t status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+                acked=status==0x674732 || status==0x674331;
+            }
+            if(!acked) return;
+#else
             uint32_t status=c_gr_shared_read(GR_SNAPSHOT);
             if(status!=0x674732 && status!=0x674331) return;
+#endif
         }
         for(uint32_t budget=0;budget<8 && state->cursor<152;budget++,state->cursor++) {
             uint32_t track=state->cursor/19,index=state->cursor%19;
+#if G_STRETCH
+            if(G_STRETCHED(track) && (index<4 || index==5 || index==18)) continue;
+#endif
             if(index==0) gr_write(GR_CONTROL+4*track,0);
             else if(index==1) gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
             else if(index==2) gr_write(GR_CONTROL+4*track+3,1);

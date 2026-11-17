@@ -1,10 +1,15 @@
-"""Confirmed per-track reset, current-pattern automation only (MIT; Rhythm Plus).
+"""Confirmed per-track reset (MIT; Rhythm Plus).
 
 Clear + track arms red without forwarding the press; release and press the same
 track with Clear still held to confirm. Clear release, a pad, or another button
 cancels. Load snapshots follow Remix: 25 parameter bytes and selected sample.
-Sound knobs/fine values and Stock+ use defaults; other parameters use the snapshot.
-Notes and sample flips remain. No settings of another track or pattern are cleared.
+Sound knobs/fine values and Stock+ use defaults; other parameters use the snapshot;
+the 12 lanes of the current pattern are deleted.
+RH_TRACKWIPE=1, the wipe: parameters 1-24 and the Sample mode switches to their
+defaults, the 12 lanes deleted in all 8 patterns; the sample (parameter 0 and the
+selection) stays. No snapshot. Builds that chain c_trreset_pages_call turn their
+own track state off there (Granular, stretch).
+Notes, sample flips and pattern settings remain. Other tracks are not touched.
 """
 import os
 import sys
@@ -19,9 +24,14 @@ import countin as C
 import rhstate
 
 SIZE, PHOTO, TAG = 220, 12, 0xC3
+WIPE_SIZE = 28                                   # + 1 armed, + 2 released, + 3 confirmed, + 4 its tick, + 8 the taken buttons; 220 - 28 keeps the next slots 32-aligned
 PLAY_MODE = 1
 KEEP_PLAY_MODE = os.environ.get("RH_GRANULAR") == "1"
 LOAD, RESEND = 0x080379AE, 0x08031A10
+DEFAULTS = 0x0806900C                            # the stock's 25 track parameter defaults
+AUTO_RECS = 0x2003D380                           # [+ 4 t]: the track's record: + 4 its patterns, + 0x40 the held step
+CLEAR_LANE, FILL = 0x08047CA8, 0x08022BF8        # (record, lane): the current pattern's lane; (dst, n, byte)
+PAT_SIZE, LANES, LANE_SIZE, NPAT = 0xA28, 0x128, 0xC0, 8
 RELEASE, RELEASE_CONT = 0x0803DDB0, 0x0803DDB4
 OUT_CALL = 0x0803E802
 TRK_COLOURS = (0x43, 0x2F, 0x47, 0x4B, 0x37, 0x25, 0x12, 0x3B)
@@ -29,7 +39,8 @@ TRK_COLOURS = (0x43, 0x2F, 0x47, 0x4B, 0x37, 0x25, 0x12, 0x3B)
 
 def install(img, report, base_addr, viewsync=False, softclear=False):
     import rhbuild
-    assert rhstate.OFF['trackreset'][1] == SIZE
+    wipe = os.environ.get("RH_TRACKWIPE") == "1"
+    assert rhstate.OFF['trackreset'][1] == (WIPE_SIZE if wipe else SIZE)
     slot = rhstate.ST + rhstate.OFF['trackreset'][0]
     prevbtn = rhbuild.bw_target(img, C.BTN_ENTRY)
     prevled = rhbuild.bl_target(img, C.LED_CALLS[0])
@@ -49,63 +60,32 @@ def install(img, report, base_addr, viewsync=False, softclear=False):
     E(b_cond, 'state_x', 'eq'); imm(0, slot)
     a.label('state_x'); ret([4])
 
-    a.label('c_trphoto')
-    E(push_list, [4, 5, 6, 7], lr=True)
-    E(bl, 'c_trstate'); E(cmp_imm, 0, 0); E(b_cond, 'photo_x', 'eq')
-    E(mov_reg, 7, 0); E(ldrb_imm, 0, 7, 0); E(cmp_imm, 0, TAG)
-    E(b_cond, 'photo_x', 'eq')
-    E(mov_reg, 6, 7); E(adds_imm8, 6, PHOTO); E(movs_imm, 4, 0)
-    a.label('photo_track'); E(movs_imm, 5, 0)
-    a.label('photo_param')
-    E(mov_reg, 0, 4); E(adds_imm8, 0, 0x10); E(mov_reg, 1, 5); E(bl, 0x08046410)
-    E(strb_imm, 0, 6, 0); E(adds_imm8, 6, 1)
-    E(adds_imm8, 5, 1); E(cmp_imm, 5, 25); E(b_cond, 'photo_param', 'lo')
-    E(mov_reg, 0, 4); E(bl, 'c_trsample')
-    E(movs_imm, 1, 0); E(bl, C.PARAM_GET); E(ldrb_imm, 0, 0, 0)
-    E(strb_imm, 0, 6, 0); E(adds_imm8, 6, 1)
-    E(adds_imm8, 4, 1); E(cmp_imm, 4, 8); E(b_cond, 'photo_track', 'lo')
-    E(movs_imm, 0, TAG); E(strb_imm, 0, 7, 0)
-    a.label('photo_x'); ret([4, 5, 6, 7])
+    if not wipe:
+        a.label('c_trphoto')
+        E(push_list, [4, 5, 6, 7], lr=True)
+        E(bl, 'c_trstate'); E(cmp_imm, 0, 0); E(b_cond, 'photo_x', 'eq')
+        E(mov_reg, 7, 0); E(ldrb_imm, 0, 7, 0); E(cmp_imm, 0, TAG)
+        E(b_cond, 'photo_x', 'eq')
+        E(mov_reg, 6, 7); E(adds_imm8, 6, PHOTO); E(movs_imm, 4, 0)
+        a.label('photo_track'); E(movs_imm, 5, 0)
+        a.label('photo_param')
+        E(mov_reg, 0, 4); E(adds_imm8, 0, 0x10); E(mov_reg, 1, 5); E(bl, 0x08046410)
+        E(strb_imm, 0, 6, 0); E(adds_imm8, 6, 1)
+        E(adds_imm8, 5, 1); E(cmp_imm, 5, 25); E(b_cond, 'photo_param', 'lo')
+        E(mov_reg, 0, 4); E(bl, 'c_trsample')
+        E(movs_imm, 1, 0); E(bl, C.PARAM_GET); E(ldrb_imm, 0, 0, 0)
+        E(strb_imm, 0, 6, 0); E(adds_imm8, 6, 1)
+        E(adds_imm8, 4, 1); E(cmp_imm, 4, 8); E(b_cond, 'photo_track', 'lo')
+        E(movs_imm, 0, TAG); E(strb_imm, 0, 7, 0)
+        a.label('photo_x'); ret([4, 5, 6, 7])
     a.label('c_trsample')
     E(movw, 1, 0x190); E(muls, 0, 1); imm(1, 0x200470D4)
     E(adds_reg, 0, 0, 1); E(ldr_imm, 0, 0, 0x60); E(raw, h(0x4770))
 
-    # r0 target track. Restore non-knob settings, then reset pages and all 12 lanes.
-    a.label('c_trreset')
-    E(push_list, [4, 5, 6, 7], lr=True); E(mov_reg, 4, 0)
-    E(bl, 'c_trphoto'); imm(7, slot)
-    E(ldrb_imm, 0, 7, 0); E(cmp_imm, 0, TAG); E(b_cond, 'reset_x', 'ne')
-    E(movs_imm, 0, 26); E(muls, 0, 4); E(adds_imm8, 0, PHOTO); E(adds_reg, 7, 7, 0)
-    E(movs_imm, 5, 0)
-    a.label('reset_param')
-    if KEEP_PLAY_MODE:
-        E(cmp_imm, 5, PLAY_MODE); E(b_cond, 'reset_next', 'eq')
-    E(cmp_imm, 5, 6); E(b_cond, 'reset_write', 'lo')
-    E(cmp_imm, 5, 15); E(b_cond, 'reset_next', 'ls')
-    a.label('reset_write')
-    imm(0, 0x20010E10); E(mov_reg, 1, 4); E(adds_imm8, 1, 0x10)
-    E(mov_reg, 2, 5); E(adds_reg, 3, 7, 5); E(ldrb_imm, 3, 3, 0); E(bl, 0x08031A38)
-    if viewsync:
-        E(mov_reg, 0, 4); E(mov_reg, 1, 5)
-        E(adds_reg, 2, 7, 5); E(ldrb_imm, 2, 2, 0)
-        E(bl, int(report['pageclear']['labels']['c_pcsync'], 16))
-    a.label('reset_next')
-    E(adds_imm8, 5, 1); E(cmp_imm, 5, 25); E(b_cond, 'reset_param', 'lo')
-    E(mov_reg, 0, 4); E(bl, 'c_trsample'); E(mov_reg, 6, 0)
-    E(movs_imm, 1, 0); E(bl, 0x0803FD26)
-    E(ldrb_imm, 1, 7, 25); E(strb_imm, 1, 0, 0)
-    E(mov_reg, 0, 6); E(bl, 0x0803FBEC)
-    E(mov_reg, 0, 4); E(movs_imm, 1, 6)
-    a.label('c_trreset_pages_call'); E(bl, pcreset)
-    imm(0, 0x2003D380); E(lsls_imm, 1, 4, 2); E(adds_reg, 0, 0, 1); E(ldr_imm, 4, 0, 0)
-    E(ldr_imm, 0, 4, 0x40); E(movs_imm, 1, 0); E(bl, C.PARAM_GET)
-    E(mov_reg, 6, 0); E(ldrb_imm, 7, 6, 0)
-    E(movs_imm, 0, 0); E(strb_imm, 0, 6, 0); E(movs_imm, 5, 8)
-    a.label('reset_lane')
-    E(mov_reg, 0, 4); E(mov_reg, 1, 5); E(bl, 0x08047CA8)
-    E(adds_imm8, 5, 1); E(cmp_imm, 5, 12); E(b_cond, 'reset_lane', 'lo')
-    E(strb_imm, 7, 6, 0)
-    a.label('reset_x'); ret([4, 5, 6, 7])
+    if wipe:
+        wipe_items(a, E, imm, ret, report, pcreset, viewsync)
+    else:
+        reset_items(a, E, imm, ret, report, pcreset, viewsync, slot)
 
     # Button wrapper consumes protected track presses before Stock+ or Track + sees them.
     a.label('c_trbtn')
@@ -164,9 +144,10 @@ def install(img, report, base_addr, viewsync=False, softclear=False):
     E(movs_imm, 1, 0); E(str_imm, 1, 0, 0); E(str_imm, 1, 0, 8)
     a.label('load_x')
     E(raw, C.popw([0, 1, 2, 3], lr=True)); E(b_w, prevload)
-    a.label('c_trled')
-    E(push_list, [0, 1, 4], lr=True); E(bl, prevled); E(bl, 'c_trphoto')
-    ret([0, 1, 4])
+    if not wipe:
+        a.label('c_trled')
+        E(push_list, [0, 1, 4], lr=True); E(bl, prevled); E(bl, 'c_trphoto')
+        ret([0, 1, 4])
 
     a.label('c_trpad')
     E(push_list, [0, 1, 2, 3], lr=True)
@@ -229,9 +210,82 @@ def install(img, report, base_addr, viewsync=False, softclear=False):
     rhbuild.patch(img, RELEASE, 'push {r3, r4, r5, lr}|mov r4, r0', b_w(RELEASE, labels['c_trrelease']))
     rhbuild.patch(img, LOAD, f'b.w #{prevload:#x}', b_w(LOAD, labels['c_trload']))
     rhbuild.patch(img, 0x0803D7FE, f'b.w #{prevpad:#x}', b_w(0x0803D7FE, labels['c_trpad']))
-    for c in C.LED_CALLS:
+    for c in C.LED_CALLS if not wipe else ():
         rhbuild.patch(img, c, f'bl #{prevled:#x}', bl(c, labels['c_trled']))
     rhbuild.patch(img, OUT_CALL, f'bl #{prevout:#x}', bl(OUT_CALL, labels['c_trout']))
-    report['trackreset'] = dict(viewsync=viewsync, softclear=softclear, slot=hex(slot), size=SIZE, prev_btn=hex(prevbtn), prev_out=hex(prevout),
+    report['trackreset'] = dict(viewsync=viewsync, softclear=softclear, **({'wipe': True} if wipe else {}), **({'keep_play_mode': True} if KEEP_PLAY_MODE and not wipe else {}), slot=hex(slot), size=WIPE_SIZE if wipe else SIZE, prev_btn=hex(prevbtn), prev_out=hex(prevout),
         labels={k: hex(v) for k, v in labels.items() if k.startswith('c_')})
     return labels, code
+
+
+def reset_items(a, E, imm, ret, report, pcreset, viewsync, slot):
+    """c_trreset(r0 = track): non-knob settings and the sample from the snapshot, then the pages and the current pattern's 12 lanes."""
+    a.label('c_trreset')
+    E(push_list, [4, 5, 6, 7], lr=True); E(mov_reg, 4, 0)
+    E(bl, 'c_trphoto'); imm(7, slot)
+    E(ldrb_imm, 0, 7, 0); E(cmp_imm, 0, TAG); E(b_cond, 'reset_x', 'ne')
+    E(movs_imm, 0, 26); E(muls, 0, 4); E(adds_imm8, 0, PHOTO); E(adds_reg, 7, 7, 0)
+    E(movs_imm, 5, 0)
+    a.label('reset_param')
+    if KEEP_PLAY_MODE:
+        E(cmp_imm, 5, PLAY_MODE); E(b_cond, 'reset_next', 'eq')
+    E(cmp_imm, 5, 6); E(b_cond, 'reset_write', 'lo')
+    E(cmp_imm, 5, 15); E(b_cond, 'reset_next', 'ls')
+    a.label('reset_write')
+    imm(0, 0x20010E10); E(mov_reg, 1, 4); E(adds_imm8, 1, 0x10)
+    E(mov_reg, 2, 5); E(adds_reg, 3, 7, 5); E(ldrb_imm, 3, 3, 0); E(bl, 0x08031A38)
+    if viewsync:
+        E(mov_reg, 0, 4); E(mov_reg, 1, 5)
+        E(adds_reg, 2, 7, 5); E(ldrb_imm, 2, 2, 0)
+        E(bl, int(report['pageclear']['labels']['c_pcsync'], 16))
+    a.label('reset_next')
+    E(adds_imm8, 5, 1); E(cmp_imm, 5, 25); E(b_cond, 'reset_param', 'lo')
+    E(mov_reg, 0, 4); E(bl, 'c_trsample'); E(mov_reg, 6, 0)
+    E(movs_imm, 1, 0); E(bl, 0x0803FD26)
+    E(ldrb_imm, 1, 7, 25); E(strb_imm, 1, 0, 0)
+    E(mov_reg, 0, 6); E(bl, 0x0803FBEC)
+    E(mov_reg, 0, 4); E(movs_imm, 1, 6)
+    a.label('c_trreset_pages_call'); E(bl, pcreset)
+    imm(0, 0x2003D380); E(lsls_imm, 1, 4, 2); E(adds_reg, 0, 0, 1); E(ldr_imm, 4, 0, 0)
+    E(ldr_imm, 0, 4, 0x40); E(movs_imm, 1, 0); E(bl, C.PARAM_GET)
+    E(mov_reg, 6, 0); E(ldrb_imm, 7, 6, 0)
+    E(movs_imm, 0, 0); E(strb_imm, 0, 6, 0); E(movs_imm, 5, 8)
+    a.label('reset_lane')
+    E(mov_reg, 0, 4); E(mov_reg, 1, 5); E(bl, 0x08047CA8)
+    E(adds_imm8, 5, 1); E(cmp_imm, 5, 12); E(b_cond, 'reset_lane', 'lo')
+    E(strb_imm, 7, 6, 0)
+    a.label('reset_x'); ret([4, 5, 6, 7])
+
+
+def wipe_items(a, E, imm, ret, report, pcreset, viewsync):
+    """c_trreset(r0 = track), the wipe: parameters 1-24 and the Sample mode switches to their defaults, then the pages, then the 12 lanes
+    of every pattern (the stock's lane clear for the current one, with the held step cleared meanwhile, so the whole lane goes)."""
+    a.label('c_trreset')
+    E(push_list, [4, 5, 6, 7], lr=True); E(mov_reg, 4, 0); E(movs_imm, 5, 1)
+    a.label('wipe_param')
+    imm(0, 0x20010E10); E(mov_reg, 1, 4); E(adds_imm8, 1, 0x10); E(mov_reg, 2, 5)
+    imm(3, DEFAULTS); E(adds_reg, 3, 3, 5); E(ldrb_imm, 3, 3, 0); E(bl, 0x08031A38)
+    if viewsync:
+        E(mov_reg, 0, 4); E(mov_reg, 1, 5)
+        imm(2, DEFAULTS); E(adds_reg, 2, 2, 5); E(ldrb_imm, 2, 2, 0)
+        E(bl, int(report['pageclear']['labels']['c_pcsync'], 16))
+    E(adds_imm8, 5, 1); E(cmp_imm, 5, 25); E(b_cond, 'wipe_param', 'lo')
+    if 'smswitch' in report:
+        import fshape as FS
+        E(mov_reg, 0, 4); E(movs_imm, 1, FS.SM0); E(movs_imm, 2, FS.SMDEF[0])
+        E(bl, int(report['smswitch']['labels']['c_smput'], 16))
+    E(mov_reg, 0, 4); E(movs_imm, 1, 6)
+    a.label('c_trreset_pages_call'); E(bl, pcreset)
+    imm(0, AUTO_RECS); E(lsls_imm, 1, 4, 2); E(adds_reg, 0, 0, 1); E(ldr_imm, 4, 0, 0)
+    E(ldr_imm, 0, 4, 0x40); E(movs_imm, 1, 0); E(bl, C.PARAM_GET)
+    E(mov_reg, 6, 0); E(ldrb_imm, 7, 6, 0)
+    E(movs_imm, 0, 0); E(strb_imm, 0, 6, 0); E(movs_imm, 5, 0)
+    a.label('wipe_lane')
+    E(mov_reg, 0, 4); E(mov_reg, 1, 5); E(bl, CLEAR_LANE)
+    E(adds_imm8, 5, 1); E(cmp_imm, 5, 12); E(b_cond, 'wipe_lane', 'lo')
+    E(strb_imm, 7, 6, 0); E(movs_imm, 5, 0)
+    a.label('wipe_pattern')
+    E(movw, 0, PAT_SIZE); E(muls, 0, 5); E(ldr_imm, 1, 4, 4); E(adds_reg, 0, 0, 1); E(movw, 1, LANES); E(adds_reg, 0, 0, 1)
+    E(movw, 1, 12 * LANE_SIZE); E(movs_imm, 2, 0xFF); E(bl, FILL)
+    E(adds_imm8, 5, 1); E(cmp_imm, 5, NPAT); E(b_cond, 'wipe_pattern', 'lo')
+    ret([4, 5, 6, 7])

@@ -2846,7 +2846,7 @@ def install(img, report, base_addr, stockplus=False, testpages=False, fpage=Fals
     if perpage:
         import rhrec
         rhrec.check_layout()
-        assert rhrec.REUSE[0] + rhrec.REUSE[1] >= PG_OFF + PG_LEN and all(o + n <= PG_OFF for o, n in rhrec.OFF54.values())
+        assert rhrec.REUSE[0] + rhrec.REUSE[1] >= PG_OFF + PG_LEN and all(o + n <= PG_OFF for o, n in __import__('fshape').remix54())
         L['c_rrt'] = int(report['rhrec']['labels']['c_rrt'], 16)
     if pageclear:
         L['pcpress'] = int(report['pageclear']['labels']['c_pcpress'], 16)

@@ -13,26 +13,34 @@ from thumb import (Asm, add_sp_imm, str_sp, adds_imm8, adds_reg, b, b_cond, b_w,
 BASE, BLK0 = 0x08010000, 0x0801a838
 WAIT, SELECT, SPI, END = 0x08046414, 0x08031048, 0x08046504, 0x0803107a
 WIN, CHUNK, MAXL = 240, 80, 265
-MAGIC = b'RZ1\0'
+MAGIC, SPLIT = b'RZ1\0', b'RZ2\0'
+# RZ2: a stream longer than the native block. The header adds the cut (a stream offset) and the address of
+# the rest. The block keeps MARGIN bytes past the cut, more than one chunk reads, so the reader moves once.
+MARGIN = 320
 # Bound at generation time; actual firmware uses dedicated, fixed addresses.
 RING = STAGE = S = None
+CUT = None                      # RZ2: (the first address that moves, how far it moves)
 ROOT=Path(__file__).resolve().parents[1]
 CACHE=ROOT/'buildtmp/dspzip-cache'
 
 def is_packed(img):
-    return bytes(img[BLK0-BASE:BLK0-BASE+4])==MAGIC
+    return bytes(img[BLK0-BASE:BLK0-BASE+4]) in (MAGIC,SPLIT)
 
 def raw_stream(img):
     off=BLK0-BASE
     assert is_packed(img)
     words,crc=struct.unpack_from('<II',img,off+4)
-    raw=unpack_stream(img[off+12:],words*3)
+    if bytes(img[off:off+4])==SPLIT:
+        cut,rest=struct.unpack_from('<II',img,off+12)
+        stream=bytes(img[off+20:off+20+cut])+bytes(img[rest-BASE:])
+    else:stream=img[off+12:]
+    raw=unpack_stream(stream,words*3)
     assert zlib.crc32(raw)==crc
     return raw
 
 def install(img, report, base_addr, counter=True, loader=True, segs=None):
     import core0, rhbuild, rhstate
-    global RING,STAGE,S
+    global RING,STAGE,S,CUT
     assert loader and not counter and segs is not None
     assert rhbuild.bl_target(img,core0.UPLOAD_BL0)==core0.SEND
     n,at,words=core0.block_words(img)
@@ -46,46 +54,64 @@ def install(img, report, base_addr, counter=True, loader=True, segs=None):
         blob=MAGIC+struct.pack('<II',len(raw)//3,zlib.crc32(raw))+_pack(raw)
         CACHE.mkdir(parents=True,exist_ok=True);cache.write_bytes(blob)
     assert unpack_stream(blob[12:],len(raw))==raw
-    assert len(blob)<(n+2)*3, 'packed stream must fit original native block'
+    room=(n+2)*3;stream=blob[12:]
+    split=len(blob)>=room
+    if split:
+        cut=room-20-MARGIN
+        head=SPLIT+blob[4:12]+struct.pack('<II',cut,0)+stream[:cut+MARGIN]
+    else:head=blob
     slot=rhstate.ST+rhstate.OFF['dspzip'][0]
     size=rhstate.OFF['dspzip'][1]
     RING=STAGE=(slot+31)&~31;S=RING+WIN
     assert RING%32==0 and S+20<=slot+size
     assert rhstate.ST>=0x2004ea98, 'never overlap stock allocations'
-    a=Asm(base_addr);E=a.emit
-    def imm32(rd,v):
-        E(movw,rd,v&65535);E(movt,rd,v>>16)
-    a.label('c_d0up')
-    E(push_list,[4,5,6],lr=True)
-    E(mov_reg,4,0);E(mov_reg,5,1)
-    imm32(2,BLK0);E(cmp_reg,0,2);E(b_cond,'other','ne')
-    # Reserve/initialize our complete SRAM block before first decoder use.
-    E(bl,int(report['rhstate']['labels']['c_rst'],16))
-    E(cmp_imm,0,0);E(b_cond,'unavailable','eq')
-    # Address is resolved in a second assembly pass after the decoder size.
-    imm32(0,0);a.label('loader_address_end')
-    E(movs_imm,1,0);E(bl,core0.SEND)
-    imm32(0,BLK0);E(movs_imm,1,0);E(bl,'c_dz')
-    E(pop_list,[4,5,6],pc=True)
-    a.label('other');E(mov_reg,0,4);E(mov_reg,1,5);E(bl,core0.SEND)
-    E(pop_list,[4,5,6],pc=True)
-    # Allocation failure cannot interpret packed bytes as native instructions.
-    a.label('unavailable');E(b,'unavailable')
-    emit_one(a,E,imm32);emit_fill(a,E,imm32)
-    code,labels=a.assemble()
+    lw,_=core0.asm_at(core0.loader_items(),core0.LD)
+    lb=packwords([len(lw),core0.LD]+lw)
+
+    def assemble(rest):
+        global CUT
+        CUT=(BLK0+20+cut,(rest-(BLK0+20+cut))&0xffffffff) if split else None
+        a=Asm(base_addr);E=a.emit
+        def imm32(rd,v):
+            E(movw,rd,v&65535);E(movt,rd,v>>16)
+        a.label('c_d0up')
+        E(push_list,[4,5,6],lr=True)
+        E(mov_reg,4,0);E(mov_reg,5,1)
+        imm32(2,BLK0);E(cmp_reg,0,2);E(b_cond,'other','ne')
+        # Reserve/initialize our complete SRAM block before first decoder use.
+        E(bl,int(report['rhstate']['labels']['c_rst'],16))
+        E(cmp_imm,0,0);E(b_cond,'unavailable','eq')
+        # Address is resolved in a second assembly pass after the decoder size.
+        imm32(0,0);a.label('loader_address_end')
+        E(movs_imm,1,0);E(bl,core0.SEND)
+        imm32(0,BLK0);E(movs_imm,1,0);E(bl,'c_dz')
+        E(pop_list,[4,5,6],pc=True)
+        a.label('other');E(mov_reg,0,4);E(mov_reg,1,5);E(bl,core0.SEND)
+        E(pop_list,[4,5,6],pc=True)
+        # Allocation failure cannot interpret packed bytes as native instructions.
+        a.label('unavailable');E(b,'unavailable')
+        emit_one(a,E,imm32,20 if split else 12);emit_fill(a,E,imm32)
+        return a.assemble()
+    # every constant is a movw/movt pair, so the code's size does not depend on the rest's address
+    code,labels=assemble(0)
     la=(base_addr+len(code)+3)&~3
+    rest=(la+len(lb)+3)&~3
+    if split:
+        code,labels=assemble(rest)
+        head=head[:16]+struct.pack('<I',rest)+head[20:]
+    assert (base_addr+len(code)+3)&~3==la and len(head)<=room
     pos=labels['loader_address_end']-base_addr-8
     code=bytearray(code)
     code[pos:pos+8]=movw(0,la&65535)+movt(0,la>>16)
-    lw,_=core0.asm_at(core0.loader_items(),core0.LD)
-    lb=packwords([len(lw),core0.LD]+lw)
-    original=bytes(img[BLK0-BASE:BLK0-BASE+(n+2)*3])
-    img[BLK0-BASE:BLK0-BASE+(n+2)*3]=blob+b'\xff'*((n+2)*3-len(blob))
+    original=bytes(img[BLK0-BASE:BLK0-BASE+room])
+    img[BLK0-BASE:BLK0-BASE+room]=head+b'\xff'*(room-len(head))
     img+=b'\xff'*(base_addr-BASE-len(img))+code
     img+=b'\xff'*(la-BASE-len(img))+lb
+    if split:img+=b'\xff'*(rest-BASE-len(img))+stream[cut:]
     while len(img)%4:img.append(255)
     rhbuild.patch(img,core0.UPLOAD_BL0,f'bl #{core0.SEND:#x}',bl(core0.UPLOAD_BL0,labels['c_d0up']))
-    rep=dict(format='RZ1',raw_bytes=len(raw),packed_bytes=len(blob),window=WIN,
+    rep=dict(format='RZ2' if split else 'RZ1',raw_bytes=len(raw),packed_bytes=len(blob),window=WIN,
+             **(dict(cut=cut,rest=hex(rest),rest_bytes=len(stream)-cut) if split else {}),
              chunk_bytes=3*CHUNK,scratch=hex(slot),scratch_bytes=size,ring=hex(RING),state=hex(S),
              loader=hex(la),decoder_bytes=len(code),raw_sha256=hashlib.sha256(raw).hexdigest(),
              native_sha256=hashlib.sha256(original).hexdigest(),itcm_bytes=0)
@@ -179,26 +205,40 @@ def unpack_stream(stream: bytes, size: int) -> bytes:
     return bytes(out)
 
 
-def emit_one(a, E, imm32):
+def emit_one(a, E, imm32, header=12):
     a.label("c_dz")
     E(push_list, [4, 5, 6, 7], lr=True)
     E(sub_sp_imm, 4)                                                    # AAPCS alignment at native calls
     E(mov_reg, 4, 1)                                                    # r4 = core
     imm32(3, S)
-    E(adds_imm8, 0, 12)
+    E(adds_imm8, 0, header)
     E(str_imm, 0, 3, 0)                                                 # src
     E(movs_imm, 2, 1)
     E(str_imm, 2, 3, 4)                                                 # flags: empty
     E(movs_imm, 2, 0)
     E(str_imm, 2, 3, 8)
     E(str_imm, 2, 3, 16)                                                # no match, write index 0
-    E(subs_imm8, 0, 12)
+    E(subs_imm8, 0, header)
     E(ldr_imm, 6, 0, 4)                                                 # r6 = the stream's words
     E(movs_imm, 5, 0)                                                   # r5 = words sent
     E(bl, WAIT)
     E(mov_reg, 0, 4)
     E(bl, SELECT)
     a.label("dz_lp")
+    if CUT:
+        # RZ2: a src inside the margin past the cut moves to the same byte in the rest of the stream
+        imm32(3, S)
+        E(ldr_imm, 1, 3, 0)
+        imm32(2, CUT[0])
+        E(cmp_reg, 1, 2)
+        E(b_cond, "dz_in", "cc")
+        imm32(2, CUT[0] + MARGIN)
+        E(cmp_reg, 1, 2)
+        E(b_cond, "dz_in", "hs")
+        imm32(2, CUT[1])
+        E(adds_reg, 1, 1, 2)
+        E(str_imm, 1, 3, 0)
+        a.label("dz_in")
     E(subs_reg, 7, 6, 5)
     E(cmp_imm, 7, CHUNK)
     E(b_cond, "dz_k", "le")

@@ -36,6 +36,11 @@ def main():
         assert report['rhstate']==baseline['report']['rhstate']
     segs=programs(image,report);actual=flat(segs);old=flat(programs(base,baseline['report']))
     allowed={0,1,0x228,0x229}
+    if report.get('c0idle'):
+        import c0idle
+        allowed|={a+i for a,ws in c0idle.STOCK.items() for i in range(len(ws))}
+        idle=int(report['c0idle']['at'],16)
+        assert [actual[0x1ff],actual[0x200],actual[0x201]]==[0x0af0a9,idle,0],'idle counter branch'
     assert all(actual[a]==w for a,w in old.items() if a not in allowed)
     assert actual[0x225]==int(report['gfxsplit']['pre'],16)
     before=flat(rhdsp1.parse(rhdsp1.sent(bytearray(base),baseline['report'],'pitchmod'))[0])
@@ -60,7 +65,7 @@ def main():
         result,ran=D.run(0,pc=0,stop=0x100,segs=segs,mem=memory,dumps=dumps+guards,maxins=100000)
         assert 'pc=000100' in ran
         for sp,a,n in dumps:
-            shared=0x37400<=a<0x37460
+            shared=0x37400<=a<0x37468
             expected=[0]*n if shared else [0x6a7a4b]*n
             if a==B.FLAG:expected[0]=0
             assert result[sp,a]==expected,(sp,hex(a))
@@ -73,7 +78,7 @@ def main():
                 mem=memory+[('y',B.FLAG,[flag])],dumps=dumps+guards,maxins=200000)
             assert f'pc={body:06x}' in ran
             for sp,a,n in dumps:
-                if 0x37400<=a<0x37460:continue
+                if 0x37400<=a<0x37468:continue
                 if a==B.FLAG:assert result[sp,a]==[1,0x1234];continue
                 assert result[sp,a]==([0]*n if cleared else [0x6a7a4b]*n),(sp,hex(a),flag)
             assert result['x',0x1400]==fx

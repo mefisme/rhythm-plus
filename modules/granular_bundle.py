@@ -4,6 +4,7 @@ Wrap the existing upload builders before they run: never add program words after
 the core1 landing has already started execution. No legacy granular/mixer path.
 """
 from contextlib import contextmanager,nullcontext
+import os
 import granular_core1_packing as PACK
 import core0
 import rhdsp1
@@ -72,7 +73,14 @@ def builders(cores=(0,1),packed=False):
         assert kwargs.get('loader') and not kwargs.get('counter')
         _,_,native=core0.block_words(img)
         assert native[:2]==[0x0c0100,0] and native[0x228:0x22a]==[0x0bf080,0x1a11]
-        segments,pool=P.code(host_mailbox=True)
+        stretch=None
+        if os.environ.get('RH_STRETCH')=='1':
+            import stretch_dsp,granular0 as G0,granular_route_candidate as R,granular_snapshot_candidate as S,granular_inplace_candidate as IPC
+            words,st_labels=stretch_dsp.code(entry=dict(control=R.CONTROL,snapshot=S.SNAPSHOT,state=P.STATE,smp=G0.SMP,pages=G0.PAGES,
+                pstride=G0.PSTRIDE,trk_buf=G0.TRK_BUF,route_key=R.KEY,audio_key=IPC.AUDIO_KEY,params=0x307c8,
+                positions=S.SNAPSHOT+S.POSITION_OFFSET))
+            stretch=(words,st_labels)
+        segments,pool=P.code(host_mailbox=True,stretch_entry=stretch[1]['st_entry'] if stretch else None)
         assert P.AT+pool['words']<=INIT
         extras=[(address,words) for space,address,words in segments if space=='p']
         program={address+i:word for address,words in extras for i,word in enumerate(words)}
@@ -80,7 +88,15 @@ def builders(cores=(0,1),packed=False):
         assert [program[wait],program[wait+1]]==[0x0bf080,STOCK_WAIT]
         initial,labels=init_code(wait+2)
         extras += [(INIT,initial),(0,[0x0af080,labels['init']]),(0x228,[0x0bf080,labels['first']])]
-        kwargs['segs']=list(kwargs['segs'])+extras
+        idle=[]
+        if os.environ.get('RH_C0IDLE')=='1':
+            import c0idle
+            idle,report['c0idle']=c0idle.segments(native)
+        if stretch:
+            import stretch_dsp
+            idle=idle+[(stretch_dsp.AT,stretch[0])]
+            report['stretch']=stretch_dsp.report(stretch[0],stretch[1])
+        kwargs['segs']=list(kwargs['segs'])+extras+idle
         result=original0(img,report,base,**kwargs)
         report.setdefault('granular',{}).update(core0_segments=[dict(start=hex(address),words=len(words)) for address,words in extras if address>=0x1fed],
             pool=pool,init=hex(INIT),first_pass=hex(labels['first']),core0_initialized_regions=[region.owner for region in L.REGIONS if region.core in (-1,0)],

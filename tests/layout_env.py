@@ -9,3 +9,5 @@ def granular(report):
         os.environ["RH_GRANULAR_COMPANION"] = "1" if report.get("storageshadow", {}).get("granular_settings_bytes") in (224, 288) else "0"
         os.environ["RH_GRANULAR_FINE"] = "1" if g.get("fine_controls") else "0"
     os.environ["RH_DSPZIP"] = "1" if "dspzip" in report else "0"
+    os.environ["RH_STRETCH"] = "1" if "arm" in report.get("stretch", {}) else "0"
+    os.environ["RH_TRACKWIPE"] = "1" if report.get("trackreset", {}).get("wipe") else "0"

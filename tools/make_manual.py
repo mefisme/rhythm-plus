@@ -278,10 +278,10 @@ shows every control and light.</p></div>
 <li><span>9 · The Track Parameter Editor</span><span>12</span></li>
 <li><span>10 · The knobs: view, automate and lock</span><span>13</span></li>
 <li><span>11 · The Sample mode switches</span><span>14</span></li>
-<li><span>12 · Resetting knobs and tracks</span><span>15</span></li>
-<li><span>13 · Grid FX sends</span><span>16</span></li>
-<li><span>14 · The FX track and Shift controls</span><span>17-19</span></li>
-<li><span>15 · The playhead scrub</span><span>20</span></li>
+<li><span>12 · Resetting knobs and tracks</span><span>15-16</span></li>
+<li><span>13 · Grid FX sends</span><span>17</span></li>
+<li><span>14 · The FX track and Shift controls</span><span>18-20</span></li>
+<li><span>15 · The playhead scrub</span><span>21</span></li>
 </ul>
 <div class="note">The drawings show the pads and buttons of the Circuit Rhythm as a plan, not to scale. The colours are close to the colours
 on the unit; on the unit, a dim pad is darker than it is on paper.</div>""", "cover"))
@@ -388,7 +388,7 @@ stay white.</p>
         [f"{CL} + a dark track button", "Nothing happens. The track is not selected."],
         [f"{CL} + {DU}", f"Every mutate ends. The mutated tracks flash red. This also works on the Mixer, Grid FX, FX and Sidechain pages."],
         [f"{CL} held on the settings page", f"The pads show the Patterns page, so you can see each mutate. {DU} keeps pulsing green: you are still on the settings page. The pads do nothing. {DN} / {UP} show the other page of patterns. {CL} + a track button ends that track's mutate."]])}
-<p>On a track page, {CL} + a track button is the track reset, as before.</p>
+<p>On a track page, {CL} + a track button wipes the track (chapter 12).</p>
 <h3>Scenes</h3>
 <p>A scene keeps the mutate of each track: its seed, the settings that made its list and its chain. So a scene plays the exact
 lists that you heard when you saved it, and Live goes on from them.</p>
@@ -565,7 +565,25 @@ switch on or off. A switch that is on has the stock's chosen colour; a switch th
         ["21", "End fade", "On", "On: the sound fades out at the end of the sample, as on the stock unit. Off: no fade; the sample plays to its last sample."]])}
 <p>Each track keeps its own switches. The project saves them. A project from an earlier firmware opens with the defaults.</p>
 <h3>Pitch</h3>
-<p>In Sample mode, hold {CL} and tap pad 1 or 2: the track's pitch goes back to the sample's own pitch.</p>"""))
+<p>In Sample mode, hold {CL} and tap pad 1 or 2: the track's pitch goes back to the sample's own pitch.</p>
+<h3>Time stretch</h3>
+<p>Pads 9-16 change the length of the selected track's sample without a change to its pitch. The length follows the tempo.
+Pads 1 and 2 and the pitch knob change only the pitch.</p>
+{table(["Pad", "What it does"], [
+        ["9", "Stretch on or off. Green: on. Dim red: off. Off keeps the length (half bright) for the next on. With no length kept, on starts Follow."],
+        ["10", "What fits the length. White: the whole sample. K2 and K3 then choose the part that plays, and it stays in time. Amber: the part from the start (K2) to the end (K3) fills the length."],
+        ["11-16", "The sample lasts 1/4, 1/2, 1, 2, 4 or 8 bars, and stretch turns on. The bright length again: Follow."],
+        ["17", "Granular on or off, as in the Track Parameter Editor. Green: on. Red: off. Granular on turns stretch off; pad 9 turns it back."]])}
+<p>Follow: no length is bright. The sample plays at its own speed at the tempo when Follow starts, and stretches with later tempo
+changes. The chosen length is bright and the other lengths are dim. A dim red pad is a length the track's sample cannot get to: it must play more
+than 4 times slower or faster. The pads show this as soon as you choose the sample. A flipped step's sample gets the same length.
+In Loop mode the stretched sample loops; in One Shot mode it plays
+one time; in Gated mode it stops at the end of the note. Each track keeps its own settings, and the project saves them.</p>
+<p>You can turn stretch on and off while the sample plays. On: the sound goes on from where it is. Off: it goes on at the sample's own
+speed to the end of the note; the next note plays without stretch. Each change fades over about 5 ms, so it does not click.</p>
+<p>On a Granular track, pads 11-16 set Scan, so the playhead moves through the part from K2 to K3 in that length, at the tempo. Tap
+the bright pad again: Scan goes back to the value it had before. If you turn Scan, the pad is no longer chosen. Pad 9 is dim red and
+pad 10 is dark. While Slice is on, pads 11-16 are dim red.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 12</div><h2>Resetting knobs and tracks</h2>
@@ -580,8 +598,24 @@ switch on or off. A switch that is on has the stock's chosen colour; a switch th
         [f"{CL} + tap pad 26", "The eight knobs go back to their defaults, the fine values too. Their automation in the current pattern is deleted. Pad 26 flashes red three times."],
         [f"Let go of {CL}", "Pad 26 is white again."]])}
 <p>This works on the selected track only. It does not change the sample, the mixer, the FX sends or the Sample mode switches.</p>
-<h3>The whole track</h3>
-<p>Hold {CL} and press a track button: it turns red. Let go of the button and press it again, with {CL} still held: the track's knobs go back to their defaults and its automation in the current pattern is deleted (three red flashes). The notes stay. To cancel, let go of {CL}.</p>"""))
+"""))
+
+    pages.append(page(f"""
+<h3>The whole track: wipe</h3>
+<p>Hold {CL} and press a track button: it turns red. Let go of the button and press it again, with {CL} still held: the track's
+sound goes back to the unit's defaults (three red flashes). Your beat stays. To cancel, let go of {CL}, or press another button or a
+pad. Use it to start a track again with a clean sound. To go back to the last save, load the project again.</p>
+{table(["Part of the track", "After the wipe"], [
+        ["The 8 knobs and their fine values", "Their defaults"],
+        ["Level, pan, reverb send, delay send", "100, centre, 0, 0"],
+        ["Side-chain", "Its defaults"],
+        ["Play mode, reverse, choke, slices", "One Shot; reverse and choke off; the slice settings at their defaults"],
+        ["Sample mode pads 19-21", "Their defaults"],
+        ["Granular", "Off; its knobs and settings at their defaults"],
+        ["Time stretch", "Off; the whole sample fits"],
+        ["Automation", "Deleted in all 8 patterns of the track"],
+        ["The sample, the steps (with velocity, gate and probability), sample flips, pattern settings", "Kept"],
+        ["The other tracks", "Not changed"]])}"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 13</div><h2>Grid FX sends</h2>

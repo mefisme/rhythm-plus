@@ -13,6 +13,8 @@ AT,SNAPSHOT,SAVE=0xf20,0x38c00,0x38f00
 LIMIT=0xfa0  # Note-serial code starts here.
 REFRESH_START_SHIFT,TRIGGER_START_SHIFT,SHIFT_WORD,JSR_SHORT=0x2a4,0x32d,0x0c1d93,0x0d0000
 INACTIVE_STATE=0x674531
+POSITION_OFFSET=0x40  # Y:SNAPSHOT + POSITION_OFFSET + t: the native reader's next sample (its ring is filled ahead of the output)
+EXPORT_POSITION=False  # set by the packed layout
 
 
 def code(scan=None):
@@ -23,6 +25,7 @@ def code(scan=None):
               'clr a','move a,y:(r3)',
               'move y:(r2+$1),a','move a,y:(r3+$1)',
               'move y:(r2+$2),a','move a,y:(r3+$2)',
+              *(['move x:(r0+$3),a',f'move a,y:(r1+${(SNAPSHOT+POSITION_OFFSET-SERIAL)&0xffffff:x})'] if EXPORT_POSITION else []),
               'move x:(r0+$4),a','tst a',('jcc','eq','idle'),
               'move y:(r1),a','move a,y:(r3+$7)',
               'move y:(r0+$4),a','move a,y:(r3+$4)',

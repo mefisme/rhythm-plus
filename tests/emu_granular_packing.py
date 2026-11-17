@@ -27,7 +27,7 @@ def main():
     assert int(g0['core1_end'],16)-int(g1['core1_end'],16)==280
     fields=lambda:(I.AT,I.CLEAR_AT,S.AT,S.LIMIT,N.AT,F.AT,F.DISPATCH)
     saved=fields()
-    with CURRENT.allocated(),PACK.placed(int(g1['core1_start'],16)):
+    with CURRENT.allocated(),PACK.placed(int(g1['core1_start'],16),stretch=False):    # gr003 predates time stretch
         assert I.AT==int(g1['core1_start'],16)
         generated,_=artifact('a0192')
         for name,module in (('route',I),('snapshot',S),('notes',N),('flow',F)):

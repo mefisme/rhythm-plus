@@ -26,6 +26,12 @@ ZONE_PADS='--zone-pads' in sys.argv
 FULL_FREEZE='--full-freeze' in sys.argv
 SHIFT_TAP='--shift-tap' in sys.argv
 STICKY_ASSIGN='--sticky-assign' in sys.argv
+TRACK_WIPE='--track-wipe' in sys.argv
+if TRACK_WIPE:os.environ['RH_TRACKWIPE']='1'
+C0_IDLE='--c0-idle' in sys.argv
+if C0_IDLE:os.environ['RH_C0IDLE']='1'
+STRETCH='--stretch' in sys.argv
+if STRETCH:os.environ['RH_STRETCH']='1'
 if SHIFT_TAP:os.environ['RH_TPE_REVERSE_CYCLE']='1'
 if ZONE_PADS:os.environ['RH_GRANULAR_SLICE_WORD7']='1'
 if EASY_ZONES:os.environ['RH_GRANULAR_SLICE_SCATTER']='1'
@@ -65,7 +71,7 @@ def main():
         from build_granular_owner import build as owner
         import granular_bridge,granular_ui,granular_lifecycle
         import rhstate
-        at=b.next_base(4);compiled=owner(at,pages=PAGES,page_pad=GRANULAR_PAD,assign=True,state_address=rhstate.ST+rhstate.OFF['granular'][0],storage_address=rhstate.ST+rhstate.OFF['storageshadow'][0],held_address=int(b.report['tmenu']['labels']['c_tmheld'],16),menu_pulse=STEADY,view_colors=TRACK_VIEWS,remember_views=REMEMBER_VIEWS,reverse_cycle=REVERSE_CYCLE,editor_settings=EDITOR_SETTINGS,menu_address=int(b.report['tmenu']['slot'],16),trim_unused=TRIM_UNUSED,fine_controls=FINE,fine_all=FINE_ALL,no_burst=NO_BURST,turn_bar=TURN_BAR,dark_spare=DARK_SPARE,easy_zones=EASY_ZONES,stock_bar=STOCK_BAR,zone_pads=ZONE_PADS,full_freeze=FULL_FREEZE,shift_tap=SHIFT_TAP,sticky_assign=STICKY_ASSIGN)
+        at=b.next_base(4);compiled=owner(at,pages=PAGES,page_pad=GRANULAR_PAD,assign=True,state_address=rhstate.ST+rhstate.OFF['granular'][0],storage_address=rhstate.ST+rhstate.OFF['storageshadow'][0],held_address=int(b.report['tmenu']['labels']['c_tmheld'],16),menu_pulse=STEADY,view_colors=TRACK_VIEWS,remember_views=REMEMBER_VIEWS,reverse_cycle=REVERSE_CYCLE,editor_settings=EDITOR_SETTINGS,menu_address=int(b.report['tmenu']['slot'],16),trim_unused=TRIM_UNUSED,fine_controls=FINE,fine_all=FINE_ALL,no_burst=NO_BURST,turn_bar=TURN_BAR,dark_spare=DARK_SPARE,easy_zones=EASY_ZONES,stock_bar=STOCK_BAR,zone_pads=ZONE_PADS,full_freeze=FULL_FREEZE,shift_tap=SHIFT_TAP,sticky_assign=STICKY_ASSIGN,stretch_on=rhstate.ST+rhstate.OFF['stretch'][0] if STRETCH else 0)
         code=Path(compiled['binary']).read_bytes()
         b.img+=b'\xff'*(at-0x08010000-len(b.img))+code
         while len(b.img)%4:b.img.append(255)
@@ -78,6 +84,9 @@ def main():
         granular_bridge.install(b.img,b.report,b.next_base(),current=True)
         granular_ui.install(b.img,b.report,b.next_base(),persist=False,current=True,page_pad=GRANULAR_PAD,pages=PAGES,track_views=TRACK_VIEWS,reverse_cycle=REVERSE_CYCLE,editor_settings=EDITOR_SETTINGS,no_burst=NO_BURST,shift_tap=SHIFT_TAP)
         granular_lifecycle.install(b.img,b.report,b.next_base(),persist=False,companion=STORE)
+        if STRETCH:
+            import stretch_arm
+            stretch_arm.install(b.img,b.report,b.next_base())
     with CURRENT.allocated():L.validate(b.report)
     assert len(b.img)<=0x70000
     g=b.report['granular'];g.update(scope='OFFLINE DSP-only: no ARM owner/UI or settings storage',
@@ -106,7 +115,7 @@ def main():
     if ZONE_PADS:g['easy_zones'].update(slices=[0]*8+[2]*8+[n for n in (3,4,6,8,12,16,32) for _ in range(16)],slice_word=7,zone_pads=True)
     if TRIM_UNUSED:b.report['unused_code_trim']=dict(policy='preserve exposed adapters; discard unreachable helpers',reference='A0204',recovered_bytes=1328)
     if '--release' in sys.argv:
-        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215') and BASE=='a0192' and CONNECT and PAGES and STORE
+        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232') and BASE=='a0192' and CONNECT and PAGES and STORE
         out=b.finish(ROOT/'firmware'/NAME)
         for f in out.glob(f'circuitrhythm-5706-{NAME.upper()}.*'):f.replace(out/f'rhythmplus-{NAME.upper()}{f.suffix}')
         return
