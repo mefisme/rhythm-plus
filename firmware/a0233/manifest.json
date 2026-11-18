@@ -1036,6 +1036,7 @@
         "19": 8,
         "20": 4
       },
+      "blank": [],
       "prev_led": "0x806bae8",
       "base": "0x806bca0"
     },
@@ -1528,6 +1529,8 @@
       "segmented": true
     },
     "gfxmix": {
+      "control_page": false,
+      "mixer_shift": false,
       "overdub": true,
       "native_edges": true,
       "input_trace": true,

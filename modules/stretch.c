@@ -30,6 +30,11 @@ typedef u32 (*read_fn)(u32);
 #define GSWITCH ((scan_fn)FN(C_GSWITCH))    /* (state, t, 0 off / 1 on / ~0 read): Granular's on / off */
 #define ROUTE ((route_fn)FN(C_ROUTE))        /* Granular's own route word 3 for a track */
 #define SHARED_READ ((read_fn)FN(C_SREAD))   /* Granular's read of a snapshot word */
+#ifdef C_PLUSOK
+#define PLUS_OK() (((u32_fn)FN(C_PLUSOK))() != 0)   /* the project's Plus settings are loaded: Granular may change */
+#else
+#define PLUS_OK() 1
+#endif
 
 #define CTRL 0x200487C8u
 #define O_VIEW 0x7C
@@ -304,7 +309,7 @@ static void draw(volatile u32 *out, u32 t, u32 bpm)
     u32 full = dimmed ? DIM_MUL : 255, lo = DIM * full >> 8, half = HALF * full >> 8;
     u32 r = rec(t), on = r & ON, ch = r & 7, n = src_len(t, BUSY(t) || (r & PART)), cue = scl(R32(COLOURS + 4 * CLR_CUE), full);
     u32 lit = on ? full : half, red = scl(R32(COLOURS + 4 * CLR_RED), lo);
-    out[PAD_GRAN] = scl(GSWITCH(GSTATE, t, ~0u) ? GR_ON_RGB : GR_OFF_RGB, full);
+    out[PAD_GRAN] = PLUS_OK() ? scl(GSWITCH(GSTATE, t, ~0u) ? GR_ON_RGB : GR_OFF_RGB, full) : 0;
     if (BUSY(t)) {
         u32 now = SCAN(GSTATE, t, ~0u);
         out[PAD_ON] = red;
@@ -357,6 +362,8 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
     u32 glen = r & GLEN, off = (r & ~ON & 0xFF) | t10 << 8, follow = ON | glen | part | (bpm * 10) << 8;    /* Follow takes the tempo each time it starts */
     u32 back = ch ? ON | (r & 0xFF) | t10 << 8 : follow;                            /* on again: the kept length */
     if (pad == PAD_GRAN) {                  /* Granular and stretch turn each other off */
+        if (!PLUS_OK())
+            return 0;
         GSWITCH(GSTATE, t, !GSWITCH(GSTATE, t, ~0u));
         rec_put(t, off);
         return 0;

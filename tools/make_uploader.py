@@ -18,15 +18,19 @@ BUILDS = (
     ("A0213", "stable", HERE / "firmware" / "a0213",
      "Granular con ajuste fino, Freeze y Slice hasta 32 porciones; Pattern y Step Mutate; ajustes guardados en la tarjeta SD. Probada en el aparato.",
      "Granular with fine adjust, Freeze and Slice up to 32 slices; Pattern and Step Mutate; settings saved on the SD card. Tested on the unit."),
-    ("A0233", "test", HERE / "firmware" / "a0233",
-     "A0213 con time stretch: modo Sample, pads 9-17, la longitud sigue el tempo sin cambiar el tono; se activa sin clic. Clear + pista devuelve el sonido de la pista a sus valores de fábrica. Versión de prueba.",
-     "A0213 with time stretch: Sample mode pads 9-17, the length follows the tempo with no change to the pitch; it turns on and off with no click. Clear + track sets the track's sound back to the factory defaults. Test build."),
+    ("A0243", "test", HERE / "firmware" / "a0243",
+     "A0213 con time stretch (modo Sample, pads 9-17), Clear + pista, los ajustes de Rhythm Plus junto a cada proyecto, página 2 de la pista FX y archivos de Rhythm Plus por USB. Granular One Shot sigue el Scan; Granular suena al momento tras cambiar de proyecto. Sin Drone. Versión de prueba.",
+     "A0213 with time stretch (Sample mode pads 9-17), Clear + track, Rhythm Plus settings next to each project, FX track page 2 and Rhythm Plus files over USB. Granular One Shot follows the Scan; Granular plays at once after a project change. No Drone. Test build."),
 )
 TEMPLATE = HERE / "tools" / "uploader_template.html"
 OUT = HERE / "tools" / "uploader.html"
 
 
-def main():
+INSTALLER = HERE / "tools" / "app" / "installer.js"
+
+
+def fill(template):
+    """the page with the installer script and the builds: patches from the official image, each checked"""
     stock = m.STOCK_BIN.read_bytes()
     assert hashlib.sha256(stock).hexdigest() == rh_fw.STOCK_5706["image_sha256"]
     patches, builds = {}, []
@@ -41,11 +45,16 @@ def main():
         patches[v] = dict(image_sha256=man["image_sha256"], syx_sha256=man["syx_sha256"], ops=ops)
         builds.append(dict(v=v, kind=kind, es=es, en=en))
         print(v, len(ops), "ops")
-    page = TEMPLATE.read_text(encoding="utf-8")
+    page = template.replace("__INSTALLER__", INSTALLER.read_text(encoding="utf-8"))
     for key, value in (("__PATCHES__", json.dumps(patches, separators=(",", ":"))), ("__BUILDS__", json.dumps(builds, ensure_ascii=False)),
                        ("__STOCK_SYX__", rh_fw.STOCK_5706["syx_sha256"]), ("__STOCK_IMG__", rh_fw.STOCK_5706["image_sha256"])):
         assert page.count(key) == 1, key
         page = page.replace(key, value)
+    return page
+
+
+def main():
+    page = fill(TEMPLATE.read_text(encoding="utf-8"))
     assert "remix" not in page.lower()
     OUT.write_text(page, encoding="utf-8", newline="")
     print(OUT, len(page), "bytes")

@@ -114,8 +114,18 @@ def sm_checks(uc):
     uc.mem_write(cv, struct.pack("<I", view0))
     uc.mem_write(cm, bytes([mode0]))
     check("sm: not Sample mode: the frame as the rest of the chain drew it", f2 == f3)
+    blank = rep["smpads"].get("blank", [])
+    for q in blank:
+        pad(uc, t, q)
+        uc.mem_write(cv, struct.pack("<I", M.CONT))
+        uc.mem_write(cm, bytes([M.MODE_SMP]))
+        f = ET.led(uc, lab("smpads", "c_smled"))
+        uc.mem_write(cv, struct.pack("<I", view0))
+        uc.mem_write(cm, bytes([mode0]))
+        check(f"sm: pad {q + 1}: dark in Sample mode and does nothing", STOCK_PADS == [] and smval(uc, t) == FS.SMDEF[0] and f[q] == 0,
+              (STOCK_PADS, smval(uc, t), hex(f[q])))
     for q in range(17, 22):
-        if q not in pads and q != 21:
+        if q not in pads and q != 21 and q not in blank:
             pad(uc, t, q)
             check(f"sm: pad {q + 1}: the stock's", STOCK_PADS == [q] and smval(uc, t) == FS.SMDEF[0], (STOCK_PADS, smval(uc, t)))
     words = []

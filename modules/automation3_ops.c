@@ -16,10 +16,14 @@ static U source(U ptr,U *p,U *step){
     U d=ptr-base,t=d/0x5140;d%=0x5140;*p=d/0xa28;d%=0xa28;
     if(d>=256 || (d&7))return 8;*step=d/8;return t;
 }
+#if NO_A3
+#define bulk(op,sp,ss,dp,ds) ((void)0)
+#else
 static void bulk(U op,U sp,U ss,U dp,U ds){
     U bank=((U (*)(void))(AUTO_READY|1))();if(!bank)return;
     ((U (*)(U,U,U,U,U,U,U))(CORE_BULK|1))(CORE_STATE,bank,op,sp,ss,dp,ds);
 }
+#endif
 static void apply(U t,U op,U sp,U ss,U dp,U ds,B *codes){
     if(t!=fx() || t>=8)return;
 #if TASK_GUARD
@@ -68,8 +72,10 @@ U c_ao_trackreset(U t,U b,U c,U d){
     U result=((F4)(TR_TRACKRESET|1))(t,b,c,d);
     if(t==fx() && p<8){
         apply(t,1,0,0,p,0,0);((void (*)(void))(GX_DEFAULTS|1))();
+#if !NO_A3
         if(((U (*)(void))(AUTO_READY|1))())for(U k=0;k<3;k++)
             ((void (*)(U,U,U,U))(CORE_MANUAL|1))(CORE_STATE,k,127,0);
+#endif
     }
     return result;
 }

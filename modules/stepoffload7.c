@@ -37,7 +37,33 @@ enum {MAGIC,ACTIVE,PENDING,MODE,STAGE,NSAVE,NLOAD,WRITES,READS,VERIFIED,MISSING,
 #define PAYLOAD 4784u
 #endif
 #define AMAGIC 0x31533341u
+#if NO_A3
+/* No K1-K3 automation engine: a save holds no lanes; a load reads an old file's lanes and drops them. */
+static u32 a3_file(u32 offset,u8 *out,u32 n,const u8 *settings){
+    static const u32 head[7]={0x33304152,4608,3,8,32,6,0};
+    for(u32 i=0;i<n;i++){u32 o=offset+i;out[i]=o<28?((const u8 *)head)[o]:o<128?settings[o-28]:0;}
+    return 0;
+}
+#define BANKFILESIZE() 176u
+#define BANKFILE(o,d,n,s) a3_file(o,d,n,s)
+#define BANKSNAPSHOT() 0u
+#define BANKRELEASE() ((void)0)
+#define BANKIMPORT(l,d,n,k) 0u
+#else
+#define BANKFILESIZE() ((u32 (*)(void))(A3_BANKFILESIZE|1))()
+#define BANKFILE(o,d,n,s) ((u32 (*)(u32,void *,u32,const void *))(A3_BANKFILE|1))(o,d,n,s)
+#define BANKSNAPSHOT() ((u32 (*)(void))(A3_BANKSNAPSHOT|1))()
+#define BANKRELEASE() ((void (*)(void))(A3_BANKRELEASE|1))()
+#define BANKIMPORT(l,d,n,k) ((u32 (*)(u32,const void *,u32,u32))(A3_BANKIMPORT|1))(l,d,n,k)
+#endif
+#if PACK_FILES
+/* path holds a whole pack path; the lane descriptors share it, read only after the file is open. */
+struct shadow {u32 m[32];struct job job;u8 data[100],readback[100];char path[104];u8 pad[32],bounce[512];};
+#define REQUEST ((u8 *)S->path)
+#else
 struct shadow {u32 m[32];struct job job;u8 data[100],readback[100];char path[32];u8 request[72],pad[32],bounce[512];};
+#define REQUEST S->request
+#endif
 struct runtime {u32 magic,record,key,state,generation,error;u8 block[100];u32 guard;};
 _Static_assert(sizeof(struct shadow)==1024,"private SRAM budget");
 _Static_assert(sizeof(struct runtime)==128,"private ITCM settings budget");
@@ -56,13 +82,20 @@ static void auto_reset(void){
 #ifdef GR_STORE
     for(u32 i=0;i<GR_SETTINGS_BYTES;i++)GR_LIVE[i]=0;
 #endif
-((void (*)(void *,void *))(A3_INIT|1))(AST,BANK);}
+#if !NO_A3
+((void (*)(void *,void *))(A3_INIT|1))(AST,BANK);
+#endif
+}
 static void auto_guards(void){
     *(u32 *)0x14fc=AMAGIC;*(u32 *)0x3ae0=AMAGIC;*(u32 *)0x3fe0=AMAGIC;
 }
+#if NO_A3
+static int auto_ok(void){return *(u32 *)0x14fc==AMAGIC && *(u32 *)0x3ae0==AMAGIC && *(u32 *)0x3fe0==AMAGIC;}
+#else
 static int auto_ok(void){return AST[0]==AMAGIC && *(u32 *)0x3dbc==AMAGIC && *(u32 *)0x14fc==AMAGIC &&
     *(u32 *)0x3ae0==AMAGIC && *(u32 *)0x3fe0==AMAGIC && *(u32 *)0x1500==0x37575043u && *(u32 *)0x16c4==0x37575043u;}
-static u32 frozen_size(void){return ((u32 (*)(void))(A3_BANKFILESIZE|1))()
+#endif
+static u32 frozen_size(void){return BANKFILESIZE()
 #ifdef GR_STORE
     +GR_SETTINGS_BYTES
 #endif
@@ -81,13 +114,13 @@ static u32 frozen_chunk(u32 offset,u32 n){
     u32 mask;__asm__ volatile("mrs %0,primask\n cpsid i":"=r"(mask)::"memory");
 #endif
 #ifdef GR_STORE
-    u32 base=((u32 (*)(void))(A3_BANKFILESIZE|1))(), first=offset<base?base-offset:0;
+    u32 base=BANKFILESIZE(), first=offset<base?base-offset:0;
     if(first>n)first=n;
-    u32 e=first?((u32 (*)(u32,void *,u32,const void *))(A3_BANKFILE|1))(offset,SNAP,first,S->data):0;
+    u32 e=first?BANKFILE(offset,SNAP,first,S->data):0;
     if(!e && offset==0 && first>=4)SNAP[0]='R',SNAP[1]='A',SNAP[2]='0',SNAP[3]='4';
     for(u32 i=first;!e && i<n;i++)SNAP[i]=GR_FROZEN[offset+i-base];
 #else
-    u32 e=((u32 (*)(u32,void *,u32,const void *))(A3_BANKFILE|1))(offset,SNAP,n,S->data);
+    u32 e=BANKFILE(offset,SNAP,n,S->data);
 #endif
 #if TASK_GUARD
     rp_task_unlock(mask);
@@ -107,7 +140,7 @@ static u32 bundle(void){
 #ifdef GR_STORE
     if(!((u32 (*)(void *,void *))(GR_SETTINGS_STORE|1))((void *)GR_STATE,GR_FROZEN))e=0x115;
 #endif
-    if(!e)e=((u32 (*)(void))(A3_BANKSNAPSHOT|1))();
+    if(!e)e=BANKSNAPSHOT();
 #if TASK_GUARD
     rp_task_unlock(mask);
 #else
@@ -121,7 +154,7 @@ static void release(void){
 #else
     u32 mask;__asm__ volatile("mrs %0,primask\n cpsid i":"=r"(mask)::"memory");
 #endif
-    ((void (*)(void))(A3_BANKRELEASE|1))();
+    BANKRELEASE();
 #if TASK_GUARD
     rp_task_unlock(mask);
 #else
@@ -170,6 +203,208 @@ static void path(u32 key){
     for(u32 i=0;i<8;i++)S->path[11+i]=hex[(key>>(28-i*4))&15];
     S->path[19]='.';S->path[20]='R';S->path[21]='P';S->path[22]='S';S->path[23]=0;
 }
+#if PACK_FILES==1
+/* A Plus file sits next to its project: <pack>/Sessions/RP_<slot>_<key>.rps. The stock reads a slot only from a
+   leading "NN_", so it skips these. The key in the name means a save never overwrites the file in use. */
+#define PLUS_NAME 18u
+#define ANY_SLOT 64u
+#define F_OPENDIR 0x08022529u
+#define F_READDIR 0x080225b7u
+#define F_CLOSEDIR 0x08022589u
+#define F_UNLINK 0x080226edu
+#define F_MKDIR 0x08022789u
+static const char hexd[]="0123456789ABCDEF";
+static int in_sram(u32 p){return p>=0x20000000 && p<0x20050000;}
+/* S->path = <folder>/; returns its length, 0 if the folder is unknown. */
+static u32 put_folder(const char *p){
+    const char s[]="/Sessions/";u32 n=0;
+    if(!p)return 0;
+    while(n<64 && p[n]){S->path[n]=p[n];n++;}
+    if(n<4 || n>=64)return 0;
+    for(u32 i=0;s[i];i++)S->path[n++]=s[i];
+    return n;
+}
+static u32 pack_sessions(u32 pack){
+    u32 store=*(volatile u32 *)0x20006e20;
+    if(!pack || pack>31 || !in_sram(store) || !((u32 (*)(u32,u32))0x0802e25b)(store,pack))return 0;
+    return put_folder(((const char *(*)(u32,u32))0x0802e44d)(store,pack));
+}
+static u32 store_sessions(u32 store){
+    if(!in_sram(store))return 0;
+    const char *p=((const char *(*)(u32,u32))0x0802e7ef)(store,0);
+    if(!p)return 0;
+    u32 n=0;while(n<72 && p[n]){S->path[n]=p[n];n++;}
+    if(n<4 || n>=72)return 0;
+    S->path[n++]='/';return n;
+}
+static u32 put_name(u32 n,u32 slot,u32 key){
+    char *d=S->path+n;
+    d[0]='R';d[1]='P';d[2]='_';d[3]=(char)('0'+slot/10);d[4]=(char)('0'+slot%10);d[5]='_';
+    for(u32 i=0;i<8;i++)d[6+i]=hexd[(key>>(28-i*4))&15];
+    d[14]='.';d[15]='r';d[16]='p';d[17]='s';d[18]=0;
+    return n+PLUS_NAME;
+}
+static u32 plus_path(u32 pack,u32 slot,u32 key){u32 n=slot<ANY_SLOT?pack_sessions(pack):0;return n?put_name(n,slot,key):0;}
+static int hex_digit(char c){return (c>='0' && c<='9') || (c>='A' && c<='F') || (c>='a' && c<='f');}
+static int lower(char c){return c>='A' && c<='Z'?c+32:c;}
+/* A name is ours when it is exactly RP_<2 digits>_<8 hex>.rps. */
+static int plus_file(const char *n,u32 slot,u32 key,int any_key){
+    for(u32 i=0;i<PLUS_NAME;i++)if(!n[i])return 0;
+    if(n[PLUS_NAME] || lower(n[0])!='r' || lower(n[1])!='p' || n[2]!='_' || n[5]!='_' || n[14]!='.' ||
+       lower(n[15])!='r' || lower(n[16])!='p' || lower(n[17])!='s')return 0;
+    if(n[3]<'0' || n[3]>'9' || n[4]<'0' || n[4]>'9')return 0;
+    if(slot!=ANY_SLOT && (u32)((n[3]-'0')*10+n[4]-'0')!=slot)return 0;
+    for(u32 i=0;i<8;i++){
+        if(!hex_digit(n[6+i]))return 0;
+        if(!any_key && lower(n[6+i])!=lower(hexd[(key>>(28-i*4))&15]))return 0;
+    }
+    return 1;
+}
+/* Finds the first Plus file in the folder S->path[0..n) that matches; leaves its whole path in S->path.
+   DIR (52 B) and FILINFO (long name at +0x16, 128 B) use SNAP, which no save step needs at that time. */
+static u32 find_plus(u32 n,u32 slot,u32 key,int any_key,const char *skip){
+    u8 *dir=SNAP,*info=SNAP+64;const char *name=(const char *)(info+0x16);
+    S->path[n-1]=0;
+    u32 found=0,result=((u32 (*)(void *,const char *))F_OPENDIR)(dir,S->path);
+    S->path[n-1]='/';
+    if(result)return 0;
+    while(!found && !((u32 (*)(void *,void *))F_READDIR)(dir,info) && name[0]){
+        if(info[8]&0x10 || !plus_file(name,slot,key,any_key))continue;
+        u32 same=skip!=0;
+        for(u32 i=0;same && i<=PLUS_NAME;i++)same=name[i]==skip[i];
+        if(same)continue;
+        for(u32 i=0;i<=PLUS_NAME;i++)S->path[n+i]=name[i];
+        found=1;
+    }
+    ((u32 (*)(void *))F_CLOSEDIR)(dir);
+    return found;
+}
+/* Deletes a slot's Plus files (every slot's for ANY_SLOT) in the folder S->path[0..n), except skip. */
+static void sweep(u32 n,u32 slot,const char *skip){
+    for(u32 round=0;round<16 && find_plus(n,slot,0,1,skip);round++)
+        if(((u32 (*)(const char *))F_UNLINK)(S->path))return;
+}
+#elif PACK_FILES>=2
+/* A Plus file sits next to its project: <pack>/Sessions/RP_<slot>_<project name>_<key>.rps (A0234: no name part). The
+   stock reads a slot only from a leading "NN_", so it skips these. The key in the name means a save never overwrites the
+   file in use. */
+#define PATH_MAX 104u
+#define ANY_SLOT 64u
+#define F_OPENDIR 0x08022529u
+#define F_READDIR 0x080225b7u
+#define F_CLOSEDIR 0x08022589u
+#define F_UNLINK 0x080226edu
+#define F_MKDIR 0x08022789u
+#define F_RENAME 0x080228c3u
+#define SHIFT_HELD() ((*(volatile u32 *)(0x200487c8u+0xa0u)>>27)&1u)
+static const char hexd[]="0123456789ABCDEF";
+static int in_sram(u32 p){return p>=0x20000000 && p<0x20050000;}
+static int digit(char c){return c>='0' && c<='9';}
+static int hexval(char c){return digit(c)?c-'0':c>='A' && c<='F'?c-'A'+10:-1;}
+static void put_key(char *d,u32 key){for(u32 i=0;i<8;i++)d[i]=hexd[(key>>(28-i*4))&15];}
+/* S->path = <folder>/; returns its length, 0 if the folder is unknown. */
+static u32 put_folder(const char *p){
+    const char s[]="/Sessions/";u32 n=0;
+    if(!p)return 0;
+    while(n<64 && p[n]){S->path[n]=p[n];n++;}
+    if(n<4 || n>=64)return 0;
+    for(u32 i=0;s[i];i++)S->path[n++]=s[i];
+    return n;
+}
+static u32 pack_sessions(u32 pack){
+    u32 store=*(volatile u32 *)0x20006e20;
+    if(!pack || pack>31 || !in_sram(store) || !((u32 (*)(u32,u32))0x0802e25b)(store,pack))return 0;
+    return put_folder(((const char *(*)(u32,u32))0x0802e44d)(store,pack));
+}
+static u32 store_sessions(u32 store){
+    if(!in_sram(store))return 0;
+    const char *p=((const char *(*)(u32,u32))0x0802e7ef)(store,0);
+    if(!p)return 0;
+    u32 n=0;while(n<72 && p[n]){S->path[n]=p[n];n++;}
+    if(n<4 || n>=72)return 0;
+    S->path[n++]='/';return n;
+}
+/* The project file's name without "NN_" and ".ncs", from the loaded pack (its store's byte 0 = the pack). */
+static const char *project_name(u32 pack,u32 slot,u32 *len){
+    u32 cs=*(volatile u32 *)0x20006e24;
+    *len=0;
+    if(!in_sram(cs) || *(volatile u8 *)cs!=pack)return 0;
+    const char *p=((const char *(*)(u32,u32,u32))0x0802e83d)(cs,0,slot),*b=p;
+    if(!p)return 0;
+    for(u32 i=0;i<160 && p[i];i++)if(p[i]=='/')b=p+i+1;
+    while(*b && *b!='_')b++;
+    if(!*b++)return 0;
+    u32 n=0;while(n<64 && b[n])n++;
+    *len=n>4?n-4:0;return b;
+}
+/* Appends RP_<slot>_[<name>_]<key>.rps at S->path+n; returns the whole length. The name part is cut to fit. */
+static u32 put_name(u32 n,u32 slot,u32 key,const char *name,u32 len){
+    char *d=S->path;
+    if(len>PATH_MAX-20-n)len=PATH_MAX-20-n;
+    d[n++]='R';d[n++]='P';d[n++]='_';d[n++]=(char)('0'+slot/10);d[n++]=(char)('0'+slot%10);d[n++]='_';
+    if(len){for(u32 i=0;i<len;i++)d[n++]=name[i];d[n++]='_';}
+    put_key(d+n,key);n+=8;
+    d[n++]='.';d[n++]='r';d[n++]='p';d[n++]='s';d[n]=0;
+    return n;
+}
+/* Builds the Plus file path; *folder = the length of <folder>/. 0 if the pack folder is unknown. */
+static u32 plus_path(u32 pack,u32 slot,u32 key,u32 *folder){
+    u32 n=slot<ANY_SLOT?pack_sessions(pack):0,len;
+    *folder=n;
+    if(!n)return 0;
+    const char *name=project_name(pack,slot,&len);
+    return put_name(n,slot,key,name,len);
+}
+/* A Plus file name: RP_<2 digits>_[<any>_]<8 hex>.rps, as the unit writes it. */
+static int plus_parse(const char *n,u32 *slot,u32 *key){
+    u32 L=0;while(L<128 && n[L])L++;
+    if(L<18 || L>=128 || n[0]!='R' || n[1]!='P' || n[2]!='_' || !digit(n[3]) || !digit(n[4]) || n[5]!='_' ||
+       n[L-4]!='.' || n[L-3]!='r' || n[L-2]!='p' || n[L-1]!='s' || (L>18 && (L<20 || n[L-13]!='_')))return 0;
+    u32 k=0;
+    for(u32 i=0;i<8;i++){int v=hexval(n[L-12+i]);if(v<0)return 0;k=k<<4|(u32)v;}
+    *slot=(u32)(n[3]-'0')*10+(u32)(n[4]-'0');*key=k;return 1;
+}
+/* Finds the first matching Plus file in the folder S->path[0..n) and leaves its whole path in S->path.
+   DIR (52 B) and FILINFO (long name at +0x16, 128 B) use SNAP, which no save step needs at that time. */
+static u32 find_plus(u32 n,u32 slot,u32 key,int any_key,const char *skip){
+    u8 *dir=SNAP,*info=SNAP+64;const char *name=(const char *)(info+0x16);
+    S->path[n-1]=0;
+    u32 found=0,result=((u32 (*)(void *,const char *))F_OPENDIR)(dir,S->path);
+    S->path[n-1]='/';
+    if(result)return 0;
+    while(!found && !((u32 (*)(void *,void *))F_READDIR)(dir,info) && name[0]){
+        u32 s,k,L=0;
+        if(info[8]&0x10 || !plus_parse(name,&s,&k) || (slot!=ANY_SLOT && s!=slot) || (!any_key && k!=key))continue;
+        while(name[L])L++;
+        u32 same=skip!=0;
+        for(u32 i=0;same && i<=L;i++)same=name[i]==skip[i];
+        if(same || n+L+1>PATH_MAX)continue;
+        for(u32 i=0;i<=L;i++)S->path[n+i]=name[i];
+        found=1;
+    }
+    ((u32 (*)(void *))F_CLOSEDIR)(dir);
+    return found;
+}
+/* Deletes a slot's Plus files (ANY_SLOT: every slot's) in the folder S->path[0..n), except skip; or moves them to
+   RP_AUTO/<key>.RPS, where a load looks when the file next to its project is missing. */
+static void drop(u32 n,u32 slot,const char *skip,u32 move){
+    char *d=(char *)S->pad;
+    for(u32 round=0;round<80 && find_plus(n,slot,0,1,skip);round++){
+        u32 s,k,r=8;
+        if(move){
+            plus_parse(S->path+n,&s,&k);
+            for(u32 i=0;i<11;i++)d[i]="1:/RP_AUTO/"[i];
+            put_key(d+11,k);
+            d[19]='.';d[20]='R';d[21]='P';d[22]='S';d[23]=0;
+            r=((u32 (*)(const char *))F_MKDIR)("1:/RP_AUTO");
+            if(r && r!=8)return;
+            r=((u32 (*)(const char *,const char *))F_RENAME)(S->path,d);
+        }
+        if(r==8)r=((u32 (*)(const char *))F_UNLINK)(S->path);
+        if(r)return;
+    }
+}
+#endif
 static u32 no_lock(void){return 0;}static void no_unlock(void){}
 static const struct ops file_ops={no_lock,no_unlock,(void *)0x08021d91,(void *)0x08021f73,
     (void *)0x080220fd,(void *)0x080222bd,(void *)0x08022347};
@@ -232,14 +467,14 @@ static u32 load_file(u32 version,u32 size,u32 key){
             if(((u32 *)SNAP)[i]!=v){result=0x103;break;}
         }
         if(!result)for(u32 i=0;i<100;i++)S->readback[i]=SNAP[28+i];
-        if(!result && version>=3)result=read_part(S->request,48,&checksum);
+        if(!result && version>=3)result=read_part(REQUEST,48,&checksum);
         u32 total=version>=3?176:128;
         for(u32 lane=0;!result && lane<24;lane++){
-            u32 descriptor=version>=3?((uint16_t *)S->request)[lane]:0x80c0;
+            u32 descriptor=version>=3?((uint16_t *)REQUEST)[lane]:0x80c0;
             u32 n=descriptor&0x7fff,kind=descriptor>>15;
             if(n>192 || (kind && n!=192) || n>size-total){result=0x103;break;}
             if(n)result=read_part(SNAP,n,&checksum);
-            if(!result)result=((u32 (*)(u32,const void *,u32,u32))(A3_BANKIMPORT|1))(lane,SNAP,n,kind);
+            if(!result)result=BANKIMPORT(lane,SNAP,n,kind);
             total+=n;
         }
 #ifdef GR_STORE
@@ -272,7 +507,27 @@ static u32 restore(u32 record){
     if(!claimed(meta)){S->path[0]=0;default_block(S->readback);publish(record,0,S->readback);return 0;}
     if(!meta_valid(meta)){error(0x110);return 0x110;}
     if(!meta[3]){S->path[0]=0;default_block(S->readback);publish(record,0,valid(old)?old:S->readback);return 0;}
-    u32 key=*(const u32 *)(meta+4),size=*(const u32 *)(meta+8);path(key);u32 result=load_file(meta[2],size,key);
+    u32 key=*(const u32 *)(meta+4),size=*(const u32 *)(meta+8),result=4;
+#if PACK_FILES>=2
+    /* Next to the project, then RP_AUTO, then any file with this key in the same folder. */
+    u32 folder;
+    if(plus_path(S->m[PACK],S->m[PROJECT],key,&folder))result=load_file(meta[2],size,key);
+    if(result==4 || result==5){path(key);result=load_file(meta[2],size,key);}
+    if(result==4 || result==5){
+        u32 n=pack_sessions(S->m[PACK]);
+        if(n && find_plus(n,ANY_SLOT,key,0,0))result=load_file(meta[2],size,key);
+    }
+#elif PACK_FILES
+    /* Next to the project, then RP_AUTO, then any slot's file with this key in the same folder. */
+    if(plus_path(S->m[PACK],S->m[PROJECT],key))result=load_file(meta[2],size,key);
+    if(result==4 || result==5){path(key);result=load_file(meta[2],size,key);}
+    if(result==4 || result==5){
+        u32 n=pack_sessions(S->m[PACK]);
+        if(n && find_plus(n,ANY_SLOT,key,0,0))result=load_file(meta[2],size,key);
+    }
+#else
+    path(key);result=load_file(meta[2],size,key);
+#endif
     if(result){if(result==4 || result==5)S->m[MISSING]++;error(result);return result;}
     S->m[READS]++;
     publish(record,key,valid(old)?old:S->readback);S->m[VERIFIED]++;return 0;
@@ -281,6 +536,176 @@ static u32 restore(u32 record){
 u32 c_sh_grsettings(void) {
     return R->record==*(volatile u32 *)0x2003c0cc && (R->state==LOADED || R->state==READY) &&
         ((u32 (*)(const void *))(GR_SETTINGS_VALID|1))(GR_LIVE)?(u32)GR_LIVE:0;
+}
+#endif
+#if PLUS_USB
+/* Plus files over USB SysEx (commands 0x20-0x27 of rdiag's frame). c_sh_pxmidi runs in the MIDI task: it hands the request
+   to Content through the stock synchronous read (op 6) with a private item, and c_sh_backend runs it there, under Content's
+   filesystem serialization, writing the reply over the request. Only Plus file names are accepted. */
+#define PX_KIND 0x58555052u
+#define PX_VERSION 1u
+#define PX_NMAX 64u
+#define PX_NAME 64u
+#define F_LSEEK 0x080223d9u
+#define CONTENT_READ 0x08046055u
+#define PX_DATA 256u                                         /* SNAP: [0, 256) data, +256 a second path, +400 a name */
+#define PX_PATH2 ((char *)SNAP+256)
+#define PX_TMP ((char *)SNAP+400)
+enum {PX_BAD=0x100,PX_NOPACK=0x101,PX_BUSY=0x102,PX_SHORT=0x103,PX_END=0x110};
+typedef u32 (*px_f1)(u32);typedef u32 (*px_f2)(u32,u32);typedef u32 (*px_f3)(u32,u32,u32);typedef u32 (*px_f4)(u32,u32,u32,u32);
+static u32 px_g32(const u8 *p){u32 v=0;for(u32 i=0;i<8;i++)v=v<<4|(p[i]&15);return v;}
+static u8 *px_p32(u8 *d,u32 v){for(u32 i=0;i<8;i++){*d++=(u8)(v>>28);v<<=4;}return d;}
+/* RP_AUTO: <8 hex>.RPS; a pack: plus_parse's form. Printable ASCII, no path separators. */
+static int px_name_ok(u32 dir,const char *n,u32 L){
+    if(!L || L>PX_NAME)return 0;
+    for(u32 i=0;i<L;i++)if(n[i]<' ' || n[i]>'~' || n[i]=='/' || n[i]=='\\' || n[i]==':')return 0;
+    if(dir){u32 s,k;return plus_parse(n,&s,&k);}
+    if(L!=12 || n[8]!='.' || (n[9]|32)!='r' || (n[10]|32)!='p' || (n[11]|32)!='s')return 0;
+    for(u32 i=0;i<8;i++)if(hexval(n[i])<0)return 0;
+    return 1;
+}
+/* S->path = the folder with its slash; returns its length. 0 = no such pack. */
+static u32 px_folder(u32 dir){
+    if(!dir){const char a[]="1:/RP_AUTO/";for(u32 i=0;i<sizeof a;i++)S->path[i]=a[i];return sizeof a-1;}
+    return dir<=31?pack_sessions(dir):0;
+}
+/* S->path = the folder and the name; *e = the refusal. Returns the folder's length. */
+static u32 px_path(u32 dir,const u8 *name,u32 L,u32 *e){
+    char *tmp=PX_TMP;
+    *e=PX_BAD;
+    if(L>PX_NAME)return 0;
+    for(u32 i=0;i<L;i++)tmp[i]=(char)name[i];tmp[L]=0;
+    if(!px_name_ok(dir,tmp,L))return 0;
+    *e=PX_NOPACK;
+    u32 n=px_folder(dir);
+    if(!n)return 0;
+    *e=PX_BAD;
+    if(n+L+1>PATH_MAX)return 0;
+    for(u32 i=0;i<=L;i++)S->path[n+i]=tmp[i];
+    *e=0;return n;
+}
+static u32 px_mkdir(u32 n){
+    S->path[n-1]=0;u32 r=((px_f1)(F_MKDIR|1))((u32)S->path);S->path[n-1]='/';
+    return r==8?0:r;
+}
+static u32 px_close(u32 r){u32 c=file_ops.close((void *)FIL);return r?r:c;}
+static u32 px_open(u32 mode){return file_ops.open((void *)FIL,S->path,mode);}
+static u32 px_fsize(void){return *(volatile u32 *)(FIL+12);}
+/* n bytes at off into d; *size = the file's size */
+static u32 px_read(u32 off,u8 *d,u32 n,u32 *done,u32 *size){
+    u32 r=px_open(1);*done=0;
+    if(r)return r;
+    *size=px_fsize();
+    r=((px_f2)F_LSEEK)(FIL,off);
+    if(!r)r=file_ops.read((void *)FIL,d,n,done);
+    return px_close(r);
+}
+/* n bytes at off; off 0 makes the file anew (fresh: only if it does not exist), else off must be the file's end */
+static u32 px_write(u32 off,const u8 *d,u32 n,u32 fresh){
+    u32 r=px_open(off?2:fresh?7:0x0a),done=0;
+    if(r)return r;
+    if(px_fsize()!=off)r=PX_SHORT;
+    if(!r && off)r=((px_f2)F_LSEEK)(FIL,off);
+    if(!r)r=file_ops.write((void *)FIL,d,n,&done);
+    if(!r && done!=n)r=PX_SHORT;
+    if(!r)r=file_ops.sync((void *)FIL);
+    return px_close(r);
+}
+static u32 px_crc(u32 *size,u32 *c){
+    u32 r=px_open(1),done=0,sum=0xffffffffu;
+    if(r)return r;
+    *size=px_fsize();
+    for(u32 off=0;!r && off<*size;off+=done){
+        r=file_ops.read((void *)FIL,SNAP,PX_DATA,&done);
+        if(!r && !done)r=PX_SHORT;
+        if(!r)sum=crc_more(sum,SNAP,done);
+    }
+    *c=~sum;return px_close(r);
+}
+static u32 px_list(u32 dir,u32 index,u8 **o){
+    u32 n=px_folder(dir);
+    if(!n)return PX_NOPACK;
+    u8 *d=SNAP,*info=SNAP+64;const char *name=(const char *)(info+0x16);
+    S->path[n-1]=0;
+    u32 r=((px_f2)F_OPENDIR)((u32)d,(u32)S->path);
+    if(r)return r;
+    r=PX_END;
+    while(!((px_f2)F_READDIR)((u32)d,(u32)info) && name[0]){
+        u32 L=0;while(L<=PX_NAME && name[L])L++;
+        if(info[8]&0x10 || !px_name_ok(dir,name,L) || index--)continue;
+        *o=px_p32(*o,*(u32 *)info);*(*o)++=(u8)L;for(u32 i=0;i<L;i++)*(*o)++=(u8)name[i];
+        r=0;break;
+    }
+    ((px_f1)F_CLOSEDIR)((u32)d);
+    return r;
+}
+/* the whole file to another name or pack; the target must not exist; a failed copy removes it */
+static u32 px_copy(u32 dir,const u8 *name,u32 L,u32 dir2,const u8 *name2,u32 L2){
+    u32 e,size=0,r=0,done=0,n;
+    if(!px_path(dir,name,L,&e))return e;
+    if(!(n=px_path(dir2,name2,L2,&e)))return e;
+    if((e=px_mkdir(n)))return e;
+    for(u32 off=0;!r && (!off || off<size);off+=done){
+        px_path(dir,name,L,&e);r=px_read(off,SNAP,PX_DATA,&done,&size);
+        px_path(dir2,name2,L2,&e);
+        if(!r)r=px_write(off,SNAP,done,1);
+        if(!r && !done)break;
+        if(!r && !guards())r=PX_BUSY;
+    }
+    if(r && r!=8)((px_f1)F_UNLINK)((u32)S->path);
+    return r;
+}
+/* request: [6] dir (0 = RP_AUTO, 1-31 = a pack), [7] name length, the name, then the command's fields */
+static u32 px_run(u8 *q,u32 len){
+    u32 cmd=q[4]&0x3f,dir=q[6],L=q[7],e=PX_BAD,n,size=0,done=0;
+    u8 *a=q+8+L,*st=q+6,*o=q+14;
+    if(8+L+20>len)goto out;
+    e=PX_BUSY;
+    if(!ready() || S->job.opened || S->m[ACTIVE] || !guards())goto out;
+    if(cmd==0x20){                                               /* info: the version, the folder */
+        e=0;o=px_p32(o,PX_VERSION);
+        n=px_folder(dir);*o++=(u8)n;for(u32 i=0;i<n;i++)*o++=(u8)S->path[i];
+        goto out;
+    }
+    if(cmd==0x21){e=px_list(dir,px_g32(a),&o);goto out;}       /* list: the index-th Plus file: size, name */
+    if(!(n=px_path(dir,q+8,L,&e)))goto out;
+    if(cmd==0x22){                                               /* read: size, count, the bytes as nibbles */
+        u32 c=a[8]>PX_NMAX?PX_NMAX:a[8];
+        e=px_read(px_g32(a),SNAP,c,&done,&size);
+        if(!e){o=px_p32(o,size);o=px_p32(o,done);for(u32 i=0;i<done;i++){*o++=SNAP[i]>>4;*o++=SNAP[i]&15;}}
+    }else if(cmd==0x23){                                         /* write: off, count, the bytes as nibbles */
+        u32 c=a[8];
+        if(c>PX_NMAX || 8+L+9+2*c>len)e=PX_BAD;
+        else{
+            for(u32 i=0;i<c;i++)SNAP[i]=(u8)(a[9+2*i]<<4|(a[10+2*i]&15));
+            u32 off=px_g32(a);
+            e=off?0:px_mkdir(n);
+            if(!e)e=px_write(off,SNAP,c,0);
+        }
+    }else if(cmd==0x24)e=((px_f1)F_UNLINK)((u32)S->path);       /* delete */
+    else if(cmd==0x25){e=px_crc(&size,&done);if(!e){o=px_p32(o,size);o=px_p32(o,done);}}   /* size and CRC-32 */
+    else if(cmd==0x26){                                          /* rename in the same folder: [a] length, the new name */
+        char *to=PX_PATH2;u32 L2=a[0];
+        for(u32 i=0;i<PATH_MAX;i++)to[i]=S->path[i];
+        if(8+L+1+L2>len || !px_path(dir,a+1,L2,&e))goto out;
+        e=((px_f2)F_RENAME)((u32)to,(u32)S->path);
+    }else if(cmd==0x27){                                         /* copy: [a] the target dir, [a+1] length, its name */
+        u32 L2=a[1];
+        e=8+L+2+L2>len?PX_BAD:px_copy(dir,q+8,L,a[0],a+2,L2);
+    }
+out:
+    px_p32(st,e);
+    return (u32)(o-q);
+}
+/* rdiag's c_rdcmd, commands 0x20-0x2F (buf[4] already has 0x40); returns the reply's end */
+u8 *c_sh_pxmidi(u8 *buf,u32 len,u32 port){
+    (void)port;
+    u32 item[3]={PX_KIND,0,0},done=0,r;
+    if(S->m[MAGIC]!=TAG || !S->m[30] || S->m[GUARD] || len<24)r=PX_BUSY;
+    else if((r=((u32 (*)(u32 *,u32,u32,u32,u32,u32,u32 *))CONTENT_READ)(item,0,(u32)buf,len,0,0,&done)))r|=0x200;
+    else if(done<14 || done>=len)r=PX_SHORT;
+    else return buf+done;
+    return px_p32(buf+6,r);
 }
 #endif
 u32 c_sh_autobank(void){
@@ -299,6 +724,13 @@ u32 c_sh_block(void){
     return R->state==READY && R->record==record?(u32)R->block:0;
 }
 u32 c_sh_backend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a,u32 b){
+#if PLUS_USB
+    if(*(u32 *)item==PX_KIND){
+        u32 n=buffer>=0x20000000u && buffer<0x20050000u && length>=24 && length<=512?px_run((u8 *)buffer,length):0;
+        if(actual)*(u32 *)actual=n;
+        return 0;
+    }
+#endif
     if(*(u32 *)item!=2 || offset || length!=0x29484 || !record_ok(buffer) || buffer!=*(volatile u32 *)0x2003c0cc)
         return ((fn7)(TR_BACKEND|1))(item,offset,buffer,length,actual,a,b);
     int enabled=ready();
@@ -326,6 +758,12 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
     if(S->m[ACTIVE]){if(actual)*(u32 *)actual=0;return 5;}
 #endif
     S->m[NSAVE]++;S->m[START]=now();S->m[ACTIVE]=1;S->m[MODE]=1;S->m[PROJECT]=((u32 *)item)[1];S->m[PACK]=((u32 *)item)[2]&255;
+#if PACK_FILES>=2
+    /* Shift + Save on a project whose Plus file is missing: save it with the default settings. */
+    if(R->state==BROKEN && (((u32 *)item)[2]&255) && SHIFT_HELD()){
+        auto_reset();default_block(S->readback);publish(buffer,0,S->readback);
+    }
+#endif
     if(R->state!=READY || R->record!=buffer || !valid(R->block)){
         error(0x111);S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;
     }
@@ -336,10 +774,33 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
         if(frozen_chunk(off,n)){result=0x114;break;}sum=crc_more(sum,SNAP,n);off+=n;}
     u32 key=~sum,def=is_default(S->data) && empty_bank(),card=((u32 *)item)[2]&255;
     /* Internal projects cannot acquire independent automation or drop it silently. */
-    if(!card && ((u32 (*)(void))(A3_BANKFILESIZE|1))()!=176){release();S->m[FAILS]++;S->m[RAW]=0x113;S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;}
+    if(!card && BANKFILESIZE()!=176){release();S->m[FAILS]++;S->m[RAW]=0x113;S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;}
     if(!card || def)S->path[0]=0;
+#if PACK_FILES>=2
+    u32 slot=((u32 *)item)[1],plus=0,folder=0;char keep[PATH_MAX];
+#elif PACK_FILES
+    u32 slot=((u32 *)item)[1],plus=0;char keep[PLUS_NAME+1];
+#endif
     if(!result && card && !def){
+#if PACK_FILES>=2
+        plus=plus_path(card,slot,key,&folder);
+        if(plus){
+            S->path[folder-1]=0;result=((u32 (*)(const char *))F_MKDIR)(S->path);S->path[folder-1]='/';
+            if(result && result!=8)plus=0;
+        }
+        if(plus)for(u32 i=folder;i<=plus;i++)keep[i-folder]=S->path[i];
+        else{path(key);result=((u32 (*)(const char *))0x08022789)("1:/RP_AUTO");}
+#elif PACK_FILES
+        plus=plus_path(card,slot,key);
+        if(plus){
+            S->path[plus-PLUS_NAME-1]=0;result=((u32 (*)(const char *))F_MKDIR)(S->path);S->path[plus-PLUS_NAME-1]='/';
+            if(result && result!=8)plus=0;
+        }
+        if(plus)for(u32 i=0;i<=PLUS_NAME;i++)keep[i]=S->path[plus-PLUS_NAME+i];
+        else{path(key);result=((u32 (*)(const char *))0x08022789)("1:/RP_AUTO");}
+#else
         path(key);result=((u32 (*)(const char *))0x08022789)("1:/RP_AUTO");
+#endif
         if(!result || result==8){
             result=write_frozen(size);if(!result)S->m[WRITES]++;
             if(!result || result==8){result=verify_file(size);if(!result){S->m[READS]++;
@@ -378,9 +839,44 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
          * recovered if native writing itself was partial. */
         S->m[FAILS]++;S->m[RAW]=result?result:0x104;
         if(!result)result=3;
-    } else {R->key=def?0:key;S->m[RAW]=0;}
+    } else {
+        R->key=def?0:key;S->m[RAW]=0;
+#if PACK_FILES>=2
+        /* The saved project no longer needs this slot's older Plus files. */
+        if(plus)drop(folder,slot,keep,0);
+#elif PACK_FILES
+        /* The saved project no longer needs this slot's older Plus files. */
+        if(plus)sweep(plus-PLUS_NAME,slot,keep);
+        else if(card && def && slot<ANY_SLOT){u32 n=pack_sessions(card);if(n)sweep(n,slot,0);}
+#endif
+    }
     S->m[ACTIVE]=0;S->m[ELAPSED]=now()-S->m[START];return result;
 }
+#if PACK_FILES>=2
+/* The stock pack delete removes only the files it knows, then the folders: move ours out first. */
+u32 c_sh_packdelete(u32 store,u32 fs){
+    if(ready() && !S->m[ACTIVE]){u32 n=store_sessions(store);if(n)drop(n,ANY_SLOT,0,1);}
+    return ((u32 (*)(u32,u32))0x0802e939)(store,fs);
+}
+/* After the stock deletes a project (type 0 = Sessions), its Plus files move to RP_AUTO. 0 = deleted. */
+u32 c_sh_itemdelete(u32 store,u32 fs,u32 type,u32 slot){
+    u32 result=((u32 (*)(u32,u32,u32,u32))0x0802e8e5)(store,fs,type,slot);
+    if(!result && !(type&255) && (slot&255)<ANY_SLOT && ready() && !S->m[ACTIVE]){u32 n=store_sessions(store);if(n)drop(n,slot&255,0,1);}
+    return result;
+}
+#elif PACK_FILES
+/* The stock pack delete removes only the files it knows, then the folders: remove ours first. */
+u32 c_sh_packdelete(u32 store,u32 fs){
+    if(ready() && !S->m[ACTIVE]){u32 n=store_sessions(store);if(n)sweep(n,ANY_SLOT,0);}
+    return ((u32 (*)(u32,u32))0x0802e939)(store,fs);
+}
+/* After the stock deletes a project (type 0 = Sessions), its Plus files go too. 0 = deleted. */
+u32 c_sh_itemdelete(u32 store,u32 fs,u32 type,u32 slot){
+    u32 result=((u32 (*)(u32,u32,u32,u32))0x0802e8e5)(store,fs,type,slot);
+    if(!result && !(type&255) && (slot&255)<ANY_SLOT && ready() && !S->m[ACTIVE]){u32 n=store_sessions(store);if(n)sweep(n,slot&255,0);}
+    return result;
+}
+#endif
 u32 c_sh_apply(u32 a,u32 b,u32 c,u32 d){
     u32 record=*(u32 *)(a+0x14);
     int enabled=ready();
@@ -409,10 +905,12 @@ u32 c_sh_out(u32 a,u32 out,u32 c,u32 d){
         if(!S->m[ACTIVE] && R->state==READY)for(u32 i=0;i<100;i++)S->data[i]=R->block[i];
         /* Encode one lane outside the publication lock, at most every 20ms.
          * No SD access; generation checks discard stale prepared encodings. */
+#if !NO_A3
         if(!S->m[ACTIVE] && R->state==READY && S->m[PACK] && now()-AST[24]>=20){
             AST[24]=now();u32 lane=AST[25]%24;AST[25]=(lane+1)%24;
             ((u32 (*)(u32))(A3_BANKMAINTAIN|1))(lane);
         }
+#endif
         if((R->state==BROKEN || S->m[RAW]) && (now()&256))
             ((u32 *)out)[57]=*(u32 *)(0x20003974+4*0x55);
     }

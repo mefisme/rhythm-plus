@@ -10,6 +10,7 @@ RAM: rhstate "smswitch" + 0 the tracks to write (bit t), + 1 the frame counter, 
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -39,7 +40,8 @@ def code(at, shift=0, store_pitch=False, scan=False, stretch=False, lscan=None):
     """pitchmod.code's place: our words, and the stock's addresses as RR and TRIG (pitchmod's hooks unchanged)"""
     import voicefx as V
     assert shift == 0x300 and not (store_pitch or scan or stretch) and lscan is None
-    w, labels = V.assemble([*FS.drone_items(), *lfade_items()], at)
+    drone = os.environ.get("RH_NO_DRONE") != "1"
+    w, labels = V.assemble([*(FS.drone_items() if drone else []), *lfade_items()], at)
     LABELS.update(labels)
     return w, PM.P_EXP, PM.P_START
 
@@ -199,17 +201,21 @@ def install(img, report, base_addr):
         img += bytes([0xFF])
     for c in CI.LED_CALLS:
         rhbuild.patch(img, c, f"bl #{prev:#x}", bl(c, labels["c_swled"]))
-    lf, dr, do = LABELS["lfade"], LABELS["drone"], LABELS["droff"]
+    drone = "drone" in LABELS
+    lf = LABELS["lfade"]
     rhdsp1.patch_p(img, FS.EF_SITE, FS.EF_OLD[0], 0x0AF080)
     rhdsp1.patch_p(img, FS.EF_SITE + 1, FS.EF_OLD[1], lf)
-    rhdsp1.patch_p(img, FS.NOTE_AT, FS.NOTE_OLD[0], 0x0AF080)
-    rhdsp1.patch_p(img, FS.NOTE_AT + 1, FS.NOTE_OLD[1], dr)
-    rhdsp1.patch_p(img, FS.OFF_AT, FS.OFF_OLD[0], 0x0AF080)
-    rhdsp1.patch_p(img, FS.OFF_AT + 1, FS.OFF_OLD[1], do)
+    if drone:
+        dr, do = LABELS["drone"], LABELS["droff"]
+        rhdsp1.patch_p(img, FS.NOTE_AT, FS.NOTE_OLD[0], 0x0AF080)
+        rhdsp1.patch_p(img, FS.NOTE_AT + 1, FS.NOTE_OLD[1], dr)
+        rhdsp1.patch_p(img, FS.OFF_AT, FS.OFF_OLD[0], 0x0AF080)
+        rhdsp1.patch_p(img, FS.OFF_AT + 1, FS.OFF_OLD[1], do)
     out = {k: hex(v) for k, v in labels.items() if k.startswith("c_")}
     out.update(c_fsval=out["c_smval"], c_fsput=out["c_smput"])
     report["smswitch"] = dict(sm=True, sm0=FS.SM0, smblk_off=FS.SMBLK_OFF, smdefs=list(FS.SMDEF), smf=hex(FS.SMF), loopfade=hex(lf),
-                              drone=hex(dr), droff=hex(do), ln=hex(FS.LN), loff=hex(FS.LOFF), blk=hex(FS.BLK), sm_dr=FS.SM_DR,
+                              **(dict(drone=hex(dr), droff=hex(do), ln=hex(FS.LN), loff=hex(FS.LOFF), blk=hex(FS.BLK), sm_dr=FS.SM_DR)
+                                 if drone else dict(no_drone=True)),
                               loopxf=True, xfb=hex(FS.XFB), xfs=hex(FS.XFS), xf_n=FS.XF_N,
                               xf_words={k: hex(getattr(XF, k)) for k in FS.XF_SCRATCH},
                               slot=hex(rhstate.ST + rhstate.OFF["smswitch"][0]), prev_led=hex(prev), labels=out)

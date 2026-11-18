@@ -38,6 +38,7 @@ RGB = (0xFFC866, 0xE6D166, 0xCCDA66, 0xB3E466, 0x99ED66, 0x80F666, 0x66FF66)
 QUARTERS = (1, 2, 4, 8, 16, 32)
 ON, PART = 0x80, 0x08
 LENS = {}                                               # sample number -> its length, else 0
+PLUS = [0x1500]
 SNAP = {}                                               # host address -> the word the narrow read returns, else core 1's inactive
 SNAP_HOST = 0xAB20                                      # the snapshot's first word, 8 a track; word 7 the note's serial
 STOCK = []
@@ -122,6 +123,13 @@ def main():
         STOCK.append(u.reg_read(UC_ARM_REG_R1))
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE, stock_pad, None, SMP_PAD, SMP_PAD + 1)
+    plus_gate = REP["storageshadow"].get("pack_files") == 2
+    if plus_gate:                                       # the project's Plus settings: loaded unless PLUS[0] = 0
+        def plus_ok(u, a, n, d):
+            u.reg_write(UC_ARM_REG_R0, PLUS[0])
+            u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+        at = int(REP["storageshadow"]["labels"]["c_sh_autobank"], 16)
+        uc.hook_add(UC_HOOK_CODE, plus_ok, None, at, at + 1)
     if not ET.GRAN:
         def wr16(u, a, n, d):
             ET.DSPW.append((u.reg_read(UC_ARM_REG_R0), u.reg_read(UC_ARM_REG_R1), u.reg_read(UC_ARM_REG_R2)))
@@ -333,7 +341,9 @@ def main():
           stretched >> t & 1 and not stretched >> o & 1 and flags() & 2, (hex(stretched), hex(flags())))
     check("its setup leaves the stretched track's route words and words 0, 2 and 15", not [x for x in w if x[1] == t and
           (x[0][0] == "c" or x[0][1] in (0, 2, 15))] and any(x[1] == t and x[0] == ("p", 1) for x in w), [x for x in w if x[1] == t])
-    check("its setup writes another track's route words", ((("c", 3), 3, 1) in w) and ((("c", 0), 3, 0) in w), w[:12])
+    import json
+    word3 = 0 if json.loads((Path(sys.argv[2]).parent / "manifest.json").read_text())["report"]["granular"].get("oneshot_scan") else 1
+    check("its setup writes another track's route words", ((("c", 3), 3, word3) in w) and ((("c", 0), 3, 0) in w), w[:12])
     SNAP.clear()
     sample(uc, o, 11, 96000)
     page(uc, True)
@@ -401,6 +411,15 @@ def main():
     scan3 = uc.reg_read(UC_ARM_REG_R0)
     check("pad 9 then pad 17: Granular on again: pad 13 still chosen, Scan where it was", granular_on() and f[12] == scl(RGB[3], full)
           and scan3 == want and rec(uc, o)[1] & 0x70 == 3 << 4, (hex(f[12]), scan3, hex(rec(uc, o)[1])))
+
+    if plus_gate:
+        PLUS[0] = 0
+        before = (granular_on(), rec(uc, o)[1])
+        f = out(uc)
+        pad(uc, 16)
+        check("Plus file missing: pad 17 dark and does nothing", f[16] == 0 and (granular_on(), rec(uc, o)[1]) == before and STOCK == [],
+              (hex(f[16]), before, granular_on(), STOCK))
+        PLUS[0] = 0x1500
 
     print("FAILED: " + ", ".join(ET.FAILS) if ET.FAILS else "ALL PASS")
     return 1 if ET.FAILS else 0

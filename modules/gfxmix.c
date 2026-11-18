@@ -197,6 +197,19 @@ static const u8 NPAR[NTYPES] = { 3, 2, 2, 7, 3, 5, 5 };
 #define O_SAVED 13
 #define O_TSMP 21                           /* the FX track's own sample, while it is the FX track */
 #define O_FXSMP 22                          /* its pad selected last, while it is not */
+#if CPAGE
+#define PAD_LANE0 16                        /* page 2: pads 17-24 the FX track's K1-K8 lanes */
+#define PAD_CYCLE 24                        /* pad 25: the next control to assign */
+#define PAD_AUDITION 31                     /* pad 32: audition on / off */
+#define PAGE2 1                             /* pad3_: bit 0 page 2, bits 1-2 the control to assign */
+#define VAL(x) ((x) & 127)                  /* bit 7 of the sends and saved knobs holds the lane choices */
+static int control_page(void);
+static void page2_pad(u32 pad);
+static u32 p2_down(void);
+static void p2_put(u32 m);
+#else
+#define VAL(x) (x)
+#endif
 
 #define SHOWN 1                             /* page: the sends shown */
 #define JUMP 2                              /* page: Up from the sends went to the held effect's settings; Down comes back */
@@ -306,6 +319,39 @@ static void blk_put(u32 i, u32 v)           /* byte i of the block, the block ma
     __asm volatile("cpsie i" ::: "memory");
 #endif
 }
+#if CPAGE
+/* control c's lane + 1 in bit 7 of four bytes: c 0-1 the sends, c 2 the saved knobs; 0 = no lane */
+static u32 lane_at(u32 c, u32 i) { return c < 2 ? O_SENDS + 4 * c + i : O_SAVED + i; }
+__attribute__((noinline)) static u32 lane_of(u32 c)
+{
+    const volatile u8 *b = blk();
+    u32 v = 0;
+    for (u32 i = 0; b && i < 4; i++)
+        v |= (u32)(b[lane_at(c, i)] >> 7 & 1u) << i;
+    return v ? v - 1u : NONE;
+}
+__attribute__((noinline)) static void lane_set(u32 c, u32 lane)
+{
+    u32 v = lane < 8 ? lane + 1u : 0;
+    for (u32 i = 0; i < 4; i++) {
+        const volatile u8 *b = blk();
+        u32 at = lane_at(c, i);
+        blk_put(at, (b ? VAL(b[at]) : FULL) | (v >> i & 1u) << 7);
+    }
+}
+__attribute__((noinline)) static u32 owner(u32 k)
+{
+    for (u32 c = 0; c < 3; c++)
+        if (lane_of(c) == k)
+            return c;
+    return NONE;
+}
+__attribute__((noinline)) static void blk_val(u32 i, u32 v) { const volatile u8 *b = blk(); blk_put(i, (b ? b[i] & 128u : 0) | v); }
+static u32 knob_get(u32 t, u32 k);
+static u32 knob_send(u32 k, u32 v);
+#else
+#define blk_val blk_put
+#endif
 
 static u32 control_base(u32 k)
 {
@@ -321,6 +367,11 @@ __attribute__((naked,noinline)) u32 c_gx_autodisplay(u32 k,u32 base)
 #endif
 #endif
 static u32 control_get(u32 k) {
+#if CPAGE
+    u32 fx = fx_track(), l = k < 3 ? lane_of(k) : NONE;
+    if (fx != NONE && l < 8)
+        return knob_send(l, knob_get(fx, l));
+#endif
 #if AUTOMATION3
     if(k<3)return c_gx_autovalue(k,control_base(k));
 #endif
@@ -345,7 +396,11 @@ u32 c_gx_autofx(void) { return fx_track(); }
 #if AUTO_BULK
 __attribute__((naked,noinline)) void c_gx_autotrackclear(u32 t)
 { __asm__ volatile("movs r0,#0\n bx lr"); }
+#if CPAGE
+void c_gx_autodefaults(void){for(u32 k=0;k<3;k++){lane_set(k,NONE);control_store(k,FULL);}}
+#else
 void c_gx_autodefaults(void){for(u32 k=0;k<3;k++)control_store(k,FULL);}
+#endif
 #endif
 #if REC_FEEDBACK
 __attribute__((naked,noinline)) u32 c_gx_autored(u32 k)
@@ -371,9 +426,12 @@ static u32 send_of(u32 t)
 {
     u32 fx = fx_track();
     if (fx != NONE)
+#if CPAGE
+        if (owner(t) == NONE)               /* a lane that a control owns: the send stays in the block */
+#endif
         return knob_send(t, knob_get(fx, t));
     const volatile u8 *b = blk();
-    return b ? b[O_SENDS + t] : FULL;
+    return b ? VAL(b[O_SENDS + t]) : FULL;
 }
 
 /* a stock store and its two buffers in RAM: 0 while not built yet (a cold start's random words) */
@@ -1048,8 +1106,16 @@ static void fx_toggle(u32 t)
     if (fx_track() == t) {
         all_off();
         u8 saved[8];
+#if CPAGE
+        for (u32 c = 0; c < 3; c++)
+            if (lane_of(c) < 8)
+                control_store(c, knob_send(lane_of(c), knob_get(t, lane_of(c))));
+#endif
         for (u32 k = 0; k < 8; k++) {
-            saved[k] = blk()[O_SAVED + k];
+            saved[k] = VAL(blk()[O_SAVED + k]);
+#if CPAGE
+            if (owner(k) == NONE)
+#endif
             blk_put(O_SENDS + k, knob_send(k, knob_get(t, k)));
         }
         u32 own = blk()[O_TSMP];
@@ -1061,11 +1127,15 @@ static void fx_toggle(u32 t)
         return;
     }
     for (u32 k = 0; k < 8; k++)
-        blk_put(O_SAVED + k, knob_get(t, k));
+        blk_val(O_SAVED + k, knob_get(t, k));
     blk_put(O_TSMP, sample_raw(t));
     const volatile u8 *b = blk();
     for (u32 k = 0; k < 8 && b; k++)
+#if CPAGE
+        knob_put(t, k, send_knob(k, owner(k) == NONE ? VAL(b[O_SENDS + k]) : control_base(owner(k))));
+#else
         knob_put(t, k, send_knob(k, b[O_SENDS + k]));
+#endif
     if (!pk_codes(t))
         blk_put(O_FXSMP, 0);
     pk_make(t);
@@ -1212,6 +1282,16 @@ u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
     if (!fx_view())
         return ((hook_fn)FN(PREV_PAD))(c, pad, vel, a3);
     u32 t = sel_track();
+#if CPAGE
+    if (pad >= PAD_SLOT0 && control_page()) {
+        u32 bit = 1u << (pad - PAD_SLOT0);
+        if (!(p2_down() & bit)) {           /* one action a press: the stock never sees these pads */
+            p2_put(p2_down() | bit);
+            page2_pad(pad);
+        }
+        return 0;
+    }
+#endif
     if (pad < PAD_SLOT0) {
         u32 st = pad + 16 * step_page(t), had = step_get(t, st), live = S->gdown;
         S->pflip = (u8)step_flip(t, st);
@@ -1267,6 +1347,12 @@ u32 c_gx_padrel(u32 c, u32 pad, u32 a2, u32 a3)
         S->taken = 0;
         return 0;
     }
+#if CPAGE
+    if (pad >= PAD_SLOT0 && p2_down() >> (pad - PAD_SLOT0) & 1) {
+        p2_put(p2_down() & ~(1u << (pad - PAD_SLOT0)));
+        return 0;
+    }
+#endif
 #if NATIVE_EDGES
     /* An up report for a pad the native controller has not accepted cannot
        release a live FX gate, change a held target, or erase its FX code. */
@@ -1419,10 +1505,20 @@ static void scrub(s32 d)                    /* K1 with Shift + Play held: the so
 static u32 shift_held(void) { u32 st = R32(CTRL + O_SHIFT); return built(st) && *PARAM_GET(st, 0); }
 static int control_page(void)
 {
+#if CPAGE
+#if CPAGE_MIX
+    if (!S->scr && on_mixer() && (S->page & SHOWN) && shift_held())
+        return 1;                           /* the sends page: Shift + K1-K3 */
+#endif
+    return !S->scr && fx_view() && (S->pad3_ & PAGE2);
+#endif
     return !S->scr && shift_held() &&
         ((fx_track_view() && R8(CONT + O_MODE) != MODE_SMP && !SM_SHOWN(R8(SM_SLOT)) && !R8(TM_SLOT + TM_OPEN))
          || (on_mixer() && (S->page & SHOWN)));
 }
+#if CPAGE
+static void send_turn(u32 t, u32 k, s32 d);
+#endif
 static void control_knob(u32 k, s32 d)
 {
     if (k >= 4 || !d)
@@ -1436,6 +1532,18 @@ static void control_knob(u32 k, s32 d)
         u32 so = step_obj(sel_track());
         if (in_ram(so))
             *(volatile u32 *)(so + 0xb8) &= ~R32(so + 0xc0);
+    }
+#endif
+#if CPAGE
+    if (k >= 3)
+        return;                             /* audition is pad 32 */
+#if CPAGE_MIX
+    if (lane_of(k) < 8 && fx_track() != NONE) {
+#else
+    if (lane_of(k) < 8) {
+#endif
+        send_turn(fx_track(), lane_of(k), d);   /* its lane: record, lock and Clear as the sends */
+        return;
     }
 #endif
     u32 clear = held() >> BIT_CLEAR & 1;
@@ -1472,6 +1580,59 @@ static void control_knob(u32 k, s32 d)
     }
 }
 
+#if CPAGE
+static void audition_toggle(void)
+{
+    u32 off = !control_get(3);
+    control_store(3, off);
+    if (off) {
+        for (u32 s = 0; s < NSLOTS; s++)
+            if (S->audown >> s & 1)
+                gfx_pad(s, 0, 0);
+        S->audown = 0;
+        for (u32 ty = 0; ty < NTYPES; ty++)
+            if (S->play[ty] && !(live_types() >> ty & 1))
+                slot_onoff(S->play[ty] - 1u, 1);
+        types_to(0);                        /* sequenced effects continue */
+    }
+}
+static void lane_free(u32 c)                /* control c gives its lane back: c keeps the value, the lane is a send again */
+{
+    u32 fx = fx_track(), l = lane_of(c);
+    if (fx == NONE || l >= 8)
+        return;
+    u32 v = control_get(c);
+    lane_set(c, NONE);
+    control_store(c, v);
+    const volatile u8 *b = blk();
+    if (b)
+        knob_put(fx, l, send_knob(l, VAL(b[O_SENDS + l])));
+}
+static void page2_pad(u32 pad)              /* pads 17-24 a lane for the chosen control (again: none), 25 the next control, 32 audition */
+{
+    u32 c = S->pad3_ >> 1 & 3, fx = fx_track();
+    if (pad == PAD_CYCLE) {
+        S->pad3_ = (u8)((S->pad3_ & PAGE2) | (c < 2 ? c + 1u : 0) << 1);
+        return;
+    }
+    if (pad == PAD_AUDITION)
+        audition_toggle();
+    if (pad >= PAD_LANE0 + 8 || fx == NONE)
+        return;
+    u32 l = pad - PAD_LANE0, mine = lane_of(c) == l, o = owner(l);
+    if (o != NONE)
+        lane_free(o);
+    lane_free(c);
+    if (mine)
+        return;
+    u32 v = control_get(c);
+    blk_val(O_SENDS + l, knob_send(l, knob_get(fx, l)));
+    lane_set(c, l);
+    knob_put(fx, l, send_knob(l, v));
+}
+static u32 p2_down(void) { return S->sapad[0] | (u32)S->sapad[1] << 8; }
+static void p2_put(u32 m) { S->sapad[0] = (u8)m; S->sapad[1] = (u8)(m >> 8); }
+#endif
 static void shift_put(u32 v)
 {
     u32 st = R32(CTRL + O_SHIFT);
@@ -1542,6 +1703,12 @@ u32 c_gx_btn(u32 c, u32 id, u32 a2, u32 a3)
         } else if (S->gdown) {
             S->set = id == ID_UP;
         }
+#if CPAGE
+        else {
+            S->pad3_ = (u8)(id == ID_DOWN ? S->pad3_ | PAGE2 : S->pad3_ & ~PAGE2);
+            p2_put(0);
+        }
+#endif
         return 0;
     }
     if ((id == ID_DOWN || id == ID_UP) && on_mixer()) {
@@ -1625,6 +1792,13 @@ u32 c_gx_tknob(u32 c, u32 knob, u32 delta, u32 a3)
         control_knob(knob, (s32)delta);
         return 0;
     }
+#if CPAGE
+    if (CIOK() && fx_view() && !S->set && knob < 8 && owner(knob) != NONE) {
+        s32 v = held() >> BIT_CLEAR & 1 ? FULL : (s32)send_of(knob) + (s32)delta;   /* the track's send, not its lane */
+        blk_val(O_SENDS + knob, (u32)(v < 0 ? 0 : v > FULL ? FULL : v));
+        return 0;
+    }
+#endif
     if (CIOK() && fx_view() && !S->set && knob < 8) {
         send_turn(sel_track(), knob, (s32)delta);
         return 0;
@@ -1646,12 +1820,16 @@ u32 c_gx_knob(u32 view, u32 knob, u32 delta, u32 a3)
         return 0;
     }
     u32 clr = held() >> BIT_CLEAR & 1, fx = fx_track();
+#if CPAGE
+    if (fx != NONE && owner(knob) == NONE) {
+#else
     if (fx != NONE) {
+#endif
         send_turn(fx, knob, (s32)delta);
         return 0;
     }
     s32 v = clr ? FULL : (s32)send_of(knob) + (s32)delta;
-    blk_put(O_SENDS + knob, (u32)(v < 0 ? 0 : v > FULL ? FULL : v));
+    blk_val(O_SENDS + knob, (u32)(v < 0 ? 0 : v > FULL ? FULL : v));
     return 0;
 }
 
@@ -1736,6 +1914,9 @@ static void send_lights(volatile u32 *o, u32 full)
         u32 color = GX_RGB, level = (LVL_ZERO + send_of(k) * (255 - LVL_ZERO) / FULL) * full >> 8;
 #if REC_FEEDBACK
         u32 own=fx<8?send_own(fx,k):255;
+#if CPAGE
+        if(owner(k)!=NONE)own=255;          /* its lane is a control's */
+#endif
         if(own!=255)level=(LVL_ZERO+knob_send(k,own)*(255-LVL_ZERO)/FULL)*full>>8;
         if(ko && (*PARAM_GET(0x200122b0,1)&255) &&
            (R32(PARAM_GET(R32(ko+0x1c),0))>>k&1))color=R32(COLOURS+4*CLR_RED);
@@ -1774,6 +1955,53 @@ static u32 sequence_lights(void)
     return lit;
 }
 
+#if CPAGE
+__attribute__((noinline)) static u32 ctl_color(u32 c) { return c == 0 ? R32(COLOURS + 4 * 0x141) : c == 1 ? R32(COLOURS + 4 * 0x139) : GX_RGB; }
+static void control_lights(volatile u32 *o, u32 full)   /* page 2's knobs: K1-K3 at their values, red as the sends on a lane; K4-K8 dark */
+{
+    if (!control_page())
+        return;
+    u32 fx = fx_track(), ko = fx < 8 ? R32(KNOBS + 4 * fx) : 0;
+    for (u32 k = 0; k < 8; k++) {
+        o[LED_KNOB0 + k] = 0;
+        if (k >= 3)
+            continue;
+#if CPAGE_MIX
+        u32 l = fx < 8 ? lane_of(k) : NONE, color = ctl_color(k), v = control_get(k);
+#else
+        u32 l = lane_of(k), color = ctl_color(k), v = control_get(k);
+#endif
+        u32 right = l < 8 ? ko && R8(ko + 0x59 + l) == 40 : S->cright[k] == 40;
+        u32 left = l < 8 ? ko && R8(ko + 0x51 + l) == 40 : S->cleft[k] == 40;
+#if REC_FEEDBACK
+        if (l < 8) {
+            u32 own = send_own(fx, l);
+            if (own != 255) {
+                v = knob_send(l, own);
+                color = pal(CLR_RED);
+            }
+            if (ko && (*PARAM_GET(0x200122b0, 1) & 255) && (R32(PARAM_GET(R32(ko + 0x1c), 0)) >> l & 1))
+                color = pal(CLR_RED);
+        }
+#endif
+        o[LED_KNOB0 + k] = scl(color, (LVL_ZERO + v * (255 - LVL_ZERO) / FULL) * full >> 8);
+        if (held() >> BIT_CLEAR & 1 && (right || left))
+            o[LED_KNOB0 + k] = scl(pal(right ? 0x0E : CLR_RED), full);
+    }
+}
+static void page2_lights(volatile u32 *o, u32 full)   /* a lane: bright = the chosen control's, dim colour = another's, dim white = a send */
+{
+    u32 c = S->pad3_ >> 1 & 3;
+    for (u32 p = PAD_SLOT0; p < 32; p++)
+        o[p] = 0;
+    for (u32 l = 0; l < 8; l++) {
+        u32 w = owner(l);
+        o[PAD_LANE0 + l] = w == c ? scl(ctl_color(c), full) : scl(w != NONE ? ctl_color(w) : WHITE, FX_DIM * full >> 8);
+    }
+    o[PAD_CYCLE] = scl(ctl_color(c), full);
+    o[PAD_AUDITION] = scl(control_get(3) ? 0xFF0000u : 0x00FF00u, full);
+}
+#else
 static void control_lights(volatile u32 *o, u32 full)
 {
     if (!control_page())
@@ -1792,6 +2020,7 @@ static void control_lights(volatile u32 *o, u32 full)
             if (S->cright[k] == 40 || S->cleft[k] == 40)
                 o[LED_KNOB0 + k] = scl(pal(S->cright[k] == 40 ? 0x0E : CLR_RED), full);
 }
+#endif
 
 /* The FX assignments replace sample flips in both step views. Keep native
    held/playhead colors and all Gate controls intact. */
@@ -1858,7 +2087,16 @@ static void fx_lights(volatile u32 *o, u32 full)
         o[LED_DOWN] = S->set ? scl(GX_RGB, full) : 0;
     } else {
         o[LED_UP] = o[LED_DOWN] = 0;
+#if CPAGE
+        u32 two = S->pad3_ & PAGE2;         /* Down: page 2 (lit while it shows); Up: page 1 */
+        o[LED_DOWN] = two ? scl(GX_RGB, full) : scl(WHITE, ARROW_DIM * full >> 8);
+        o[LED_UP] = two ? scl(WHITE, ARROW_DIM * full >> 8) : 0;
+#endif
     }
+#if CPAGE
+    if (control_page())
+        page2_lights(o, full);
+#endif
     if (S->set) {
         volatile u16 *lc = SET_LEDS(GFX_SET);
         for (u32 k = 0; k < 8; k++)
@@ -1942,6 +2180,10 @@ u32 c_gx_out(u32 c, u32 out, u32 frame, u32 a3)
         if (v != 0xFFFFFFFFu)
             VIEW_SET(CTRL, v, ID_SAMPLES, 0);
     }
+#if CPAGE
+    if (!fx_view())
+        S->pad3_ &= (u8)~PAGE2;             /* the FX view again: page 1, the Grid FX pads */
+#endif
     apply();
     pk_check();
     pk_sweep();

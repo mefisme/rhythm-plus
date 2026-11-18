@@ -17,8 +17,8 @@ FRAMES,STATE,OUTPUT=64,0x3a200,0x60000
 CAPTURE_COUNTS=0x65000
 
 
-def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host_mailbox=False,settings=None):
-    enabled=set(enabled);snapshot=controls(start=32,length=48)
+def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host_mailbox=False,settings=None,serial_at=None,region=(32,48),count=False):
+    enabled=set(enabled);snapshot=controls(start=region[0],length=region[1])
     segs,meta=P.code(bounded=bounded,host_mailbox=host_mailbox);memory=[('x',0x3a,[32]),('y',STATE,[0,OUTPUT])]
     bus=[0x210000+i for i in range(512)];memory += [('y',G.TRK_BUF,bus)]
     source=fixture()
@@ -63,6 +63,11 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
         track,parameter,value=change
         items += [f'move y:>${STATE:x},a','cmp #>$10,a',('jcc','ne','unchanged'),
                   f'move #>${value:x},a',f'move a1,x:>${P.STATE+track*256+parameter:x}',('label','unchanged')]
+    if serial_at is not None:
+        # A new note on track 0 at each of those frames.
+        for k,at in enumerate([serial_at] if isinstance(serial_at,int) else serial_at):
+            items += [f'move y:>${STATE:x},a',f'cmp #>${at:x},a',('jcc','ne',f'same_note_{k}'),
+                      f'move #>${k+1:x},a',f'move a1,y:>${S.SNAPSHOT+7:x}',('label',f'same_note_{k}')]
     if rebalance:
         for frame,key in ((24,R.KEY),(48,0)):
             label=f'unchanged_{frame}'
@@ -74,7 +79,7 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
     items += [('jsr',meta['labels']['after_wait'])]
     for k in range(8):
         items += [f'move r{k},y:>${0x3a220+k:x}',f'move n{k},y:>${0x3a228+k:x}',('words',[0x057060|k,0x3a230+k]),('words',[0x05f420|k,0xffffff])]
-    if rebalance:
+    if rebalance or count:
         items += [f'move y:>${STATE:x},a','asl #3,a,a',f'add #>${CAPTURE_COUNTS:x},a','move a1,r1',
                   f'move #>${G.GW:x},n0','move #>$1,x0']
         for track in range(8):
@@ -90,7 +95,7 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
               f'cmp #>${FRAMES:x},a',('jcc','lt','frame'),('jmp',0x7ff0)]
     wrapper,_=core0.asm_at(items,0x7000)
     dumps=[('y',OUTPUT,FRAMES*256),('y',G.TRK_BUF,512),('y',0x3a220,24),('x',P.STATE,2048)]
-    if rebalance:dumps.append(('y',CAPTURE_COUNTS,FRAMES*8))
+    if rebalance or count:dumps.append(('y',CAPTURE_COUNTS,FRAMES*8))
     result,ran=rhdspemu.run(0,pc=0x7000,stop=0x7ff0,segs=segs+[('p',0x1a11,wait),('p',0x7000,wrapper)],
         mem=memory,dumps=dumps,maxins=200_000_000)
     assert 'pc=007ff0' in ran
@@ -101,7 +106,8 @@ def run(enabled,change=None,bounded=False,late_change=False,rebalance=False,host
     state=result[('x',P.STATE)]
     meta['live_grains']=[sum(bool(state[track*256+64+grain*G.GW]) for grain in range(16)) for track in range(8)]
     meta['scan_values']=[state[track*256+G.P_SCAN] for track in range(8)]
-    if rebalance:meta['block_counts']=result['y',CAPTURE_COUNTS]
+    meta['state']=state
+    if rebalance or count:meta['block_counts']=result['y',CAPTURE_COUNTS]
     return streams,meta
 
 

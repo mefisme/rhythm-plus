@@ -1265,6 +1265,140 @@ def shift_controls_test():
     check("disabling FX track does not restore or overwrite native automated parameters",[native(k) for k in range(3)]==[10,20,30])
 
 
+def control_page_test():
+    """page 2 of the FX track's knobs: K1-K3 the returns and blend, pads 17-24 their lanes, pad 25 the control, pad 32 audition"""
+    import emu_stepmut as SM
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    t = 2
+    view(uc, CONT); uc.mem_write(CONT + 0x264, b"\x09"); SM.sel(uc, t)
+    held(uc, BIT_CLEAR, True); pad(uc, 7); unpad(uc, 7); held(uc, BIT_CLEAR, False); pad(uc, 7); unpad(uc, 7)
+    uc.mem_write(CONT + 0x264, b"\x00")
+    full = 141 if u32(uc, ptr(uc, u32(uc, C.CTRL + 0x88), 2)) >> 10 & 1 else 255
+    lvl = lambda v: (LVL_ZERO + v * (255 - LVL_ZERO) // FULL) * full >> 8          # noqa: E731
+    colors = (palc(uc, 0x141), palc(uc, 0x139), GX_RGB)
+    def get(k): return b8(uc, blk(uc) + 23 + k) & 127
+    def audition_off(): return b8(uc, blk(uc) + 23) >> 7
+    def lane(c):
+        v = sum((b8(uc, blk(uc) + (4 + 4 * c if c < 2 else 13) + i) >> 7 & 1) << i for i in range(4))
+        return v - 1 if v else None
+    def stored(k): return b8(uc, blk(uc) + 4 + k) & 127
+    def turn(k, d): call(uc, LB["c_gx_tknob"], C.CTRL, k, d & 0xFFFFFFFF)
+    def tap(p): pad(uc, p); unpad(uc, p)
+    stock_pads = []
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: stock_pads.append(u.reg_read(UC_ARM_REG_R1)), None, PREV["prev_pad"], PREV["prev_pad"] + 1)
+    o = out(uc)
+    check("page 1: Down dim white (page 2 below), Up dark",
+          o[LED_DOWN] == scl(WHITE, 40 * full >> 8) and o[LED_UP] == 0, (hex(o[LED_DOWN]), hex(o[LED_UP])))
+    g1 = list(o[16:32])
+    shift_ptr = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+    uc.mem_write(shift_ptr, b"\x01"); held(uc, 27, True)
+    sends0 = [knob_k(uc, t, k) for k in range(8)]
+    turn(0, -5)
+    uc.mem_write(shift_ptr, b"\x00"); held(uc, 27, False)
+    check("Shift does nothing: K1 on page 1 is still track 1's send", get(0) == 127 and knob_k(uc, t, 0) != sends0[0])
+    turn(0, 5)
+    btn(uc, ID_DOWN); o = out(uc)
+    check("Down: page 2; Down lit amber, Up dim white", o[LED_DOWN] == scl(GX_RGB, full) and o[LED_UP] == scl(WHITE, 40 * full >> 8))
+    check("page 2: pads 17-24 dim white (no lane taken), pad 25 the reverb return's green, pad 32 green (audition on), 26-31 dark",
+          list(o[16:24]) == [scl(WHITE, 48 * full >> 8)] * 8 and o[24] == scl(colors[0], full) and o[31] == scl(0x00FF00, full)
+          and list(o[25:31]) == [0] * 6, [hex(x) for x in o[16:32]])
+    check("page 2: K1-K3 at full in their colours, K4-K8 dark",
+          [o[LED_KNOB0 + k] for k in range(3)] == [scl(colors[k], lvl(127)) for k in range(3)] and list(o[LED_KNOB0 + 3:LED_KNOB0 + 8]) == [0] * 5)
+    sends1 = [knob_k(uc, t, k) for k in range(8)]
+    turn(0, -50); turn(1, -80); turn(2, -20); turn(3, -5); turn(5, 9)
+    check("page 2: K1-K3 set the returns and blend; K4-K8 do nothing; the sends stay",
+          [get(k) for k in range(3)] == [77, 47, 107] and not audition_off() and [knob_k(uc, t, k) for k in range(8)] == sends1,
+          [get(k) for k in range(3)])
+    stock_pads.clear(); pad(uc, 16)
+    check("pad 17 takes track 1's lane for the reverb return; the stock never sees the pad", lane(0) == 0 and not stock_pads, (lane(0), stock_pads))
+    pad(uc, 16); unpad(uc, 16)
+    check("a second down report of the same press does nothing", lane(0) == 0)
+    check("the lane keeps the control's value; track 1's send is kept in the project",
+          abs(knob_send(0, knob_k(uc, t, 0)) - 77) <= 1 and stored(0) == knob_send(0, sends1[0]), (knob_k(uc, t, 0), stored(0), sends1[0]))
+    o = out(uc)
+    check("pad 17 bright green: the chosen control's lane", o[16] == scl(colors[0], full), hex(o[16]))
+    k0 = knob_k(uc, t, 0); turn(0, 10)
+    check("K1 on its lane: it turns the lane, the saved value stays", knob_k(uc, t, 0) == k0 + 10 and get(0) == 77, (knob_k(uc, t, 0), get(0)))
+    ko = u32(uc, CONT + 0x1C4 + 4 * t); rec = SM.obj(uc, t); pn = b8(uc, ptr(uc, u32(uc, rec + 0x28), 0)) & 7
+    pat = u32(uc, rec + 4) + PAT_SZ * pn
+    uc.mem_write(pat + 0x128, bytes([255]) * (12 * 0xC0))
+    uc.mem_write(ptr(uc, u32(uc, rec + 0x28), 1), b"\x07")
+    uc.mem_write(ptr(uc, u32(uc, ko + 0x2C), 0), b"\x01")
+    turn(0, -3)
+    lanes = [bytes(uc.mem_read(pat + 0x128 + k * 0xC0, 0xC0)) for k in range(12)]
+    check("Record + K1: the movement is recorded in track 1's lane, no other lane",
+          any(v != 255 for v in lanes[0]) and all(all(v == 255 for v in x) for x in lanes[1:]))
+    turn(1, -3)
+    check("Record + K2 (no lane): nothing is recorded", bytes(uc.mem_read(pat + 0x128, 12 * 0xC0)) == b"".join(lanes))
+    uc.mem_write(ptr(uc, u32(uc, ko + 0x2C), 0), b"\x00")
+    pl = PLAYERS + PL_SZ * t
+    uc.mem_write(ptr(uc, u32(uc, pl + 0x34), 0), bytes(4))
+    uc.mem_write(u32(uc, pl + 0x4C), bytes([255]) * 24)
+    uc.mem_write(pat + 0x128, bytes([255]) * (12 * 0xC0))
+    uc.mem_write(pat + 0x128 + 7 * 6, bytes([64]))
+    call(uc, 0x08055324, pl, pn, 7, 0)
+    o = out(uc)
+    check("playback of track 1's lane moves the reverb return (K1's light)", knob_k(uc, t, 0) == 64 and o[LED_KNOB0] == scl(colors[0], lvl(knob_send(0, 64))),
+          (knob_k(uc, t, 0), hex(o[LED_KNOB0])))
+    btn(uc, ID_UP); o = out(uc)
+    check("Up: page 1, the Grid FX pads again", list(o[16:32]) == g1 and o[LED_UP] == 0)
+    check("page 1: K1 shows track 1's kept send, not its lane", o[LED_KNOB0] == scl(GX_RGB, lvl(stored(0))), (hex(o[LED_KNOB0]), stored(0)))
+    before = stored(0); turn(0, -4)
+    check("page 1: K1 turns track 1's kept send; the lane does not move", stored(0) == before - 4 and knob_k(uc, t, 0) == 64 and lane(0) == 0)
+    btn(uc, ID_DOWN); tap(24); o = out(uc)
+    check("pad 25: the next control, the delay return (pink); pad 17 dim green, the other control's", o[24] == scl(colors[1], full)
+          and o[16] == scl(colors[0], 48 * full >> 8), (hex(o[24]), hex(o[16])))
+    tap(16)
+    check("pad 17 for the delay return: it takes the lane from the reverb return, which keeps the lane's last value",
+          lane(1) == 0 and lane(0) is None and get(0) == knob_send(0, 64) and abs(knob_send(0, knob_k(uc, t, 0)) - get(1)) <= 1, (lane(0), lane(1), get(0)))
+    tap(16)
+    check("pad 17 again: no lane; track 1's send is back on its knob", lane(1) is None and knob_send(0, knob_k(uc, t, 0)) == stored(0),
+          (knob_k(uc, t, 0), stored(0)))
+    tap(24); tap(18)
+    check("pad 25 again: the blend; pad 19 gives it track 3's lane", lane(2) == 2 and lane(0) is None and lane(1) is None)
+    tap(31); o = out(uc)
+    check("pad 32: audition off, red", audition_off() == 1 and o[31] == scl(0xFF0000, full))
+    pad(uc, 31); pad(uc, 31); unpad(uc, 31)
+    check("pad 32 again: audition on (one change a press)", audition_off() == 0)
+    check("the sends of the other tracks are not changed", [knob_k(uc, t, k) for k in (1, 3, 4, 5, 6, 7)] == [sends1[k] for k in (1, 3, 4, 5, 6, 7)])
+    if R.get("mixer_shift"):
+        view(uc, MIX); uc.mem_write(page_p(uc), b"\x01"); btn(uc, ID_DOWN)
+        uc.mem_write(shift_ptr, b"\x01"); held(uc, 27, True)
+        before = [knob_k(uc, t, k) for k in range(8)]; r0 = get(0)
+        knob(uc, 0, -7); knob(uc, 2, -5); knob(uc, 4, 6)
+        o = out(uc)
+        check("sends page, Shift + K1: the reverb return; the sends stay", get(0) == r0 - 7 and knob_k(uc, t, 0) == before[0]
+              and knob_k(uc, t, 4) == before[4], (get(0), r0))
+        check("sends page, Shift + K3: the blend on its lane", knob_k(uc, t, 2) == before[2] - 5)
+        check("sends page, Shift: K1-K3 in their colours, K4-K8 dark", o[LED_KNOB0] == scl(colors[0], lvl(get(0)))
+              and list(o[LED_KNOB0 + 3:LED_KNOB0 + 8]) == [0] * 5, [hex(x) for x in o[LED_KNOB0:LED_KNOB0 + 8]])
+        uc.mem_write(shift_ptr, b"\x00"); held(uc, 27, False)
+        knob(uc, 1, -3)
+        check("sends page without Shift: K2 is track 2's send", knob_k(uc, t, 1) == before[1] - 3)
+        knob(uc, 1, 3)
+    blend = knob_send(2, knob_k(uc, t, 2))
+    view(uc, MIX); out(uc); view(uc, CONT); o = out(uc)
+    check("away from the FX view and back: page 1", list(o[16:32]) == g1)
+    uc.mem_write(CONT + 0x264, b"\x09"); tap(7)
+    check("FX track off: the blend keeps its lane value, the lane choice is kept", b8(uc, blk(uc) + 12) == 0xFF and get(2) == blend and lane(2) == 2,
+          (get(2), blend, lane(2)))
+    if R.get("mixer_shift"):
+        view(uc, MIX); uc.mem_write(page_p(uc), b"\x01"); btn(uc, ID_DOWN)
+        uc.mem_write(shift_ptr, b"\x01"); held(uc, 27, True)
+        knob(uc, 2, -4); o = out(uc)
+        uc.mem_write(shift_ptr, b"\x00"); held(uc, 27, False)
+        check("no FX track: Shift + K3 on the sends page sets the blend itself", get(2) == blend - 4 and lane(2) == 2
+              and o[LED_KNOB0 + 2] == scl(colors[2], lvl(blend - 4)), (get(2), blend))
+        blend -= 4
+        view(uc, CONT); uc.mem_write(CONT + 0x264, b"\x09")
+    tap(7); uc.mem_write(CONT + 0x264, b"\x00")
+    check("FX track on again: track 3's lane holds the blend", b8(uc, blk(uc) + 12) == t and knob_send(2, knob_k(uc, t, 2)) == blend)
+    if "c_gx_autodefaults" in LB:
+        call(uc, LB["c_gx_autodefaults"])
+        check("track reset on the FX track: no lanes taken, the three at full",
+              [lane(c) for c in range(3)] == [None] * 3 and [get(k) for k in range(3)] == [127] * 3)
+
+
 def recording_feedback_test():
     if 'c_gx_autored' not in LB:return
     import emu_stepmut as SM
@@ -1294,22 +1428,29 @@ def recording_feedback_test():
     uc.mem_write(int(storage['slot'],16)+22*4,struct.pack('<I',8))
     shift=ptr(uc,u32(uc,C.CTRL+0xc),0);uc.mem_write(shift,b'\x01');held(uc,27,True)
     setp(C.TRANSPORT,1,1)
+    pre=[knob_k(uc,t,k) for k in range(3)]
     for k in range(3):knob(uc,k,-10)
     o=out(uc);b=blk(uc)
     want=[scl(palc(uc,0x55),(LVL_ZERO+(b8(uc,b+23+k)&127)*(255-LVL_ZERO)//127)*full>>8) for k in range(3)]
-    check('Shift K1-K3 turn red with Record armed; K5-K8 remain dark',list(o[60:63])==want and list(o[64:68])==[0]*4)
+    noa3='automation3' not in ET.MAN['report']
+    if R.get('control_page') and not R.get('mixer_shift'):check('no Shift page: Shift + K1-K3 on the sends page turn the sends of tracks 1-3',
+                  all(knob_k(uc,t,k)<pre[k] for k in range(3)),(pre,[knob_k(uc,t,k) for k in range(3)]))
+    elif noa3:check('Shift K1-K3 keep their own colours with Record armed: they record nothing; K5-K8 remain dark',
+                  all(o[60+k]!=want[k] for k in range(3)) and list(o[64:68])==[0]*4)
+    else:check('Shift K1-K3 turn red with Record armed; K5-K8 remain dark',list(o[60:63])==want and list(o[64:68])==[0]*4)
     setp(C.TRANSPORT,1,0)
-    check('Shift recording feedback clears when Record is disarmed',list(out(uc)[60:63])!=want)
+    if not R.get('control_page') or R.get('mixer_shift'):check('Shift recording feedback clears when Record is disarmed',list(out(uc)[60:63])!=want)
     rec=SM.obj(uc,t);so=u32(uc,CONT+0x74+4*t)
     setp(u32(uc,so+T.HELDSTEP),1,17)
     uc.mem_write(so+T.PADS_DOWN,struct.pack('<I',1<<17));setp(C.TRANSPORT,1,1)
     knob(uc,0,-10)
     pn=b8(uc,ptr(uc,u32(uc,rec+0x28),0))&7
-    import automation_bank_helpers as BH
-    own=BH.read(uc,ET.MAN['report'],pn*192+17*6,1)[0]
-    uc.mem_write(int(ET.MAN['report']['automation3']['state'],16)+36,struct.pack('<H',64))
-    expected=scl(palc(uc,0x55),(LVL_ZERO+own*(255-LVL_ZERO)//127)*full>>8)
-    check('held private lock LED shows its own value in red while playback value changes',out(uc)[60]==expected)
+    if not noa3:
+        import automation_bank_helpers as BH
+        own=BH.read(uc,ET.MAN['report'],pn*192+17*6,1)[0]
+        uc.mem_write(int(ET.MAN['report']['automation3']['state'],16)+36,struct.pack('<H',64))
+        expected=scl(palc(uc,0x55),(LVL_ZERO+own*(255-LVL_ZERO)//127)*full>>8)
+        check('held private lock LED shows its own value in red while playback value changes',out(uc)[60]==expected)
     uc.mem_write(shift,b'\0');held(uc,27,False)
     setp(u32(uc,ko+0x2c),0,1)
     knob(uc,1,-1)
@@ -1454,7 +1595,10 @@ def main():
     fx_track(uc, got, takes)
     fx_view()
     step_mutate_fx_test()
-    shift_controls_test()
+    if R.get("control_page"):
+        control_page_test()
+    else:
+        shift_controls_test()
     recording_feedback_test()
     cold_start()
     irq_short()

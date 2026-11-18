@@ -122,6 +122,8 @@ def install(img, report, base_addr):
     if os.environ.get('RH_AUTOMATION_TASK_GUARD')=='1':defs['TASK_GUARD']=1
     if os.environ.get('RH_GFX_PAGECOPY')=='1':defs['FX_VISUALS']=1
     if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1':defs['GRANULAR_INTERLOCK']=1
+    if os.environ.get('RH_GFX_CPAGE')=='1':defs['CPAGE']=1
+    if os.environ.get('RH_GFX_MIXSHIFT')=='1':defs['CPAGE_MIX']=1
     code, labels = SM.compile_c(base_addr, defs, src=SRC, name="gfxmix", prefix="c_gx_", need=LABELS + ("c_gx_smread", "c_gx_smwrite", "c_gx_smsample"), max_code=0x6000)
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     if defs.get('EDITOR_GUARD'):
@@ -151,7 +153,7 @@ def install(img, report, base_addr):
                                ("c_sm_fxwrite", "c_gx_smwrite", "bx lr|nop"),
                                ("c_sm_fxsample", "c_gx_smsample", "bx lr|nop")):
         rhbuild.patch(img, lab("stepmut", name), head, bw_ins(lab("stepmut", name), labels[target]))
-    report["gfxmix"] = dict(overdub=bool(defs.get('GFX_OVERDUB')),native_edges=bool(defs.get('NATIVE_EDGES')),input_trace=bool(defs.get('INPUT_TRACE')),slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, pk_off=PK_OFF, ps_off=PS_OFF, code=len(code) + len(st_code), cut=hex(GS.CUT),
+    report["gfxmix"] = dict(control_page=bool(defs.get('CPAGE')),mixer_shift=bool(defs.get('CPAGE_MIX')),overdub=bool(defs.get('GFX_OVERDUB')),native_edges=bool(defs.get('NATIVE_EDGES')),input_trace=bool(defs.get('INPUT_TRACE')),slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, pk_off=PK_OFF, ps_off=PS_OFF, code=len(code) + len(st_code), cut=hex(GS.CUT),
                             prev_s1=hex(prev_s1), prev_s4=hex(prev_s4), stubs=hex(st_base),
                             prev={k.lower(): hex(v) for k, v in prev.items()}, labels={k: hex(v) for k, v in labels.items()})
     return labels, code

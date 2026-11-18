@@ -290,6 +290,30 @@ def fine(result,tab_at):
     result[at:at+6]=[f'move x:(r6+${G.P_SIZE:x}),x0']
 
 
+def oneshot_end(result):
+    # Field 13 bit 2: a One Shot ends itself once both the stock playback time and one scan of the zone are over.
+    # The Burst words hold its state: flags (bit 0 time over, bit 1 scan over), time in quarter samples, scan distance.
+    flags,elapsed,scan_hi,scan_lo=(f'x:>${k:x}' for k in (BURST_LEFT,BURST_GAP,BURST_RNG,BURST_PH))
+    at=result.index(f'move x:(r7+${G.V_PH:x}),b',result.index(f'move x:(r6+${G.P_SCAN:x}),x0'))
+    result[at:at]=['move x:(r6+$d),x1','btst #$2,x1',('jcc','cc','os_out'),f'move {flags},x1',
+        'btst #$1,x1',('jcc','cs','os_time'),'tst a',('jcc','eq','os_scanned'),
+        f'move {scan_hi},b',f'move {scan_lo},b0','tst a',('jcc','lt','os_back'),'add a,b',('jmp','os_sum'),
+        ('label','os_back'),'sub a,b',('label','os_sum'),f'move b1,{scan_hi}',f'move b0,{scan_lo}',
+        f'move x:(r7+${G.V_Z:x}),x0','cmp x0,b',('jcc','lt','os_time'),
+        ('label','os_scanned'),f'move {flags},b','move #>$2,x0','or x0,b',f'move b1,{flags}',
+        ('label','os_time'),f'move {flags},x1','btst #$0,x1',('jcc','cs','os_out'),
+        f'move {elapsed},x0',f'move y:>${CONTROL+2:x},b','asr #12,b,b','add x0,b',f'move b1,{elapsed}','move b1,x0',
+        f'move x:(r7+${G.V_L:x}),b','asl #2,b,b','cmp x0,b',('jcc','gt','os_out'),
+        f'move {flags},b','move #>$1,x0','or x0,b',f'move b1,{flags}',('label','os_out')]
+    at=result.index(('jsr','g_spawn'),result.index('btst #$3,x1'))
+    result[at:at]=['btst #$2,x1',('jcc','cc','os_spawn'),f'move {flags},a','cmp #>$3,a',('jcc','eq','stock_spawn_held'),
+                   ('label','os_spawn')]
+
+
+def oneshot_clear():
+    return [f'move a,x:>${k:x}' for k in (BURST_LEFT,BURST_GAP,BURST_RNG,BURST_PH)]
+
+
 def fine_all(result):
     # Density 0..1600 (sixteenths of the 0..100 word): squared, so shift 8 more.
     at=result.index(f'move x:(r6+${G.P_DENS:x}),x0',result.index(('label','g_von')))
@@ -326,6 +350,9 @@ def items(source,latched_source=False,raw_output=None,grain_cap=None,tab_at=None
     if os.environ.get('RH_GRANULAR_NOBURST')!='1':burst(result)
     if os.environ.get('RH_GRANULAR_FINE')=='1':fine(result,tab_at)
     if os.environ.get('RH_GRANULAR_FINE_ALL')=='1':fine_all(result)
+    if os.environ.get('RH_GRANULAR_ONESHOT_SCAN') in ('1','2'):
+        assert os.environ.get('RH_GRANULAR_NOBURST')=='1'
+        oneshot_end(result)
     # Convert the 12-word grain offset to a slot index. The rounded-up Q23
     # reciprocal gives the exact quotient for all 16 valid offsets.
     ratio_address=['move r2,x0',f'move #>${G.GR0:x},a','neg a','add x0,a',

@@ -11,6 +11,12 @@ from unicorn.arm_const import *
 
 def main():
     assigned='--assigned' in sys.argv
+    import os
+    oneshot='--oneshot-scan' in sys.argv
+    if oneshot:os.environ['RH_GRANULAR_ONESHOT_SCAN']='1'
+    direct2='--load-direct2' in sys.argv
+    direct='--load-direct' in sys.argv or direct2
+    if direct:os.environ['RH_GRANULAR_LOAD_DIRECT']='2' if direct2 else '1'
     info=build(pages=assigned,assign=assigned);u=Uc(UC_ARCH_ARM,UC_MODE_THUMB)
     u.mem_map(0x08000000,0x80000);u.mem_write(info['origin'],Path(info['binary']).read_bytes())
     u.mem_map(0x20000000,0x50000)
@@ -145,7 +151,10 @@ def main():
     old_owner=bytes(u.mem_read(state+8,2));old_config=bytes(u.mem_read(state+168,1))
     u.mem_write(state+8,b'\1\1');u.mem_write(state+168,bytes([old_config[0]&~3|1]))
     for play,word in ((1,0),(0,1),(2,0)):
-        u.mem_write(table+1,bytes([play]));frame();assert dsp[0x37403]==word
+        u.mem_write(table+1,bytes([play]));frame()
+        # --oneshot-scan: the route word stays 0 and field 13 bit 2 marks One Shot
+        if oneshot:assert dsp[0x37403]==0 and (dsp[0x240d]>>2&1)==word,(play,dsp[0x37403],hex(dsp[0x240d]))
+        else:assert dsp[0x37403]==word
     call('runtime_put',state,0,3,65);frame();assert dsp[0x240d]&1==1
     u.mem_write(state+8,old_owner);u.mem_write(state+168,old_config);call('runtime_put',state,0,3,64);frame()
     assert call('runtime_mode',state,0,0)==1
@@ -169,12 +178,22 @@ def main():
     u.mem_write(tail,bytes(record));saved_epoch=call('owner_epoch',state,0)
     assert call('runtime_load',state,tail)==1
     assert call('owner_epoch',state,0)==saved_epoch
+    loaded_stops=len(stops)
+    # --load-direct2: core 1's own idle state (not yet acknowledged by core 0) counts as quiet
+    if direct2:dsp[0x37420]=0x674531
     assert call('runtime_end_replace',state)==1
     assert bytes(u.mem_read(state+104,64))==knobs and bytes(u.mem_read(state+168,8))==configs
-    for _ in range(20):frame()
-    assert dsp[0x2404]==knobs[0] and dsp[0x2403]==knobs[1]
-    assert dsp[0x37401]>saved_epoch and dsp[0x37400]==0
-    snapshot(0,dsp[0x37401]);frame();assert len(starts)==2
+    if direct:
+        # --load-direct: the setup and the route are out before the first frame, with no stop
+        assert dsp[0x2404]==knobs[0] and dsp[0x2403]==knobs[1] and dsp[0x37400]==0x674e31
+        assert dsp[0x37401]==saved_epoch and len(stops)==loaded_stops,(dsp[0x37401],saved_epoch,len(stops),loaded_stops)
+        frame();assert len(starts)==2 and len(stops)==loaded_stops
+        print('PASS a project load sets up Granular at once: its route is on before the first frame, no note is stopped')
+    else:
+        for _ in range(20):frame()
+        assert dsp[0x2404]==knobs[0] and dsp[0x2403]==knobs[1]
+        assert dsp[0x37401]>saved_epoch and dsp[0x37400]==0
+        snapshot(0,dsp[0x37401]);frame();assert len(starts)==2
     call('runtime_put',state,0,0,(knobs[0]+1)%128)
     assert call('runtime_store',state,tail)==1 and call('runtime_store',state,tail)==0
     u.mem_write(table+1,b'\0')
@@ -183,14 +202,14 @@ def main():
     assert dsp[0x240d]&9==9 and len(starts)==began and len(stops)==ended and dsp[0x37403]==0
     now(2199);frame();assert len(stops)==ended and dsp[0x240d]&8
     now(2200);frame();frame()
-    assert len(stops)==ended+1 and dsp[0x240d]&9==1 and not running() and dsp[0x37403]==1 and len(starts)==began
+    assert len(stops)==ended+1 and dsp[0x240d]&9==1 and not running() and dsp[0x37403]==(not oneshot) and (dsp[0x240d]>>2&1)==oneshot and len(starts)==began
     print('PASS Stop holds new grains, keeps the voice for the tail, then closes it; no start while stopped')
     assert message(0x800000,2)[0]==1
     assert message(0x905a00)[1][0]==0x905a00 and message(0x905a00)[1][0]==0x905a00
     assert message(0x800000,2)[0]==1 and not running()
     print('PASS while stopped, pad notes start and release a Texture track like Triggered')
     now(3000);playing(1);frame()
-    assert len(starts)==began+1 and dsp[0x240d]&9==0 and dsp[0x37403]==0 and running()
+    assert len(starts)==began+1 and dsp[0x240d]&13==0 and dsp[0x37403]==0 and running()
     now(3100);playing(0);frame();assert dsp[0x240d]&8
     now(3200);playing(1);frame()
     assert dsp[0x240d]&8==0 and len(starts)==began+1 and len(stops)==ended+1

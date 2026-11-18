@@ -45,6 +45,8 @@ def main():
     assert actual[0x225]==int(report['gfxsplit']['pre'],16)
     before=flat(rhdsp1.parse(rhdsp1.sent(bytearray(base),baseline['report'],'pitchmod'))[0])
     after=flat(rhdsp1.parse(rhdsp1.sent(bytearray(image),report,'pitchmod'))[0])
+    from drone_gone import undrone
+    before=undrone(before,baseline['report'],report)
     changed={0x122,0x23d,0x25c,0x25d,0x22f,0x230,0x231,0x232,0x233,0x2f3,0x4e6}
     assert all(after[a]==w for a,w in before.items() if a not in changed)
     assert after[0x2f3]==g['core1_stages']['notes']['labels']['note_on']

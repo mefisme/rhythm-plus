@@ -21,7 +21,10 @@ VERSION = RD.VERSION + 0x10 + 0x02                      # the host tool's dsp=2 
 WAIT_FRAMES = 200                                       # dspr waits this many LED frames after core 1's READY
 
 
-def arm_code(base, router_ptr, itcm=False):
+PX_HOLD = h(0xE7FE) + h(0xE7FE)                       # rc_ext until storageshadow points it at c_sh_pxmidi
+
+
+def arm_code(base, router_ptr, itcm=False, plus=False):
     a = Asm(base)
     E = a.emit
     zc = [0]
@@ -89,6 +92,10 @@ def arm_code(base, router_ptr, itcm=False):
     E(push_list, [0]); E(mov_reg, 0, 4); E(adds_imm8, 0, 6); E(mov_reg, 1, 0); E(pop_list, [0])   # r1 = payload pointer
     for cmd, lab in CMDS:
         E(cmp_imm, 0, cmd); bc(lab, "eq")
+    if plus:                                                                   # 0x20-0x2F: Plus files, c_sh_pxmidi(buf, len, port) -> end
+        E(cmp_imm, 0, 0x20); bc("rc_unk", "lo"); E(cmp_imm, 0, 0x2F); bc("rc_unk", "hi")
+        E(mov_reg, 0, 4); E(mov_reg, 1, 5); E(mov_reg, 2, 6); E(bl, "rc_ext"); E(b, "rc_send")
+        a.label("rc_unk")
     E(mov_reg, 0, 1); imm32(1, 0xFFFFFFFF); E(bl, "c_p32"); E(b, "rc_send")   # unknown command: status -1
 
     a.label("rc_ping")
@@ -215,6 +222,8 @@ def arm_code(base, router_ptr, itcm=False):
     E(mov_reg, 2, 7); E(adds_imm8, 2, 32)
     E(bl, RD.ROUTER)
     E(add_sp_imm, 40); E(pop_list, [4, 5, 6, 7], pc=True)
+    if plus:
+        a.label("rc_ext"); E(raw, PX_HOLD)
     return a.assemble()
 
 
@@ -228,13 +237,14 @@ def install(img, report, base_addr):
         n = 8 if fn == RD.DSP_UNLOCK else 4
         assert "|".join(rhbuild.disasm(bytes(img[fn - B:fn - B + n]), fn)) == head, hex(fn)
     itcm=os.environ.get('RH_DIAG_ITCM_READ')=='1'
-    code, labels = arm_code(base_addr, router_ptr,itcm)
+    plus=os.environ.get('RH_PLUS_USB')=='1'
+    code, labels = arm_code(base_addr, router_ptr,itcm,plus)
     img += bytes([0xFF]) * (base_addr - B - len(img)) + code
     while len(img) % 4:
         img.append(0xFF)
     img[RD.HOOK - B:RD.HOOK - B + 4] = b_w(RD.HOOK, labels["c_rdin"])
     report["rdiag"] = dict(hook=hex(RD.HOOK), router_ptr=hex(router_ptr), version=hex(VERSION), dsp=2, readonly=True, mapped_ram_only=True,
-                           itcm_read=itcm,
+                           itcm_read=itcm,**({'plus_usb':True} if plus else {}),
                            writes_disabled=[6, 9], max_dsp_words=RD.NR, guard=hex(labels["rc_dspr"]),
                            labels={k: hex(v) for k, v in labels.items() if k.startswith("c_") or k.startswith("rc_") or k == "ds_bad"})
     return labels, code

@@ -8,6 +8,7 @@ stretch off (c_st_wipe at its page reset call, after Granular's).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -48,6 +49,8 @@ def install(img, report, base_addr):
                 UPLOAD=int(bridge["upload"], 16), GSTATE=int(bridge["slot"], 16),
                 C_WRITE=kernel["c_gr_dsp_write"], C_SCAN=kernel["c_gr_runtime_scan"], C_ROUTE=kernel["c_gr_route_word"], C_SREAD=kernel["c_gr_shared_read"], C_GSWITCH=kernel["c_gr_stretch_switch"],
                 HOST_KEY=stretch_dsp.HOST_KEY, TGT_PART=stretch_dsp.TGT_PART)
+    if os.environ.get("RH_PACK_FILES") == "2":
+        defs["C_PLUSOK"] = int(report["storageshadow"]["labels"]["c_sh_autobank"], 16)
     code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=LABELS + (("c_st_wipe",) if wipe_site else ()))
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4:

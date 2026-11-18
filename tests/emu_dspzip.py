@@ -36,6 +36,8 @@ def main():
     if 'stretch' in rep:    # time stretch changes the packed granular stages only (emu_stretch_route)
         lo,hi=int(rep['granular']['core1_start'],16),int(rep['granular']['core1_end'],16)
         mine,base=(flat_p(rhdsp1.sent(bytearray(i),r,'pitchmod')) for i,r in ((image,rep),(old,orep)))
+        from drone_gone import undrone
+        base=undrone(base,orep,rep)
         hooks={0x122,0x23d,0x25c,0x25d,0x22f,0x230,0x231,0x232,0x233,0x2f3,0x4e6}     # their targets move with the stages
         keep=lambda a:not lo<=a<hi and a not in hooks
         assert {a:w for a,w in mine.items() if keep(a)}=={a:w for a,w in base.items() if keep(a) and a<max(mine)+1}

@@ -11,11 +11,13 @@ def install(img,report,base_addr):
     hooks=[(0x080479ac,'patternpaste'),(0x08047ad8,'patternclear'),(0x08047820,'steppaste'),
            (0x080478d6,'stepclear'),(int(report['trackreset']['labels']['c_trreset'],16),'trackreset')]
     if os.environ.get('RH_GFX_PAGECOPY')=='1':hooks.append((0x080480de,'pagecopy'))
-    defs=dict(GX_FX=gx['c_gx_autofx'],GX_READ=gx['c_gx_smread'],GX_WRITE=gx['c_gx_smwrite'],
-        GX_DEFAULTS=gx['c_gx_autodefaults'],CORE_BULK=int(report['automation3']['labels']['c_a3_bulk'],16),
-        CORE_MANUAL=int(report['automation3']['labels']['c_a3_manual'],16),
-        AUTO_READY=int(report['automation3']['labels']['c_a3_available'],16))
-    defs['CORE_STATE']=int(report['automation3']['state'],16)
+    defs=dict(GX_FX=gx['c_gx_autofx'],GX_READ=gx['c_gx_smread'],GX_WRITE=gx['c_gx_smwrite'],GX_DEFAULTS=gx['c_gx_autodefaults'])
+    if 'automation3' in report:
+        defs.update(CORE_BULK=int(report['automation3']['labels']['c_a3_bulk'],16),
+            CORE_MANUAL=int(report['automation3']['labels']['c_a3_manual'],16),
+            AUTO_READY=int(report['automation3']['labels']['c_a3_available'],16))
+        defs['CORE_STATE']=int(report['automation3']['state'],16)
+    else:defs['NO_A3']=1
     if os.environ.get('RH_AUTOMATION_TASK_GUARD')=='1':defs['TASK_GUARD']=1
     prefix=bytearray();heads={}
     for at,name in hooks:

@@ -32,6 +32,18 @@ C0_IDLE='--c0-idle' in sys.argv
 if C0_IDLE:os.environ['RH_C0IDLE']='1'
 STRETCH='--stretch' in sys.argv
 if STRETCH:os.environ['RH_STRETCH']='1'
+PACK_FILES='--pack-files' in sys.argv
+if PACK_FILES:os.environ['RH_PACK_FILES']='1'
+if '--pack-names' in sys.argv:os.environ['RH_PACK_FILES']='2'
+NO_A3='--no-k13-automation' in sys.argv
+if '--no-drone' in sys.argv:os.environ['RH_NO_DRONE']='1'
+if '--control-page' in sys.argv:os.environ['RH_GFX_CPAGE']='1'
+if '--mixer-shift' in sys.argv:os.environ['RH_GFX_MIXSHIFT']='1'
+if '--plus-usb' in sys.argv:os.environ['RH_PLUS_USB']='1'
+if '--oneshot-scan' in sys.argv:os.environ['RH_GRANULAR_ONESHOT_SCAN']='1'
+if '--oneshot-scan2' in sys.argv:os.environ['RH_GRANULAR_ONESHOT_SCAN']='2'
+if '--load-direct' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='1'
+if '--load-direct2' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='2'
 if SHIFT_TAP:os.environ['RH_TPE_REVERSE_CYCLE']='1'
 if ZONE_PADS:os.environ['RH_GRANULAR_SLICE_WORD7']='1'
 if EASY_ZONES:os.environ['RH_GRANULAR_SLICE_SCATTER']='1'
@@ -63,7 +75,7 @@ import granular_bundle as B
 def main():
     with CURRENT.allocated(),B.builders(packed='--pack-core1' in sys.argv):
         b=build(NAME.upper(),granular_stage=True)
-    b.add('automation3',automation3,cow=True)
+    if not NO_A3:b.add('automation3',automation3,cow=True)
     b.add('heldlocks',heldlocks)
     b.add('automation3_ops',automation3_ops)
     b.add('heldlights',heldlights)
@@ -88,7 +100,7 @@ def main():
             import stretch_arm
             stretch_arm.install(b.img,b.report,b.next_base())
     with CURRENT.allocated():L.validate(b.report)
-    assert len(b.img)<=0x70000
+    assert len(b.img)<=0x70000,hex(len(b.img))
     g=b.report['granular'];g.update(scope='OFFLINE DSP-only: no ARM owner/UI or settings storage',
         base_build=BASE.upper(),manual_activation=False,old_project_codec_installed=False)
     if CONNECT:g.update(scope='Granular restored with companion settings and explicit native sound-lane assignments' if STORE else 'OFFLINE ARM controls/lifecycle connected; persistence disabled',manual_activation=True,automation=True,settings_companion=STORE,sd_packs_only=STORE,navigation_persistent=REMEMBER_VIEWS)
@@ -111,11 +123,13 @@ def main():
     if EASY_ZONES:g['easy_zones']=dict(timing_quarter_ticks=[24,16,12,8,6,4,3,2],slices=[0,2,3,4,6,8,12,16],lock=[0,96,127],slice_scatter=True)
     if STOCK_BAR:g['ui']['stock_bar']=True
     if FULL_FREEZE:g['full_freeze']=True
+    if os.environ.get('RH_GRANULAR_ONESHOT_SCAN') in ('1','2'):g['oneshot_scan']=True
+    if os.environ.get('RH_GRANULAR_LOAD_DIRECT'):g['load_direct']=True if os.environ['RH_GRANULAR_LOAD_DIRECT']=='1' else int(os.environ['RH_GRANULAR_LOAD_DIRECT'])
     if STICKY_ASSIGN:g['ui']['sticky_assign']=True
     if ZONE_PADS:g['easy_zones'].update(slices=[0]*8+[2]*8+[n for n in (3,4,6,8,12,16,32) for _ in range(16)],slice_word=7,zone_pads=True)
     if TRIM_UNUSED:b.report['unused_code_trim']=dict(policy='preserve exposed adapters; discard unreachable helpers',reference='A0204',recovered_bytes=1328)
     if '--release' in sys.argv:
-        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232','a0233') and BASE=='a0192' and CONNECT and PAGES and STORE
+        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232','a0233','a0234','a0235','a0236','a0237','a0238','a0239','a0240','a0241','a0242','a0243') and BASE=='a0192' and CONNECT and PAGES and STORE
         out=b.finish(ROOT/'firmware'/NAME)
         for f in out.glob(f'circuitrhythm-5706-{NAME.upper()}.*'):f.replace(out/f'rhythmplus-{NAME.upper()}{f.suffix}')
         return

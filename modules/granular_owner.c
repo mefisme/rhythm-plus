@@ -39,6 +39,12 @@
 #ifndef G_SHIFT_TAP
 #define G_SHIFT_TAP 0
 #endif
+#ifndef G_LOAD_DIRECT
+#define G_LOAD_DIRECT 0
+#endif
+#ifndef G_ONESHOT_SCAN
+#define G_ONESHOT_SCAN 0
+#endif
 #ifndef G_STICKY_ASSIGN
 #define G_STICKY_ASSIGN 0
 #endif
@@ -411,6 +417,9 @@ void c_gr_lane_touch(GRuntime *s,uint32_t t,uint32_t knob,uint32_t page);
 #endif
 #endif
 enum { GR_MAGIC=0x31524743,GR_READY=1,GR_INITIALIZED=2,GR_STARTING=4,GR_DIRTY=8 };
+#if G_LOAD_DIRECT>=2
+enum { GR_LOAD_READY=16 };
+#endif
 /* Longest grain plus margin; a voice stays open this long after Stop so its grains finish. */
 enum { G_TAIL_MS=1200,G_START_SETTLE_MS=250 };
 #define GR_CONTROL 0x37400u
@@ -567,11 +576,11 @@ static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
     if(field==6 && gr_count(state->shift[track][G_SHIFT_SLICE])) return 0;
     if(field==1) return gr_timing_interval(state,track)|((uint32_t)state->sync[track]<<18);
     if(field==8) return state->shift[track][0]|((uint32_t)state->shift[track][2]<<8)|(gr_timing_chance(state,track)<<16);
-    // Bit 0 notes restart grains, bit 1 Freeze, bit 3 no new grains, bit 4 Bounce, bits 5..7 Pitch Set, bits 8..14 Lock,
+    // Bit 0 notes restart grains, bit 1 Freeze, bit 2 One Shot ends itself (G_ONESHOT_SCAN), bit 3 no new grains, bit 4 Bounce, bits 5..7 Pitch Set, bits 8..14 Lock,
     // bits 15..18 slices - 1 (0 off), bits 19..22 slice step.
     if(field==13) return ((state->config[track]>>3)&1)|((state->config[track]>>5)&2)|(state->owner.track[track].mode==G_TRIGGERED)
                          |(state->owner.track[track].mode==G_TEXTURE && !((state->playing>>track)&1))|(((uint32_t)state->tail>>track&1)<<3)
-                         |((state->setting[track]&1u)<<4)|((uint32_t)(state->setting[track]>>1&7)<<5)
+                         |(G_ONESHOT_SCAN?((state->one_shot>>track)&1)<<2:0)|((state->setting[track]&1u)<<4)|((uint32_t)(state->setting[track]>>1&7)<<5)
                          |((uint32_t)(G_FULL_FREEZE && (state->config[track]&64)?127:gr_lock_amount(state->shift[track][G_SHIFT_LOCK]))<<8)
 #if !G_ZONE_PADS
                          |(gr_count(state->shift[track][G_SHIFT_SLICE])?gr_count(state->shift[track][G_SHIFT_SLICE])-1:0)<<15
@@ -642,7 +651,7 @@ uint32_t c_gr_runtime_scan(GRuntime *state,uint32_t track,uint32_t value) {
 #if G_STRETCH
 /* Granular's own route word 3 for a track stretch hands back: 1 while a One Shot ends with its sample, else 0. */
 uint32_t c_gr_route_word(GRuntime *state,uint32_t track) {
-    return track<8?(state->one_shot>>track)&1:0;
+    return track<8 && !G_ONESHOT_SCAN?(state->one_shot>>track)&1:0;
 }
 /* Sample mode's pad 17: Granular on (in its last mode) or off, as the editor's pad 17 sets it; on = ~0 only reads. 1: on. */
 uint32_t c_gr_stretch_switch(GRuntime *state,uint32_t track,uint32_t on) {
@@ -740,6 +749,22 @@ static void gr_tempo_frame(GRuntime *state) {
         gr_write(GR_POOL+256*track+1,gr_field(state,track,1));
     }
 }
+#if G_LOAD_DIRECT
+/* The setup's next writes, at most budget: each track's route off with its epoch, then its pool fields. */
+static void gr_setup(GRuntime *state,uint32_t budget) {
+    for(;budget && state->cursor<152;budget--,state->cursor++) {
+        uint32_t track=state->cursor/19,index=state->cursor%19;
+#if G_STRETCH
+        if(G_STRETCHED(track) && (index<4 || index==5 || index==18)) continue;
+#endif
+        if(index==0) gr_write(GR_CONTROL+4*track,0);
+        else if(index==1) gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
+        else if(index==2) gr_write(GR_CONTROL+4*track+3,!G_ONESHOT_SCAN);
+        else gr_write(GR_POOL+256*track+index-3,gr_field(state,track,index-3));
+    }
+    if(state->cursor>=152) state->flags|=GR_INITIALIZED;
+}
+#endif
 void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
     c_gr_runtime_init(state);
     if(state->replace_depth) return;
@@ -773,6 +798,9 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
             if(status!=0x674732 && status!=0x674331) return;
 #endif
         }
+#if G_LOAD_DIRECT
+        gr_setup(state,8);
+#else
         for(uint32_t budget=0;budget<8 && state->cursor<152;budget++,state->cursor++) {
             uint32_t track=state->cursor/19,index=state->cursor%19;
 #if G_STRETCH
@@ -780,11 +808,12 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
 #endif
             if(index==0) gr_write(GR_CONTROL+4*track,0);
             else if(index==1) gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
-            else if(index==2) gr_write(GR_CONTROL+4*track+3,1);
+            else if(index==2) gr_write(GR_CONTROL+4*track+3,!G_ONESHOT_SCAN);
             else gr_write(GR_POOL+256*track+index-3,gr_field(state,track,index-3));
         }
         if(state->cursor<152) return;
         state->flags|=GR_INITIALIZED;
+#endif
         return;
     }
     uint32_t now=*(volatile uint32_t *)0x20000820,transport=gr_playing_now();
@@ -809,10 +838,11 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
         uint32_t one_shot=(owner->mode==G_TRIGGERED || (texture && !playing && !(state->tail&bit))) && !gr_play_mode(track);
         if(one_shot!=((state->one_shot>>track)&1)) {
             state->one_shot^=1u<<track;
-            gr_write(GR_CONTROL+4*track+3,one_shot);
+            if(G_ONESHOT_SCAN) gr_write(GR_POOL+256*track+13,gr_field(state,track,13));
+            else gr_write(GR_CONTROL+4*track+3,one_shot);
         }
         if(action&G_APPLY) {
-            gr_write(GR_CONTROL+4*track+3,one_shot);
+            gr_write(GR_CONTROL+4*track+3,G_ONESHOT_SCAN?0:one_shot);
             gr_write(GR_POOL+256*track+13,gr_field(state,track,13));
             gr_write(GR_CONTROL+4*track,owner->mode==G_OFF?0:0x674e31);
         }
@@ -1527,6 +1557,10 @@ uint32_t c_gr_runtime_begin_replace(GRuntime *state,uint32_t ready,uint32_t uplo
     c_gr_runtime_init(state);
     if(state->replace_depth) { state->replace_depth++;return 1; }
     if(uploading) return 0;
+#if G_LOAD_DIRECT>=2
+    /* Granular may never have been set up (no Granular track yet), which clears GR_READY below. */
+    state->flags=ready?state->flags|GR_LOAD_READY:state->flags&~GR_LOAD_READY;
+#endif
     state->replace_depth=1;state->running=state->pending=0;state->tail=0;c_gr_ui_release(&state->ui);
     uint32_t owned=0;
     for(uint32_t track=0;track<8;track++) if(state->owner.track[track].mode!=G_OFF) owned|=1u<<track;
@@ -1553,6 +1587,54 @@ uint32_t c_gr_runtime_begin_replace(GRuntime *state,uint32_t ready,uint32_t uplo
     }
     state->replace_depth=0;return 0;
 }
+#if G_LOAD_DIRECT
+/* After a replacement every voice is idle, so the whole setup goes out at once and each Granular track
+ * takes its mode with no stop and no acknowledgement wait: the next note already plays as Granular. */
+#if G_LOAD_DIRECT>=2
+/* Snapshot word 0 of a voice with no note: core 1's idle state or core 0's idle acknowledgement. 0 is a write in progress. */
+static uint32_t gr_status_quiet(uint32_t status) { return status==0x674531 || status==0x674732; }
+#endif
+static void gr_load_direct(GRuntime *state) {
+    uint32_t requested=0;
+    for(uint32_t track=0;track<8;track++) requested|=state->config[track]&3;
+    if(!requested) return;
+    if(!(state->flags&GR_INITIALIZED)) {
+        uint32_t acked=0;
+        for(uint32_t track=0;track<8 && !acked;track++) {
+            uint32_t status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+#if G_LOAD_DIRECT>=2
+            acked=status==0x674732 || status==0x674331 || gr_status_quiet(status);
+#else
+            acked=status==0x674732 || status==0x674331;
+#endif
+        }
+        if(!acked) return;
+        gr_setup(state,152);
+    }
+    uint32_t transport=gr_playing_now();
+    for(uint32_t track=0;track<8;track++) {
+        GTrack *owner=&state->owner.track[track];
+        uint32_t mode=state->config[track]&3,bit=1u<<track;
+        // A track that was not Granular is not waited for: a note still sounding there takes the stop path.
+#if G_LOAD_DIRECT>=2
+        if(!mode || owner->mode!=G_OFF || owner->phase) continue;
+        uint32_t status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+        if(!status) status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+        if(!gr_status_quiet(status)) continue;
+#else
+        if(!mode || owner->mode!=G_OFF || owner->phase || c_gr_shared_read(GR_SNAPSHOT+8*track)!=0x674732) continue;
+#endif
+        owner->mode=owner->wanted=(uint8_t)mode;
+        owner->settings=1|((state->config[track]>>2)&2);
+        uint32_t one_shot=(mode==G_TRIGGERED || !transport) && !gr_play_mode(track);
+        state->one_shot=(state->one_shot&~bit)|(one_shot?bit:0);
+        gr_write(GR_CONTROL+4*track+1,owner->epoch);
+        gr_write(GR_CONTROL+4*track+3,G_ONESHOT_SCAN?0:one_shot);
+        gr_write(GR_POOL+256*track+13,gr_field(state,track,13));
+        gr_write(GR_CONTROL+4*track,0x674e31);
+    }
+}
+#endif
 uint32_t c_gr_runtime_end_replace(GRuntime *state) {
     if(!state->replace_depth) return 0;
     if(state->replace_depth>1) { state->replace_depth--;return 1; }
@@ -1565,7 +1647,17 @@ uint32_t c_gr_runtime_end_replace(GRuntime *state) {
         if(!complete) for(uint32_t track=0;track<8;track++) state->config[track]&=~3u;
     }
     state->replace_depth=0;
+#if G_LOAD_DIRECT
+    uint32_t resumed=c_gr_owner_resume(&state->owner);
+#if G_LOAD_DIRECT>=2
+    if(resumed && (state->flags&GR_LOAD_READY)) gr_load_direct(state);
+#else
+    if(resumed && (state->flags&GR_READY)) gr_load_direct(state);
+#endif
+    return resumed;
+#else
     return c_gr_owner_resume(&state->owner);
+#endif
 }
 
 #if G_LANE_ASSIGN

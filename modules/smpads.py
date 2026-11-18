@@ -47,6 +47,9 @@ def arm_code(base, sm=None, prev_led=None):
     # ---- c_smpad (Sample mode's slot 0: r0 = subview, r1 = pad, r2 = velocity): Clear + pad 1 / 2 ours, the rest the stock's
     a.label("c_smpad")
     if sm:
+        for pad in sm.get("blank", ()):
+            E(cmp_imm, 1, pad)
+            E(b_cond, "pb_x", "eq")
         for pad, bit in sm["pads"]:
             E(movs_imm, 2, bit)
             E(cmp_imm, 1, pad)
@@ -69,6 +72,10 @@ def arm_code(base, sm=None, prev_led=None):
         E(bl, sm["put"])
         a.label("pe_x")
         E(pop_list, [4, 5, 6], pc=True)
+        if sm.get("blank"):
+            a.label("pb_x")
+            E(movs_imm, 0, 0)
+            E(raw, h(0x4770))                                             # bx lr
         a.label("pd_n")
     E(cmp_imm, 1, PAD_FIT1)
     E(b_cond, "pd_st", "hi")
@@ -127,6 +134,10 @@ def arm_code(base, sm=None, prev_led=None):
         E(movs_imm, 1, sm["v"])
         E(bl, sm["val"])
         E(mov_reg, 4, 0)
+        if sm.get("blank"):
+            E(movs_imm, 0, 0)
+            for pad in sm["blank"]:
+                E(strh_imm, 0, 5, 2 * pad)
         for pad, bit in sm["pads"]:
             E(lsls_imm, 0, 4, 32 - bit.bit_length())
             imm32(1, PAL + PAL_OFF)
@@ -152,9 +163,12 @@ def install(img, report, base_addr, sm=0):
         fs = report["smswitch"] if "smswitch" in report else report["fshape"]
         assert fs.get("sm"), "sm: fshape or smswitch with sm"
         pads = ((PAD_XF, fshape.SM_XF), (PAD_RD, fshape.SM_DR if fs.get("drone") else fshape.SM_RD), (PAD_EF, fshape.SM_EF))[3 - sm:]
-        assert sm < 2 or fs.get("declick") or fs.get("drone"), "sm=2: fshape with declick or drone"
+        if fs.get("no_drone"):                                          # pad 20 dark and taken
+            pads = tuple(p for p in pads if p[0] != PAD_RD)
+        assert sm < 2 or fs.get("declick") or fs.get("drone") or fs.get("no_drone"), "sm=2: fshape with declick or drone"
         assert sm < 3 or fs.get("loopxf"), "sm=3: fshape with loopxf"
-        smd = dict(v=fs["sm0"], pads=pads, val=int(fs["labels"]["c_fsval"], 16), put=int(fs["labels"]["c_fsput"], 16))
+        smd = dict(v=fs["sm0"], pads=pads, val=int(fs["labels"]["c_fsval"], 16), put=int(fs["labels"]["c_fsput"], 16),
+                   blank=(PAD_RD,) if fs.get("no_drone") else ())
         prev = rhbuild.bl_target(img, CI.LED_CALLS[0])
         assert all(rhbuild.bl_target(img, c) == prev for c in CI.LED_CALLS)
     code, labels = arm_code(base_addr, smd, prev)
@@ -166,5 +180,5 @@ def install(img, report, base_addr, sm=0):
         for c in CI.LED_CALLS:
             rhbuild.patch(img, c, f"bl #{prev:#x}", bl(c, labels["c_smled"]))
     report["smpads"] = dict(clear_fit_reset=True, labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")},
-                            **(dict(sm=True, pads={str(p): b for p, b in smd["pads"]}, prev_led=hex(prev)) if sm else {}))
+                            **(dict(sm=True, pads={str(p): b for p, b in smd["pads"]}, blank=list(smd["blank"]), prev_led=hex(prev)) if sm else {}))
     return labels, code

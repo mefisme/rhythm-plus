@@ -13,6 +13,8 @@ HOOKS=((0x08037366,'apply','push.w {r3, r4, r5, r6, r7, r8, sb, sl, fp, lr}'),
        (0x0804113a,'backend','push.w {r2, r3, r4, r5, r6, r7, r8, lr}'),
        (0x08022e98,'read','push {r3, r4, r5, r6, r7, lr}|mov r4, r0'),
        (0x08022efc,'write','push {r3, r4, r5, r6, r7, lr}|mov r7, r0'))
+# The stock delete request's pack and project deletes: our wrappers also remove the Plus files.
+DELETE_CALLS=((0x080413c2,'packdelete',0x0802e938),(0x08041428,'itemdelete',0x0802e8e4))
 
 
 def install(img,report,base_addr,offload=False,automation=False):
@@ -21,7 +23,9 @@ def install(img,report,base_addr,offload=False,automation=False):
     defs=dict(SLOT=slot,C_RST=int(report['rhstate']['labels']['c_rst'],16),
               PREV_OUT=rhbuild.bl_target(img,tmenu.OUT_CALL))
     if os.environ.get('RH_AUTOMATION_TASK_GUARD')=='1':defs['TASK_GUARD']=1
-    if automation:
+    no_a3=automation and 'automation3' not in report
+    if no_a3:defs['NO_A3']=1
+    elif automation:
         assert offload and 'automation3' in report
         defs['A3_INIT']=int(report['automation3']['labels']['c_a3_init'],16)
     granular=os.environ.get('RH_GRANULAR_COMPANION')=='1'
@@ -32,8 +36,16 @@ def install(img,report,base_addr,offload=False,automation=False):
         if os.environ.get('RH_GRANULAR_FINE')=='1':defs.update(GR_SETTINGS_BYTES=288,GR_SINGLE_BUFFER=1)
         for name in ('settings_store','settings_valid'):
             defs['GR_'+name.upper()]=report['granular']['arm_kernel']['labels']['c_gr_runtime_'+name]
-    cow=automation and report['automation3'].get('cow',False)
-    if cow:
+    cow=automation and (no_a3 or report['automation3'].get('cow',False))
+    pack_files=int(os.environ.get('RH_PACK_FILES') or 0)
+    if pack_files:
+        assert cow and granular and pack_files in (1,2)
+        defs['PACK_FILES']=pack_files
+    plus_usb=os.environ.get('RH_PLUS_USB')=='1'
+    if plus_usb:
+        assert pack_files==2 and report['rdiag'].get('plus_usb')
+        defs['PLUS_USB']=1
+    if cow and not no_a3:
         for name in ('bankfilesize','bankfile','banksnapshot','bankrelease','bankimport','bankmaintain'):
             defs['A3_'+name.upper()]=int(report['automation3']['labels']['c_a3_'+name],16)
     hooks=HOOKS if not offload else tuple(x for x in HOOKS if x[1] not in ('save','done'))+(
@@ -50,6 +62,8 @@ def install(img,report,base_addr,offload=False,automation=False):
     if cow:implementation=ROOT/'modules/stepoffload7.c'
     source.write_bytes((ROOT/'modules/projectfile.c').read_bytes()+b'\n'+implementation.read_bytes())
     need=tuple('c_sh_'+name for _,name,_ in hooks)+('c_sh_out', 'c_sh_block' if offload else 'c_sh_complete')
+    if pack_files:need+=tuple('c_sh_'+name for _,name,_ in DELETE_CALLS)
+    if plus_usb:need+=('c_sh_pxmidi',)
     code,labels=compile_c(base_addr+len(prefix),defs,src=source,name='storageshadow',
                           prefix='c_sh_',need=need,max_code=0x3000)
     img+=bytes([255])*(base_addr-rhbuild.BASE-len(img))+prefix+code
@@ -58,10 +72,17 @@ def install(img,report,base_addr,offload=False,automation=False):
     if offload:
         accessor=int(report['stepmut']['labels']['c_sm_store'],16)
         rhbuild.patch(img,accessor,'movs r0, #0|bx lr',b_w(accessor,labels['c_sh_block']))
-    if automation:
+    if automation and not no_a3:
         accessor=int(report['automation3']['labels']['c_a3_available'],16)
         rhbuild.patch(img,accessor,'movs r0, #0|bx lr',b_w(accessor,labels['c_sh_autobank']))
     rhbuild.patch(img,tmenu.OUT_CALL,f"bl #{defs['PREV_OUT']:#x}",bl(tmenu.OUT_CALL,labels['c_sh_out']))
+    if plus_usb:
+        import diagread
+        ext=int(report['rdiag']['labels']['rc_ext'],16)
+        assert bytes(img[ext-rhbuild.BASE:ext-rhbuild.BASE+4])==diagread.PX_HOLD
+        img[ext-rhbuild.BASE:ext-rhbuild.BASE+4]=b_w(ext,labels['c_sh_pxmidi'])
+    if pack_files:
+        for addr,name,target in DELETE_CALLS:rhbuild.patch(img,addr,f'bl #{target:#x}',bl(addr,labels['c_sh_'+name]))
     report['storageshadow']=dict(slot=hex(slot),bytes=1024,fil=hex(0x400),fil_bytes=4136,
         prev_out=hex(defs['PREV_OUT']),
         bounce=hex(slot+512),offload=offload,native_settings_authoritative=not offload,
@@ -73,4 +94,9 @@ def install(img,report,base_addr,offload=False,automation=False):
     if automation:report['storageshadow'].update(format='SO v2 metadata + immutable RA02 bundle; reads SO v1',automation_bytes=4608,bundle_bytes=4736)
     if cow:report['storageshadow'].update(format='SO v3 metadata + streamed RA03 bundle; reads SO v1/v2',bundle_bytes=None,max_bundle_bytes=4784)
     if granular:report['storageshadow'].update(format='SO v4 metadata + RA04 bundle with granular settings; reads SO v1/v2/v3',granular_settings_bytes=224,max_bundle_bytes=5008)
+    if pack_files==1:report['storageshadow'].update(pack_files=True,directory='<pack>/Sessions/RP_<slot>_<key>.rps; reads 1:/RP_AUTO')
+    if no_a3:report['storageshadow'].update(k13_automation=False,format='SO v4 metadata + RA04 bundle with no lanes; reads and drops older lanes')
+    if plus_usb:report['storageshadow'].update(plus_usb=dict(commands='0x20 info, 0x21 list, 0x22 read, 0x23 write, 0x24 delete, 0x25 crc, 0x26 rename, 0x27 copy',
+        version=1,max_chunk=64,item_kind='0x58555052',content_read='0x8046054',lseek='0x80223d8'))
+    if pack_files==2:report['storageshadow'].update(pack_files=2,directory='<pack>/Sessions/RP_<slot>_<name>_<key>.rps; deletes move to 1:/RP_AUTO; Shift + Save accepts defaults')
     return labels,code

@@ -11,13 +11,22 @@ ROOT=Path(__file__).resolve().parents[1]
 RECORD=0x29484;TAIL=0x29110;META=TAIL+276;OLD=TAIL+404
 
 
+def plus_name(n):
+    import re
+    return bool(re.fullmatch(r'RP_\d\d_(.+_)?[0-9A-Fa-f]{8}\.rps',n.rsplit('/',1)[1]))
+hex_name=plus_name
+
+
 def main():
     build=sys.argv[1] if len(sys.argv)>1 else 'a0180'
     report=json.loads((ROOT/'firmware'/build/'manifest.json').read_text())['report']
     rep=report['storageshadow'];slot=int(rep['slot'],16)
     L={k:int(v,16) for k,v in rep['labels'].items()}
-    cow=report['automation3'].get('cow',False);gbytes=rep.get('granular_settings_bytes',0);gran=bool(gbytes);version=4 if gran else 3 if cow else 2
-    A={k:int(v,16) for k,v in report['automation3']['labels'].items()}
+    noa3='automation3' not in report                    # no K1-K3 lanes: saves hold none, loads drop old ones
+    a3=report.get('automation3',{});cow=noa3 or a3.get('cow',False)
+    gbytes=rep.get('granular_settings_bytes',0);gran=bool(gbytes);version=4 if gran else 3 if cow else 2
+    A={k:int(v,16) for k,v in a3.get('labels',{}).items()}
+    EMPTY=bytes([255])*4608
     tr={k:int(v,16) for k,v in rep['trampolines'].items()}
     u=machine((ROOT/'firmware'/build/f'rhythmplus-{build.upper()}.bin').read_bytes(),
               (ROOT/'remix/stock/rhythm-ram-frd1-synced.bin').read_bytes(),mclass=True)
@@ -30,6 +39,8 @@ def main():
         b=bytearray(b'SM\0\2'+bytes((i+seed)&255 for i in range(96)))
         b[2]=(sum(b[4:])^0x5c)&255;return bytes(b)
     def put_settings(b):u.mem_write(0x1458,b)
+    dflt=bytearray(b'SM'+bytes((0,2))+bytes((0x2e,0x0a,0,0x2a,0x2a,0x1e,2,2,7,0x0a,4,0)[(i-4)%12] for i in range(4,100)))
+    dflt[2]=(sum(dflt[4:])^0x5c)&255;defaults_block=bytes(dflt)
     def current():return bytes(u.mem_read(record,RECORD))
     def ret(value=0):
         u.reg_write(UC_ARM_REG_R0,value);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
@@ -41,12 +52,24 @@ def main():
         kernel=report['granular']['arm_kernel']['labels'];gslot=int(report['granular']['bridge']['slot'],16)
         lifecycle={k:int(v,16) for k,v in report['granular']['lifecycle']['labels'].items()}
     disk={};saved={};directory=[False];handle=[None];position=[0];events=[];fault={};incoming=[None]
+    pv=2 if rep.get('pack_files')==2 else 1 if rep.get('pack_files') else 0;plus=bool(pv)
+    NAMES={}                                            # (pack, slot) -> the project file's name part
+    PACKS={8:'1:/Rhythm/07_Beats',27:'1:/Rhythm/26_Other Pack'};STORE=0x20009f00;dirs=set(PACKS.values());listing={}
+    def sessions(pack):return PACKS[pack]+'/Sessions'
+    def companion(key,slot=5,pack=8):
+        if pv==2:return f'{sessions(pack)}/RP_{slot:02d}_{NAMES.get((pack,slot),"SESSION")}_{key:08X}.rps'
+        return f'{sessions(pack)}/RP_{slot:02d}_{key:08X}.rps' if plus else f'1:/RP_AUTO/{key:08X}.RPS'
+    def by_key(key):
+        names=[n for n in disk if n.upper().endswith(f'{key:08X}.RPS')]
+        assert names,hex(key);return sorted(names,key=lambda n:'RP_AUTO' in n)[0]
+    def parent(name):return name.rsplit('/',1)[0]
     def bundle(settings,bank=b'\xff'*4608):
         header=struct.pack('<7I',0x34304152 if gran else 0x33304152 if cow else 0x32304152,4608,3,8,32,6,0)+settings
         if not cow:return header+bank
         lanes=[bank[i:i+192] for i in range(0,4608,192)]
         return header+struct.pack('<24H',*[0 if x==b'\xff'*192 else 0x80c0 for x in lanes])+b''.join(x for x in lanes if x!=b'\xff'*192)+granular_settings
     def bank():
+        if noa3:return EMPTY
         if not cow:return bytes(u.mem_read(0x1500,4608))
         out=bytearray()
         for lane in range(24):
@@ -54,6 +77,7 @@ def main():
             out.extend(u.mem_read(0x20009000,192))
         return bytes(out)
     def putbank(raw):
+        if noa3:return
         if not cow:u.mem_write(0x1500,raw);return
         for lane in range(24):
             u.mem_write(0x20009000,raw[lane*192:lane*192+192])
@@ -76,7 +100,9 @@ def main():
             image=bytes(uc.mem_read(z,RECORD));events.append('native-write')
             if image[META:META+2]==b'SO' and image[META+3]:
                 key=struct.unpack_from('<I',image,META+4)[0]
-                if cow:assert zlib.crc32(disk[f'1:/RP_AUTO/{key:08X}.RPS'])==key
+                slot,pack=struct.unpack('<3I',uc.mem_read(x,12))[1:]
+                if plus and pack in PACKS:assert zlib.crc32(disk[companion(key,slot,pack)])==key
+                elif cow:assert zlib.crc32(disk[f'1:/RP_AUTO/{key:08X}.RPS'])==key
                 else:assert disk[f'1:/RP_AUTO/{key:08X}.RPS']==bytes(u.mem_read(0x2720,4736))
                 assert 'sync' in events or 'read' in events
             code=fault.get('native-write',0)
@@ -84,11 +110,43 @@ def main():
             if not code:saved[tuple(struct.unpack('<3I',uc.mem_read(x,12)))]=image
             ret(code);return
         if a==0x08022788:
-            events.append('mkdir');code=8 if directory[0] else 0;directory[0]=True;ret(code);return
+            name=bytes(uc.mem_read(x,104)).split(b'\0')[0].decode();events.append(('mkdir',name))
+            if name=='1:/RP_AUTO':code=8 if directory[0] else 0;directory[0]=True;ret(code);return
+            if name in dirs:ret(8);return
+            if parent(name) not in dirs:ret(5);return
+            dirs.add(name);ret(0);return
+        ours=min(L.values())-0x1000<=uc.reg_read(UC_ARM_REG_LR)<min(L.values())+0x3000
+        if a in (0x0802e25a,0x0802e44c,0x0802e7ee,0x0802e83c) and not ours:return
+        if a==0x0802e83c:
+            pack=u.mem_read(x,1)[0];assert y==0 and pack in PACKS
+            u.mem_write(0x20009800,f'{sessions(pack)}/{z:02d}_{NAMES.get((pack,z),"SESSION")}.ncs'.encode()+b'\0');ret(0x20009800);return
+        if a==0x080228c2:
+            src,dst=(bytes(uc.mem_read(r,104)).split(b'\0')[0].decode() for r in (x,y));events.append(('rename',src,dst))
+            if src not in disk:ret(4);return
+            if dst in disk:ret(8);return
+            if not (directory[0] if dst.startswith('1:/RP_AUTO/') else parent(dst) in dirs):ret(5);return
+            disk[dst]=disk.pop(src);ret(0);return
+        if a==0x0802e25a:ret(int(y in PACKS));return
+        if a==0x0802e44c:
+            u.mem_write(0x20009800,PACKS.get(y,'1:/Rhythm/99_PACK').encode()+b'\0');ret(0x20009800);return
+        if a==0x0802e7ee:
+            assert x==STORE and y==0;u.mem_write(0x20009800,sessions(8).encode()+b'\0');ret(0x20009800);return
+        if a==0x08022528:
+            name=bytes(uc.mem_read(y,104)).split(b'\0')[0].decode();events.append(('opendir',name))
+            if name not in dirs:ret(5);return
+            listing[x]=sorted(n.rsplit('/',1)[1] for n in disk if parent(n)==name);ret(0);return
+        if a==0x080225b6:
+            entry=listing[x].pop(0) if listing[x] else ''
+            u.mem_write(y,bytes(0x16+128));u.mem_write(y+8,b'\x20');u.mem_write(y+0x16,entry.encode()+b'\0');ret(0);return
+        if a==0x08022588:listing.pop(x,None);ret(0);return
+        if a==0x080226ec:
+            name=bytes(uc.mem_read(x,104)).split(b'\0')[0].decode();events.append(('unlink',name))
+            ret(0 if disk.pop(name,None) is not None else 4);return
         if a==0x08021d90:
             assert x==0x400
-            name=bytes(uc.mem_read(y,32)).split(b'\0')[0].decode();events.append(('open',name,z))
-            if not directory[0]:ret(5);return
+            name=bytes(uc.mem_read(y,104)).split(b'\0')[0].decode();events.append(('open',name,z))
+            if any(k.startswith('1:/RP_AUTO/') for k in disk):directory[0]=True
+            if (name.startswith('1:/RP_AUTO/') and not directory[0]) or (not name.startswith('1:/RP_AUTO/') and parent(name) not in dirs):ret(5);return
             if z==7 and name in disk:ret(8);return
             if z==1 and name not in disk:ret(4);return
             if fault.get('open'):ret(fault['open']);return
@@ -111,7 +169,9 @@ def main():
             w(q,z);ret();return
         if a==0x080222bc:events.append('sync');ret(fault.get('sync',0));return
         if a==0x08022346:events.append('close');w(x,0);ret();return
-    for a in list(tr.values())+[int(rep['prev_out'],16),0x08022788,0x08021d90,0x08021f72,0x080220fc,0x080222bc,0x08022346]:
+    for a in list(tr.values())+[int(rep['prev_out'],16),0x08022788,0x08021d90,0x08021f72,0x080220fc,0x080222bc,0x08022346]+(
+            [0x0802e25a,0x0802e44c,0x0802e7ee,0x08022528,0x080225b6,0x08022588,0x080226ec] if plus else [])+(
+            [0x0802e83c,0x080228c2] if pv==2 else []):
         u.hook_add(UC_HOOK_CODE,hook,None,a,a+1)
     if gran:u.hook_add(UC_HOOK_CODE,hook,None,lifecycle['apply_native'],lifecycle['apply_native']+1)
     def invoke(name,*args):
@@ -119,9 +179,11 @@ def main():
         u.mem_write(STACK+0xf0000,struct.pack('<3I',*extras[:3]))
         call(u,L['c_sh_'+name],*args[:4]);return u.reg_read(UC_ARM_REG_R0)
     def apply(image):u.mem_write(record,image);return invoke('apply',session,0,0,0)
-    def save():events.clear();w(actual,0);return invoke('writebackend',item,0,record,RECORD,actual,0,0)
+    def loaded_pack():
+        if pv==2:u.mem_write(word(0x20006e24),bytes([word(item+8)&255]))
+    def save():events.clear();w(actual,0);loaded_pack();return invoke('writebackend',item,0,record,RECORD,actual,0,0)
     def load(image):
-        incoming[0]=image;events.clear();result=invoke('backend',item,0,record,RECORD,actual,0,0)
+        incoming[0]=image;events.clear();loaded_pack();result=invoke('backend',item,0,record,RECORD,actual,0,0)
         if word(0x1440+12)==4:assert invoke('block')==0
         invoke('apply',session,0,0,0);return result
     legacy=bytearray((i*31)&255 for i in range(RECORD));legacy[META:META+20]=bytes(20);legacy[OLD:OLD+100]=sm()
@@ -141,7 +203,7 @@ def main():
     trace=u.hook_add(UC_HOOK_CODE,mask_trace)
     assert save()==0 and word(actual)==RECORD
     u.hook_del(trace)
-    limit=200 if report['automation3'].get('task_guard') else 12000
+    limit=200 if a3.get('task_guard') else 12000
     assert masked[1]<limit and not u.reg_read(UC_ARM_REG_PRIMASK),masked
     print(f'PASS snapshot IRQ masking bounded to {masked[1]} emulated instructions; filesystem runs unmasked')
     first=saved[(2,5,8)]
@@ -152,6 +214,12 @@ def main():
     assert all(a==b for i,(a,b) in enumerate(zip(first,legacy)) if i not in allowed)
     assert events.index('sync')<events.index('read')<events.index('native-write')
     print('PASS durable verified companion precedes native write; only 20-byte metadata and reclaimed 100 bytes change')
+    if plus:
+        key=struct.unpack_from('<I',first,META+4)[0];name=companion(key)
+        assert name in disk and not directory[0] and not any('RP_AUTO' in n for n in disk)
+        first_file=(name,bytes(disk[name]))
+        assert ('mkdir',sessions(8)) in events and name.rsplit('/',1)[1][0] not in '0123456789'
+        print(f'PASS the Plus file is saved next to its project ({name}); the stock skips it (no leading number); no RP_AUTO')
     put_settings(sm(9));assert load(first)==0 and runtime()==sm()
     assert current()[OLD:OLD+100]==bytes(100) and events[-1]=='apply'
     assert events.index('read')<events.index('apply')
@@ -188,10 +256,13 @@ def main():
         pointer=invoke('grsettings')
         call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
         saved[(2,5,8)]=first
+        if plus:
+            # That save replaced slot 5's Plus file; the card holds the first save again.
+            assert first_file[0] not in disk;disk[first_file[0]]=bytearray(first_file[1])
         print('PASS granular knob settings persist through companion save/load and restore exactly')
         if gbytes==288:
             # A card saved by A0206 holds a 224-byte GS v4 companion.
-            key=struct.unpack_from('<I',granular_project,META+4)[0];new=bytes(disk[f'1:/RP_AUTO/{key:08X}.RPS'])
+            key=struct.unpack_from('<I',granular_project,META+4)[0];new=bytes(disk[by_key(key)])
             v4=bytearray(changed[:224]);v4[2]=4;struct.pack_into('<I',v4,4,zlib.crc32(v4[8:]))
             older=new[:-288]+bytes(v4);okey=zlib.crc32(older);disk[f'1:/RP_AUTO/{okey:08X}.RPS']=bytearray(older)
             project=bytearray(granular_project);struct.pack_into('<II',project,META+4,okey,len(older))
@@ -229,9 +300,17 @@ def main():
     invoke('apply',session,0,0,0);assert invoke('block')==0x1458
     print('PASS real Content read and async bridge deliver completion only after restore, with activation gated until application')
     # Duplicate on the same card: immutable file is shared until the copy is edited.
+    if plus:
+        # A copy made on a computer, renumbered from 05 to 09: found by its key in the same folder.
+        fkey=struct.unpack_from('<I',first,META+4)[0]
+        dirs.add(sessions(27));disk[f'{sessions(27)}/RP_05_{fkey:08X}.rps']=bytearray(disk[companion(fkey)])
     w(item+4,9);w(item+8,27);assert load(first)==0
     put_settings(sm(3));assert save()==0
     clone=saved[(2,9,27)];assert clone[META:META+20]!=first[META:META+20]
+    if plus:
+        ckey=struct.unpack_from('<I',clone,META+4)[0]
+        assert companion(ckey,9,27) in disk and f'{sessions(27)}/RP_05_{fkey:08X}.rps' in disk
+        print('PASS a renumbered copy loads by its key; its save writes RP_09_ and leaves the other slot\'s file')
     assert load(first)==0 and runtime()==sm()
     assert saved[(2,5,8)]==first
     print('PASS cloned project metadata resolves on same card; edits produce independent file and preserve original')
@@ -256,19 +335,22 @@ def main():
     putbank(bytes(frozen))
     put_settings(sm(6));fault['edit-during-io']=True
     assert save()==0 and runtime()==sm(7)
-    latest=saved[(2,9,27)];assert struct.unpack_from('<I',latest,META+4)[0]==zlib.crc32(bundle(sm(6),bytes(frozen)))
-    assert bank()[0]==127
-    assert load(latest)==0 and bank()==bytes(frozen) and runtime()==sm(6)
+    kept=EMPTY if noa3 else bytes(frozen)
+    latest=saved[(2,9,27)];assert struct.unpack_from('<I',latest,META+4)[0]==zlib.crc32(bundle(sm(6),kept))
+    assert noa3 or bank()[0]==127
+    assert load(latest)==0 and bank()==kept and runtime()==sm(6)
     print('PASS snapshot stays consistent while settings and automation change during I/O; complete bank restores')
     # Missing/corrupt required files: no defaults, no overwrite, visible error.
-    key=struct.unpack_from('<I',first,META+4)[0];name=f'1:/RP_AUTO/{key:08X}.RPS';old_file=disk.pop(name)
+    key=struct.unpack_from('<I',first,META+4)[0]
+    copies={k:disk.pop(k) for k in [k for k in disk if k.upper().endswith(f'{key:08X}.RPS')]}
     assert load(first)==0 and invoke('block')==0 and metric(10)>0
     prior=dict(saved);assert save()==5 and saved==prior and 'native-write' not in events
     w(0x20006f3c,256);invoke('out',1,out,0,0)
     assert word(out+57*4)==word(0x20003974+4*0x55)
-    disk[name]=bytearray(old_file);disk[name][4]^=1
+    for k,v in copies.items():disk[k]=bytearray(v);disk[k][4]^=1
     assert load(first)==0 and invoke('block')==0
-    disk[name]=old_file;assert load(first)==0 and runtime()==sm()
+    for k,v in copies.items():disk[k]=v
+    assert load(first)==0 and runtime()==sm()
     bad=bytearray(first);bad[META+4]^=1
     assert load(bytes(bad))==0 and invoke('block')==0 and 'read' not in events
     assert load(first)==0 and runtime()==sm()
@@ -289,6 +371,10 @@ def main():
     disk[f'1:/RP_AUTO/{zlib.crc32(sm(15)):08X}.RPS']=sm(15)
     assert load(bytes(v1))==0 and runtime()==sm(15) and bank()==b'\xff'*4608
     assert save()==0 and saved[(2,9,27)][META+2]==version
+    if plus:
+        mkey=struct.unpack_from('<I',saved[(2,9,27)],META+4)[0]
+        assert companion(mkey,9,27) in disk and f'1:/RP_AUTO/{zlib.crc32(sm(15)):08X}.RPS' in disk
+        print('PASS an RP_AUTO project loads, and its next save writes the Plus file next to the project; RP_AUTO stays')
     print('PASS A0179 companion imports without edits, migrating to bundle only on Save')
     if cow:
         # Import the actual pre-compression RA02 representation without changing
@@ -299,10 +385,26 @@ def main():
         struct.pack_into('<II',v2,META+4,key2,len(old_payload))
         struct.pack_into('<I',v2,META+16,zlib.crc32(v2[META:META+16]))
         disk[f'1:/RP_AUTO/{key2:08X}.RPS']=old_payload
-        assert load(bytes(v2))==0 and bank()==raw and runtime()==sm(18)
+        assert load(bytes(v2))==0 and bank()==(EMPTY if noa3 else raw) and runtime()==sm(18)
         assert save()==0 and saved[(2,9,27)][META+2]==version
         assert disk[f'1:/RP_AUTO/{key2:08X}.RPS']==old_payload
-        print('PASS A0180-A0183 RA02 lanes migrate losslessly; earlier immutable companion remains unchanged')
+        if noa3:
+            payload=disk[by_key(struct.unpack_from('<I',saved[(2,9,27)],META+4)[0])]
+            assert struct.unpack_from('<24H',payload,128)==(0,)*24 and payload[:4]==(b'RA04' if gran else b'RA03')
+            print('PASS an RA02 file with K1-K3 lanes loads its settings; the lanes drop and the next save holds none')
+        else:print('PASS A0180-A0183 RA02 lanes migrate losslessly; earlier immutable companion remains unchanged')
+    if noa3:
+        # A newer file with raw and compressed lanes: the settings load, the lanes drop; a bad descriptor still fails.
+        one=bytearray(EMPTY);one[0]=5
+        for desc,ok in ((0x80c0,True),(0x80c1,False)):
+            body=bytearray(bundle(sm(19),bytes(one)));struct.pack_into('<H',body,128,desc)
+            k=zlib.crc32(body);f=bytearray(first);struct.pack_into('<I',f,META+4,k);struct.pack_into('<I',f,META+8,len(body))
+            struct.pack_into('<I',f,META+16,zlib.crc32(f[META:META+16]));disk[f'1:/RP_AUTO/{k:08X}.RPS']=body
+            assert load(bytes(f))==0
+            assert (runtime()==sm(19) and invoke('block')==0x1458) if ok else invoke('block')==0
+        assert load(blank)==0
+        print('PASS a file with K1-K3 lanes loads its settings without them; a bad lane descriptor fails closed')
+    if cow and not noa3:
         # Exercise actual Main output maintenance, then the Content save/restore
         # path with compressed descriptors instead of just raw fallback lanes.
         smooth=bytes((lambda v:v if v<128 else 255-v)((i+lane*7)%256)
@@ -313,7 +415,7 @@ def main():
         used=word(0x1508);assert used<2200,used
         assert bank()==smooth
         assert save()==0;compressed=saved[(2,9,27)]
-        key3=struct.unpack_from('<I',compressed,META+4)[0];payload=disk[f'1:/RP_AUTO/{key3:08X}.RPS']
+        key3=struct.unpack_from('<I',compressed,META+4)[0];payload=disk[by_key(key3)]
         assert len(payload)<2400,len(payload)
         assert any(0<x<192 for x in struct.unpack_from('<24H',payload,128))
         assert load(compressed)==0 and bank()==smooth and runtime()==sm(18)
@@ -327,6 +429,91 @@ def main():
         assert load(compressed)==0 and bank()==smooth
         assert load(blank)==0
         print('PASS invalid compressed lane fails closed even with matching file CRC')
+    if plus:
+        # Saves to one slot: the newest file stays, the slot's older files go, nothing else is touched.
+        w(item+4,5);w(item+8,8);assert load(first)==0
+        others={f'{sessions(8)}/05_SESSION.ncs',f'{sessions(8)}/RP_05_notes.txt',f'{sessions(8)}/RP_05_ZZZZZZZZ.rps',
+                f'{sessions(8)}/RP_06_0000ABCD.rps',f'{sessions(8)}/RP_5_0000ABCD.rps','1:/RP_AUTO/0000ABCD.RPS'}
+        for n in others:disk[n]=bytearray(b'x')
+        old=companion(key);assert old in disk
+        put_settings(sm(21));assert save()==0;nkey=struct.unpack_from('<I',saved[(2,5,8)],META+4)[0]
+        assert companion(nkey) in disk and old not in disk and others<=set(disk)
+        ours=[n for n in disk if parent(n)==sessions(8) and n.rsplit('/',1)[1].startswith('RP_05_')]
+        assert sorted(ours)==sorted([companion(nkey),f'{sessions(8)}/RP_05_notes.txt',f'{sessions(8)}/RP_05_ZZZZZZZZ.rps']),ours
+        print('PASS a save keeps only the newest Plus file of its slot; other slots, other names and RP_AUTO stay')
+        # A failed native write keeps the file the saved project still uses.
+        put_settings(sm(22));fault['native-write']=3;assert save()==3;fault.clear()
+        assert companion(nkey) in disk
+        assert load(saved[(2,5,8)])==0 and runtime()==sm(21)
+        print('PASS a failed native write deletes nothing; the saved project still loads its file')
+        # A project saved without Plus data drops its slot's Plus files.
+        empty5=bytearray(legacy);empty5[META:META+20]=bytes(20);empty5[OLD:OLD+100]=bytes(100)
+        if not gran:
+            assert apply(bytes(empty5))==0x1234 and save()==0
+            assert not any(n.rsplit('/',1)[1].upper().startswith('RP_05_') and n.endswith('.rps') and hex_name(n) for n in disk)
+        # An unknown pack folder falls back to RP_AUTO.
+        assert load(saved[(2,5,8)])==0 and runtime()==sm(21)
+        w(item+8,9);put_settings(sm(23));assert save()==0;k9=struct.unpack_from('<I',saved[(2,5,9)],META+4)[0]
+        assert f'1:/RP_AUTO/{k9:08X}.RPS' in disk
+        assert load(saved[(2,5,9)])==0 and runtime()==sm(23);w(item+8,8)
+        print('PASS a pack folder the stock does not know falls back to RP_AUTO')
+        # The stock delete request: pack delete removes all our files first; project delete only that slot's.
+        stock_calls=[]
+        def stock_delete(uc,a,n,data):
+            stock_calls.append((a,[uc.reg_read(UC_ARM_REG_R0+i) for i in range(4)]));ret(fault.get('item-delete',0))
+        for a in (0x0802e938,0x0802e8e4):u.hook_add(UC_HOOK_CODE,stock_delete,None,a,a+1)
+        for slot in (5,6,7):disk[f'{sessions(8)}/RP_{slot:02d}_0000{slot:04X}.rps']=bytearray(b'y')
+        fault['item-delete']=1;assert invoke('itemdelete',STORE,0x1234,0,7)==1
+        assert f'{sessions(8)}/RP_07_00000007.rps' in disk
+        fault.clear();assert invoke('itemdelete',STORE,0x1234,2,7)==0
+        assert f'{sessions(8)}/RP_07_00000007.rps' in disk
+        assert invoke('itemdelete',STORE,0x1234,0,7)==0 and stock_calls[-1]==(0x0802e8e4,[STORE,0x1234,0,7])
+        assert f'{sessions(8)}/RP_07_00000007.rps' not in disk and f'{sessions(8)}/RP_06_00000006.rps' in disk
+        if pv==2:
+            assert disk['1:/RP_AUTO/00000007.RPS']==b'y'
+            print('PASS a deleted project\'s Plus file moves to RP_AUTO only after the stock deleted the project')
+        else:print('PASS a deleted project loses its Plus files only after the stock deleted it')
+        before=set(disk);invoke('packdelete',STORE,0x1234,0,0)
+        assert stock_calls[-1][0]==0x0802e938 and stock_calls[-1][1][:2]==[STORE,0x1234]
+        gone=before-set(disk)
+        assert gone and all(plus_name(n) for n in gone) and not any(plus_name(n) and parent(n)==sessions(8) for n in disk)
+        assert others-{f'{sessions(8)}/RP_06_0000ABCD.rps'}<=set(disk)
+        if pv==2:
+            assert all(f'1:/RP_AUTO/{n[-12:-4].upper()}.RPS' in disk for n in gone)
+            print('PASS a pack delete moves every Plus file in the pack to RP_AUTO before the stock removes its folders')
+        else:print('PASS a pack delete removes every Plus file in the pack before the stock removes its folders')
+        if pv==2:
+            # Components replaces a project: it deletes the file, then sends the same bytes back.
+            disk[first_file[0]]=bytearray(first_file[1])     # the pack is back on the card
+            assert load(first)==0 and runtime()==sm();put_settings(sm(31));assert save()==0
+            project=saved[(2,5,8)];pkey=struct.unpack_from('<I',project,META+4)[0]
+            assert companion(pkey) in disk and 'RP_05_SESSION_' in companion(pkey)
+            assert invoke('itemdelete',STORE,0x1234,0,5)==0 and companion(pkey) not in disk
+            assert load(project)==0 and runtime()==sm(31) and invoke('block')==0x1458
+            assert save()==0 and companion(pkey) in disk and f'1:/RP_AUTO/{pkey:08X}.RPS' in disk
+            print('PASS a project that Components deletes and sends again loads its settings from RP_AUTO; the next save puts them next to it')
+            # Renamed in Components: the old name still loads; the next save writes the new name and drops the old.
+            NAMES[(8,5)]='SD_Experiments';disk.pop(f'1:/RP_AUTO/{pkey:08X}.RPS')
+            old=companion(pkey).replace('SD_Experiments','SESSION');assert old in disk
+            assert load(project)==0 and runtime()==sm(31)
+            put_settings(sm(32));assert save()==0;rkey=struct.unpack_from('<I',saved[(2,5,8)],META+4)[0]
+            assert companion(rkey).endswith(f'/RP_05_SD_Experiments_{rkey:08X}.rps') and companion(rkey) in disk and old not in disk
+            print(f'PASS the Plus file carries the project name ({companion(rkey).rsplit("/",1)[1]}); a renamed project still loads, and its next save renames the file')
+            # Shift + Save on a project whose Plus file is missing: saved with the default settings.
+            named=saved[(2,5,8)];gone_file=disk.pop(companion(rkey))
+            assert load(named)==0 and invoke('block')==0 and word(0x1440+12)==3
+            assert save()==5 and 'native-write' not in events
+            held=0x200487c8+0xa0;w(held,word(held)|1<<27)
+            assert save()==0 and word(0x1440+12)==2 and invoke('block')==0x1458
+            fresh=saved[(2,5,8)];dkey=struct.unpack_from('<I',fresh,META+4)[0]
+            assert companion(dkey) in disk and runtime()==defaults_block
+            w(held,word(held)&~(1<<27))
+            assert load(fresh)==0 and runtime()==defaults_block and invoke('block')==0x1458
+            disk[companion(rkey)]=gone_file;put_settings(sm(33));w(held,word(held)|1<<27)
+            assert load(named)==0 and runtime()==sm(32);put_settings(sm(34));assert save()==0 and runtime()==sm(34)
+            w(held,word(held)&~(1<<27))
+            print('PASS Shift + Save saves a project with a missing Plus file with default settings; with the file, Shift + Save saves as usual')
+        w(item+4,9);w(item+8,27)
     new_feature=bytearray(empty);new_feature[OLD:OLD+100]=future
     apply(bytes(new_feature));assert save()==0
     assert saved[(2,9,27)][OLD:OLD+100]==future

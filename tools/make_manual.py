@@ -3,7 +3,7 @@ Print it to PDF with:  chrome --headless --print-to-pdf=manual/rhythm_plus_manua
 from html import escape
 from pathlib import Path
 
-FIRMWARE = "A0233"
+FIRMWARE = "A0238"
 OUT = Path(__file__).resolve().parents[1] / "manual" / "rhythm_plus_manual.html"
 
 GRAD = ["ffc866", "ffd966", "fff766", "e5ff66", "c7ff66", "a6ff66", "87ff66", "66ff66"]   # the probability page's colours
@@ -89,6 +89,24 @@ def trackrow(fills, label="Track buttons"):
         out.append(f'<text x="{x + PAD / 2}" y="40" class="kl">{t + 1}</text>')
     out.append("</svg>")
     return "".join(out)
+
+
+REV, DLY, AMB = "4cd964", "ff4fa0", "ffaf2f"                 # the reverb return, the delay return, the Grid FX blend
+
+
+def fx_page2():
+    """the FX track's page 2: the reverb return chosen, on track 1's lane; the blend on track 3's"""
+    cells, marks = {}, {}
+    for i in range(16):
+        cells[i] = lit("ff4fd8" if i % 4 == 0 else "2f5bff", FULL if i % 4 == 0 else DIM)
+        marks[i] = str(i + 1)
+    for l in range(8):
+        cells[16 + l] = lit(REV, FULL) if l == 0 else lit(AMB, DIM) if l == 2 else lit(WHITE, DIM)
+        marks[16 + l] = f"T{l + 1}"
+    cells[24], marks[24] = lit(REV, FULL), "25"
+    cells[31], marks[31] = lit(GREEN, FULL), "32"
+    return grid(cells, rows={0: "Steps", 1: "", 2: "Lanes", 3: ""}, marks=marks, knobs=[REV, DLY, AMB] + [None] * 5,
+                buttons=[("Up", lit(WHITE, DIM)), ("Down", lit(AMB, FULL))])
 
 
 def table(head, rows, cls=""):
@@ -284,7 +302,11 @@ shows every control and light.</p></div>
 <li><span>15 · The playhead scrub</span><span>21</span></li>
 </ul>
 <div class="note">The drawings show the pads and buttons of the Circuit Rhythm as a plan, not to scale. The colours are close to the colours
-on the unit; on the unit, a dim pad is darker than it is on paper.</div>""", "cover"))
+on the unit; on the unit, a dim pad is darker than it is on paper.</div>
+<div class="note">Rhythm Plus saves some project settings in a small file next to the project, in the pack's Sessions folder. Its
+name starts with RP_, the same number and the project's name: <b>RP_05_MyBeat_…rps</b> goes with <b>05_MyBeat.ncs</b>. When you copy a
+project on a computer, copy its RP_ file too. If the file is missing, Save flashes red and does not save. Hold {SH} and press Save
+to save the project with the default Rhythm Plus settings.</div>""", "cover"))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 1</div><h2>Pattern Mutate: overview and quick start</h2>
@@ -557,11 +579,10 @@ on the held step, the bar shows the step's value.</p>
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 11</div><h2>The Sample mode switches</h2>
-<p>Press Samples two times to open Sample mode. Pads 19, 20 and 21 are three switches for the selected track. Tap a pad to turn its
-switch on or off. A switch that is on has the stock's chosen colour; a switch that is off has the not chosen colour.</p>
+<p>Press Samples two times to open Sample mode. Pads 19 and 21 are two switches for the selected track. Tap a pad to turn its
+switch on or off. Pad 20 is dark and does nothing. A switch that is on has the stock's chosen colour; a switch that is off has the not chosen colour.</p>
 {table(["Pad", "Switch", "Default", "What it does"], [
         ["19", "Loop crossfade", "Off", "In Loop mode, the end of the loop fades into its start, so the loop point does not click."],
-        ["20", "Drone", "Off", "The same note again does not restart a sound that still plays: the sound goes on. A different note starts as before."],
         ["21", "End fade", "On", "On: the sound fades out at the end of the sample, as on the stock unit. Off: no fade; the sample plays to its last sample."]])}
 <p>Each track keeps its own switches. The project saves them. A project from an earlier firmware opens with the defaults.</p>
 <h3>Pitch</h3>
@@ -584,7 +605,9 @@ speed to the end of the note; the next note plays without stretch. Each change f
 <p>On a Granular track, pads 11-16 set Scan, so the playhead moves through the part from K2 to K3 in that length, at the tempo. Tap
 the bright pad again: Scan goes back to the value it had before. If you turn Scan, the pad is no longer chosen. The track keeps its
 Scan length when Granular is turned off and on, apart from the stretch length. Pad 9 is dim red and
-pad 10 is dark. While Slice is on, pads 11-16 are dim red.</p>"""))
+pad 10 is dark. While Slice is on, pads 11-16 are dim red.</p>
+<p>In One Shot mode, a Granular note plays until the playhead has moved through the part one time. If the sample at its own
+speed plays longer, the note lasts that long. Then the grains that play fade out, and no new grains start until the next note.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 12</div><h2>Resetting knobs and tracks</h2>
@@ -633,7 +656,7 @@ mix stutters, for example. Each track has its own send.</p>
 turn the sends at the same time.</p>
 <h3>What a send changes</h3>
 <p>A send splits the track's sound: the part you send goes through Grid FX, the rest goes around it. The level, pan, mute, sidechain
-and master filter still work on all of the track. The shared delay and reverb returns go through Grid FX by default. The Shift controls (chapter 14) let you route either return around it.</p>
+and master filter still work on all of the track. The shared delay and reverb returns go through Grid FX by default. Hold {SH} on the sends page: K1 is the reverb return, K2 the delay return and K3 the Grid FX blend, the same controls as page 2 of the FX track (chapter 14). Let go of {SH} for the sends.</p>
 <p>While a beat repeat plays, a send that you turn up waits until the repeat ends: the track keeps playing live. The next beat
 repeat records it. A send that you turn down works at once.</p>
 <p>The project saves the sends. A new project, or one from an earlier firmware, has every send at full.</p>"""))
@@ -692,21 +715,35 @@ track stops being the FX track, its knobs go back to the values they had before,
 project saves which track is the FX track.</p>"""))
 
     pages.append(page(f"""
-<div class="eyebrow">Chapter 14</div><h2>Shift: Grid FX routing and silent editing</h2>
-<p>Hold <strong>Shift</strong> on the FX track or on page 3 of the Mixer / Grid FX knobs (the sends page). Release Shift to return to the eight track sends. Shift + Play still opens scrub and takes priority.</p>
-{table(["Knob", "Control", "Light / default"], [
-        ["K1", "Reverb return into Grid FX. Full: all through Grid FX; 0: the return bypasses Grid FX.", "Native reverb-send green, dim to bright. Default: full."],
-        ["K2", "Delay return into Grid FX. Full: all through Grid FX; 0: the return bypasses Grid FX.", "Native delay-send pink, dim to bright. Default: full."],
-        ["K3", "Global Grid FX blend. Full: processed audio; 0: clean audio. Tracks and returns routed around Grid FX stay audible.", "Amber, dim to bright. Default: full."],
-        ["K4", "Sequencer-pad audition. Turn left to edit silently; right to hear held pads.", "Red: off. Green: on (default)."],
-        ["K5-K8", "Reserved for future master-filter sound controls.", "Dark and inactive."]])}
-<h3>Automation and saving</h3>
-<p>With an FX track enabled, K1-K3 record and play native automation on that track, from either view. The eight ordinary sends remain automatable too. Without an FX track, the three controls are saved global values. K4 is a manual setting saved with the project.</p>
-<h3>Silent editing</h3>
-<p>Audition off affects held pads on the sequencer track. It does not mute the sequenced effects, change their assignments, or prevent live performance from the Grid FX page. The global blend is independent: use it to fade the effects in or out while the music continues.</p>
-<h3>Clear and the lights</h3>
-<p>Hold Clear and turn left to minimum, or right to the default, using the stock 40-click threshold. Completing a turn clears that control's automation lane. K4's left/right choices are audition off/on. The knob colors stay visible while Clear is held; completion uses the native red/right-reset cues.</p>
-<p>Both returns and the global blend default to full, retaining the previous sound. Existing project sends and FX assignments are preserved.</p>"""))
+<div class="eyebrow">Chapter 14</div><h2>The FX track: page 2</h2>
+<p>On the FX track's view, press {DN} to show page 2. Press {UP} to go back to page 1 and the Grid FX pads. {DN} is amber while page 2 shows.
+Pads 1-16 are the steps on both pages.</p>
+{figure(fx_page2(), "Page 2: K1 (the reverb return) is chosen and uses track 1's lane. The blend uses track 3's lane. Audition is on.")}
+{table(["Control", "What it does"], [
+        ["K1", "Reverb return into Grid FX. Full: all of it goes through Grid FX; 0: it goes around Grid FX. Green."],
+        ["K2", "Delay return into Grid FX, as K1. Pink."],
+        ["K3", "Grid FX blend. Full: the effects; 0: no effects. Tracks and returns that go around Grid FX stay as they are. Amber."],
+        ["Pads 17-24", "The lanes of the FX track's K1-K8 (the sends of tracks 1-8). Tap one to give it to the chosen control."],
+        ["Pad 25", "The control that a lane pad gives a lane to, in its colour. Tap it for the next one: K1, K2, K3."],
+        ["Pad 32", "Audition. Green: you hear the Grid FX pads that you hold. Red: you edit with no sound. The steps' effects still play."]])}
+<p>K4-K8 and pads 26-31 are dark on page 2. All three controls are full by default.</p>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 14, continued</div><h2>Page 2: automate the controls</h2>
+<p>A control with no lane is a setting that the project saves. To automate it, give it one of the FX track's lanes:</p>
+<ol><li>Tap pad 25 until it shows the control's colour.</li>
+<li>Tap a pad from 17 to 24. The pad is bright in the control's colour: the control now uses that lane.</li>
+<li>Automate and lock as on any knob: arm Record and turn, or hold a step and turn.</li>
+<li>To give the lane back to its send, tap the bright pad again.</li></ol>
+{table(["Lane pad", "Meaning"], [
+        ["Bright, the chosen control's colour", "The chosen control's lane. Tap: the lane goes back to its send."],
+        ["Dim, another control's colour", "That control's lane. Tap: the chosen control takes it."],
+        ["Dim white", "A send. Tap: the chosen control takes it."]])}
+<p>A control has one lane at most. While a control has a lane, the lane's knob on page 1 still sets that track's send, but the send is
+not automated. When a control takes a lane, the lane's automation stays and moves the control. When a control gives a lane back, the
+control keeps its last value.</p>
+<p>The automation is in the project, in the FX track's lanes. The project also saves which lanes the controls use.
+Hold {CL} and turn a control until it stops: left sets 0, right sets full. With a lane, this also deletes the lane's automation. A track wipe of the FX track gives every lane back and sets the three controls to full.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 15</div><h2>The playhead scrub</h2>

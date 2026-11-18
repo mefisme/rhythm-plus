@@ -4,6 +4,8 @@ Not a firmware installer. Shared addresses and voice lifetime are experimental.
 Legacy mode uses private RAW. In-place mode writes the already-mixed native bank
 for the next voice quantum and acknowledges native snapshots even when disabled.
 """
+import os
+
 import core0
 import granular0 as G
 import granular_stock_controls as C
@@ -62,9 +64,12 @@ def code(in_place=False,grain_cap=None):
            'tst a',('jcc','ne','check_serial'),'btst #$0,x1',('jcc','cc','continue_voice'),
            ('label','check_serial'),
            f'move y:>${SEEN+1:x},a',f'move y:>${C.CONTROL+7:x},x1','cmp x1,a',('jcc','eq','continue_voice'),
-           ('label','restart'),'clr a',f'move #>${G.VS:x},r1',
+           ('label','restart'),'clr a',*(C.oneshot_clear() if os.environ.get('RH_GRANULAR_ONESHOT_SCAN') in ('1','2') else []),
+           f'move #>${G.VS:x},r1',
            f'do #${0x20+G.MAXG*G.GW:x},${{clear_grains:x}}','move a,x:(r1)+',('label','clear_grains'),
            ('label','continue_voice'),
+           *([f'move y:>${SEEN+1:x},a',f'move y:>${C.CONTROL+7:x},x1','cmp x1,a',('jcc','eq','os_same_note'),'clr a',
+              *C.oneshot_clear(),('label','os_same_note')] if os.environ.get('RH_GRANULAR_ONESHOT_SCAN')=='2' else []),
            f'move y:>${C.CONTROL+4:x},a',f'move a1,y:>${SEEN:x}',
            f'move y:>${C.CONTROL+7:x},a',f'move a1,y:>${SEEN+1:x}',
            f'move y:>${C.CONTROL+6:x},a',f'move a1,y:>${SEEN+2:x}',
