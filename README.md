@@ -83,7 +83,7 @@ You need Python 3.10 or newer and git.
 
    Some modules are C. They need zig 0.13: set `RH_ZIG` to the path of `zig.exe` (default `buildtmp/zig-toolchain/ziglang/zig.exe`). The DSP code needs `DSPTOOL` (see Tests).
 
-4. To install, `.venv/Scripts/python tools/make_uploader.py` makes a local installer page, `tools/uploader.html`, from your builds.
+4. To install, `.venv/Scripts/python tools/make_app.py` makes the Rhythm Plus app, `tools/rhythm_plus_app.html`, from your builds. Open it in Chrome or Edge: its Firmware page installs a build, and its Packs and Backup pages manage the SD card.
 
 #### Tests
 
@@ -110,12 +110,12 @@ Then rebuild and compare the SHA-256 with the manifests before you commit the ne
 
 | Folder | What it holds |
 |---|---|
-| `builds/` | One script for each version. |
+| `builds/` | The scripts for the stable and test builds, and the builds they start from. |
 | `modules/` | The features: each module adds its code to the firmware. |
 | `tests/` | The emulator tests. |
-| `tools/` | Setup, the manual and the installer page generators. |
+| `tools/` | Setup, and the tools that make the manual and the Rhythm Plus app. |
 | `manual/` | The user documentation. |
-| `firmware/` | Each version's `manifest.json`. The `.syx` / `.bin` files stay on your computer. |
+| `firmware/` | The `manifest.json` of the builds that the builds and tests use. The `.syx` / `.bin` files stay on your computer. |
 | `remix/` | Circuit Remix (submodule): its build tools are used by the builds. |
 
 ## License

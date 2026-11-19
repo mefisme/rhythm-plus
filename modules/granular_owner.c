@@ -39,6 +39,57 @@
 #ifndef G_SHIFT_TAP
 #define G_SHIFT_TAP 0
 #endif
+#ifndef G_LOAD_TIMES
+#define G_LOAD_TIMES 0
+#endif
+#ifndef G_LEAVE_QUEUE
+#define G_LEAVE_QUEUE 0
+#endif
+#ifndef G_REPLACE_ACK
+#define G_REPLACE_ACK 0
+#endif
+#ifndef G_LEAVE_FADE
+#define G_LEAVE_FADE 0
+#endif
+#ifndef G_ROUTE_SWEEP
+#define G_ROUTE_SWEEP 0
+#endif
+#ifndef G_CARRY
+#define G_CARRY 0
+#endif
+#ifndef G_SOFT_LEAVE
+#define G_SOFT_LEAVE 0
+#endif
+#ifndef G_KEEP_CHOKE
+#define G_KEEP_CHOKE 0
+#endif
+#ifndef G_LOAD_BUSY
+#define G_LOAD_BUSY 0
+#endif
+#ifndef G_STRETCH_HANDOFF
+#define G_STRETCH_HANDOFF 0
+#endif
+#if G_LEAVE_FADE
+#define GL (((volatile uint8_t *)state)[469])
+#define GL_AT (*(volatile uint16_t *)((volatile uint8_t *)state+470))
+#endif
+#if G_CARRY
+/* GD: fading tracks whose stock settings wait (the stock pending mask stays set); GC: tracks a project change carries. */
+#define GD (((volatile uint8_t *)state)[472])
+#define GC (((volatile uint8_t *)state)[473])
+#define GM (((volatile uint8_t *)state)[474])  /* carried tracks that were Texture (else Triggered) */
+#define GK (((volatile uint8_t *)state)[476])  /* carried tracks whose next stock source choke is dropped */
+#define GS (((volatile uint8_t *)state)[477])  /* stretched tracks fading out before Granular takes them */
+#define GH (((volatile uint8_t *)state)[478])  /* of those, tracks holding a note-on: owner stop_note = note | velocity << 8 */
+#define GS_AT (((volatile uint8_t *)state)[479])  /* the fade's start, ms & 255 */
+#define G_STOCK_PENDING (*(volatile uint8_t *)0x20006b50)
+#define G_STOCK_SENT(t) (((volatile uint8_t *)0x20006860)[16*(t)])  /* the sample last sent for track t */
+#define G_STOCK_VALUE(t,p) ((uint32_t(*)(uint32_t,uint32_t))0x08046411)((t)+16,(p))
+#define G_STOCK_REFRESH(t) ((void(*)(uint32_t))0x0803081d)(t)
+#define G_DUE(state,t) gr_refresh_due(state,t)
+#else
+#define G_DUE(state,t) ((void)0)
+#endif
 #ifndef G_LOAD_DIRECT
 #define G_LOAD_DIRECT 0
 #endif
@@ -94,7 +145,12 @@ uint32_t c_gr_owner_observe(GOwner *owner,uint32_t track,uint32_t consumer_epoch
      * and require actual idle, rather than applying over an old live voice.
      */
     (void)serial;
+#if G_REPLACE_ACK
+    /* A project change blocks new notes, so the epoch acknowledgement is enough: the old note fades out on its own. */
+    if(active && state->phase!=G_REPLACE) return 0;
+#else
     if(active) return 0;
+#endif
     state->mode=state->wanted;
     state->phase=state->phase==G_REPLACE?G_HELD:0;
     return G_APPLY|(state->mode==G_TEXTURE?G_START:0);
@@ -654,6 +710,10 @@ uint32_t c_gr_route_word(GRuntime *state,uint32_t track) {
     return track<8 && !G_ONESHOT_SCAN?(state->one_shot>>track)&1:0;
 }
 /* Sample mode's pad 17: Granular on (in its last mode) or off, as the editor's pad 17 sets it; on = ~0 only reads. 1: on. */
+#if G_STRETCH_HANDOFF
+/* 1: Granular fades this stretched track out; stretch leaves its words alone. */
+uint32_t c_gr_stretch_handoff(GRuntime *state,uint32_t track) { return track<8 && state->magic==GR_MAGIC && (GS>>track)&1; }
+#endif
 uint32_t c_gr_stretch_switch(GRuntime *state,uint32_t track,uint32_t on) {
     c_gr_runtime_init(state);
     if(track>=8) return 0;
@@ -750,12 +810,28 @@ static void gr_tempo_frame(GRuntime *state) {
     }
 }
 #if G_LOAD_DIRECT
+#if G_STRETCH && G_STRETCH_HANDOFF
+/* Stretch keeps a track's words until Granular takes it after the fade. */
+#define G_STRETCH_KEEPS(state,t) G_STRETCHED(t)
+#elif G_STRETCH && G_LOAD_DIRECT>=3
+/* Stretch keeps a track's route and words 0, 2 and 15 only while Granular does not want the track. */
+#define G_STRETCH_KEEPS(state,t) (G_STRETCHED(t) && !((state)->config[t]&3))
+#elif G_STRETCH
+#define G_STRETCH_KEEPS(state,t) G_STRETCHED(t)
+#endif
 /* The setup's next writes, at most budget: each track's route off with its epoch, then its pool fields. */
 static void gr_setup(GRuntime *state,uint32_t budget) {
     for(;budget && state->cursor<152;budget--,state->cursor++) {
         uint32_t track=state->cursor/19,index=state->cursor%19;
 #if G_STRETCH
-        if(G_STRETCHED(track) && (index<4 || index==5 || index==18)) continue;
+        if(G_STRETCH_KEEPS(state,track) && (index<4 || index==5 || index==18)) continue;
+#endif
+#if G_LEAVE_FADE
+        /* A fading track keeps its route and word 3, and all its words while the new project does not want it. */
+        if((GL&(1u<<track)) && (index==0 || index==2 || !(state->config[track]&3))) continue;
+#endif
+#if G_CARRY
+        if((GC&(1u<<track)) && (index==0 || index==2)) continue;
 #endif
         if(index==0) gr_write(GR_CONTROL+4*track,0);
         else if(index==1) gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
@@ -765,10 +841,123 @@ static void gr_setup(GRuntime *state,uint32_t budget) {
     if(state->cursor>=152) state->flags|=GR_INITIALIZED;
 }
 #endif
+#if G_LEAVE_FADE
+/* Tracks left sounding by a project change (bits at slot+469, the change's ms at slot+470): Granular keeps the route
+ * while the stopped note fades, so the plain sample stays unheard, and hands it back once the voice is idle, a note
+ * starts there, or G_LEAVE_FADE ms pass. */
+_Static_assert(G_REPLACE_ACK && sizeof(GRuntime)<=469,"the change goes on while the voice fades; the bytes sit past the readiness byte");
+static uint32_t gr_status_quiet(uint32_t status);
+#if G_CARRY
+_Static_assert(!G_LOAD_TIMES,"the carry bytes share slot+472 with the change timer");
+static void gr_refresh_due(GRuntime *state,uint32_t track) {
+    if(GD&(1u<<track)) { GD&=~(1u<<track);G_STOCK_REFRESH(track); }
+}
+/* The stock's per-track settings pass: a fading track keeps the old settings until it goes back. 1 = held. */
+uint32_t c_gr_runtime_refresh(GRuntime *state,uint32_t track) {
+    track&=7;
+    if(state->magic!=GR_MAGIC || !(GL&(1u<<track))) return 0;
+    GD|=1u<<track;return 1;
+}
+#endif
+static void gr_leave_back(GRuntime *state,uint32_t track) {
+    gr_write(GR_CONTROL+4*track,0);
+    gr_write(GR_CONTROL+4*track+3,!G_ONESHOT_SCAN);
+    for(uint32_t field=0;field<16;field++) gr_write(GR_POOL+256*track+field,gr_field(state,track,field));
+#if G_SOFT_LEAVE
+    GTrack *owner=&state->owner.track[track];
+    owner->epoch=(owner->epoch+1)&0xffffff;if(!owner->epoch) owner->epoch=1;
+    gr_write(GR_CONTROL+4*track+1,owner->epoch);
+#endif
+    GL&=~(1u<<track);
+    G_DUE(state,track);
+}
+static void gr_leave_frame(GRuntime *state) {
+    uint32_t leaving=GL;
+    if(!leaving) return;
+    uint32_t late=(uint16_t)(*(volatile uint32_t *)0x20000820-GL_AT)>=G_LEAVE_FADE;
+    for(uint32_t track=0;track<8;track++) if(leaving&(1u<<track)) {
+        const GTrack *owner=&state->owner.track[track];
+        /* Granular wants the track again, or stretch took it: their own paths own the route now. */
+        if((state->config[track]&3) || owner->mode!=G_OFF || owner->wanted!=G_OFF) { GL&=~(1u<<track);G_DUE(state,track);continue; }
+#if G_STRETCH
+        if(G_STRETCHED(track)) { GL&=~(1u<<track);G_DUE(state,track);continue; }
+#endif
+        if(late || gr_status_quiet(c_gr_shared_read(GR_SNAPSHOT+8*track))) gr_leave_back(state,track);
+    }
+}
+#endif
+#if G_STRETCH_HANDOFF
+enum { G_HANDOFF_MS=6,G_HANDOFF_CAP=20 };  /* the DSP's fade is 5.3 ms; the cap if the plain voice under stretch rings on */
+static void gr_handoff_take(GRuntime *state,uint32_t track,uint32_t transport) {
+    GTrack *owner=&state->owner.track[track];
+    uint32_t mode=state->config[track]&3,bit=1u<<track,held=GH&bit;
+    GS&=~bit;GH&=~bit;
+    if(!mode || owner->mode!=G_OFF || owner->phase) return;
+    gr_write(GR_CONTROL+4*track,0);
+    gr_write(GR_POOL+256*track,gr_field(state,track,0));
+    gr_write(GR_POOL+256*track+2,gr_field(state,track,2));
+    gr_write(GR_POOL+256*track+15,gr_field(state,track,15));
+    owner->mode=owner->wanted=(uint8_t)mode;
+    owner->settings=1|((state->config[track]>>2)&2);
+    uint32_t one_shot=(mode==G_TRIGGERED || !transport) && !gr_play_mode(track);
+    state->one_shot=(state->one_shot&~bit)|(one_shot?bit:0);
+    gr_write(GR_CONTROL+4*track+1,owner->epoch);
+    gr_write(GR_CONTROL+4*track+3,G_ONESHOT_SCAN?0:one_shot);
+    gr_write(GR_POOL+256*track+13,gr_field(state,track,13));
+    gr_write(GR_CONTROL+4*track,0x674e31);
+    if(held) ((void(*)(uint32_t,uint32_t,uint32_t))0x08040779)(track,owner->stop_note&0x7f,(owner->stop_note>>8)&0x7f);
+}
+static void gr_handoff_frame(GRuntime *state) {
+    uint32_t fading=GS;
+    if(!fading) return;
+    uint32_t waited=(uint8_t)(*(volatile uint32_t *)0x20000820-GS_AT);
+    if(waited<G_HANDOFF_MS) return;
+    uint32_t transport=gr_playing_now();
+    for(uint32_t track=0;track<8;track++) if(fading&(1u<<track)) {
+        if(waited<G_HANDOFF_CAP && !gr_status_quiet(c_gr_shared_read(GR_SNAPSHOT+8*track))) continue;
+        gr_handoff_take(state,track,transport);
+    }
+}
+#endif
+#if G_ROUTE_SWEEP
+/* One track a frame: a route left on the key while Granular and stretch are both off plays Granular on a plain track. */
+static void gr_route_sweep(GRuntime *state) {
+#if G_SOFT_LEAVE
+    /* The frame comes at a steady interval, so the clock alone could land on the same track every time. */
+    uint32_t track=((volatile uint8_t *)state)[475]&7;
+    ((volatile uint8_t *)state)[475]=(uint8_t)((track+1)&7);
+#else
+    uint32_t track=*(volatile uint32_t *)0x20000820&7;
+#endif
+    const GTrack *owner=&state->owner.track[track];
+    if((state->config[track]&3) || owner->mode!=G_OFF || owner->wanted!=G_OFF || owner->phase) return;
+#if G_STRETCH
+    if(G_STRETCHED(track)) return;
+#endif
+#if G_LEAVE_FADE
+    if(GL&(1u<<track)) return;
+#endif
+    if(c_gr_sample_read(GR_CONTROL+4*track)!=0x674e31) return;
+    gr_write(GR_CONTROL+4*track,0);
+    gr_write(GR_CONTROL+4*track+3,!G_ONESHOT_SCAN);
+}
+#endif
 void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
     c_gr_runtime_init(state);
     if(state->replace_depth) return;
     if(!ready) {
+#if G_LEAVE_FADE
+        GL=0;
+#endif
+#if G_CARRY
+        G_STOCK_PENDING|=GD;GD=GC=0;
+#endif
+#if G_KEEP_CHOKE
+        GK=0;
+#endif
+#if G_STRETCH_HANDOFF
+        GS=GH=0;
+#endif
         for(uint32_t track=0;track<8;track++) {
             GTrack *owner=&state->owner.track[track];
             if(state->flags&GR_READY) { owner->epoch=(owner->epoch+1)&0xffffff;if(!owner->epoch) owner->epoch=1; }
@@ -780,6 +969,15 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
     }
     if(uploading) return;
     state->flags|=GR_READY;
+#if G_LEAVE_FADE
+    gr_leave_frame(state);
+#endif
+#if G_STRETCH_HANDOFF
+    gr_handoff_frame(state);
+#endif
+#if G_ROUTE_SWEEP
+    gr_route_sweep(state);
+#endif
     if(!(state->flags&GR_INITIALIZED)) {
         if(!state->cursor) {
             uint32_t requested=0;
@@ -820,6 +1018,9 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
     for(uint32_t track=0;track<8;track++) {
         GTrack *owner=&state->owner.track[track];
         uint32_t bit=1u<<track;
+#if G_STRETCH_HANDOFF
+        if(GS&bit) continue;
+#endif
         owner->settings=1|((state->config[track]>>2)&2);
         uint32_t action=c_gr_owner_request(&state->owner,track,state->config[track]&3,0);
         if(action&G_STOP || state->pending&(1u<<track)) {
@@ -889,7 +1090,32 @@ void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
     }
 }
 uint32_t c_gr_runtime_message(GRuntime *state,uint32_t *packet,uint32_t caller) {
+#if G_LEAVE_FADE
+    if(state->magic!=GR_MAGIC) return 1;
+#if G_STRETCH_HANDOFF
+    if(GS&(1u<<(packet[0]&7))) {
+        uint32_t t=packet[0]&7,command=packet[0]&0xf00000;
+        /* note-on: word 0 velocity << 8, word 1 (note - 60) << 16; the take plays it */
+        if(command==0x900000) {
+            state->owner.track[t].stop_note=((((int32_t)packet[1]>>16)+60)&0x7f)|(packet[0]&0x7f00);
+            GH|=1u<<t;
+            return 0;
+        }
+        if(command==0x800000 && packet[1]==2 && GH&(1u<<t)) { GH&=~(1u<<t);return 0; }
+    }
+#endif
+#if G_KEEP_CHOKE
+    if(GK&(1u<<(packet[0]&7))) {
+        uint32_t command=packet[0]&0xf00000;
+        if(command==0x900000) GK&=~(1u<<(packet[0]&7));
+        else if(command==0x800000 && packet[1]==3 && caller==0x0804074a) { GK&=~(1u<<(packet[0]&7));return 0; }
+    }
+#endif
+    if((packet[0]&0xf00000)==0x900000 && GL&(1u<<(packet[0]&7))) gr_leave_back(state,packet[0]&7);
+    if(!(state->flags&GR_INITIALIZED)) return 1;
+#else
     if(state->magic!=GR_MAGIC || !(state->flags&GR_INITIALIZED)) return 1;
+#endif
     uint32_t track=packet[0]&7,command=packet[0]&0xf00000;
     uint32_t context=caller==0x080407be?G_PACKET_PRECHOKE:caller==0x0804074a?G_PACKET_SOURCECHOKE:G_PACKET_NORMAL;
     if(state->flags&GR_STARTING) context=G_PACKET_START;
@@ -922,8 +1148,14 @@ uint32_t c_gr_runtime_granular_busy(GRuntime *state,uint32_t track) {
     c_gr_runtime_init(state);
     if(track>=8)return 0;
     const GTrack *owner=&state->owner.track[track];
+#if G_LOAD_BUSY
+    /* A project change holds every track (G_REPLACE, G_HELD, G_PASSHELD); only a mode change in progress counts. */
+    return (state->config[track]&3)!=G_OFF || owner->mode!=G_OFF ||
+           owner->wanted!=G_OFF || owner->phase==G_QUIET;
+#else
     return (state->config[track]&3)!=G_OFF || owner->mode!=G_OFF ||
            owner->wanted!=G_OFF || owner->phase!=0;
+#endif
 }
 #if G_KNOB_PAGES
 /* Volatile, per-track editor layer. It is navigation, not a sound parameter,
@@ -1553,7 +1785,25 @@ uint32_t c_gr_runtime_settings_load(GRuntime *state,const uint8_t *b) {
     }
     return 1;
 }
+#if G_LOAD_DIRECT>=4
+enum { G_LEAVE_MS=G_LOAD_DIRECT>=5?5:20 };
+static uint32_t gr_status_quiet(uint32_t status);
+#endif
+#if G_LOAD_TIMES
+/* The last project change, at slot+472 (read over USB), in ms: [0] the leave wait, [1] the stop wait, [2..3] the stock load,
+ * [4] the sample loader wait; [5] flags: 1 Granular tracks left, 2 they stopped, 4 the loader was done, 8 the leave wait ran out,
+ * 16 Granular was set up; [6] a count of changes; [7] bits 8-15 of the last leave status. */
+_Static_assert(sizeof(GRuntime)<=469,"the times sit past the readiness byte");
+#define GT ((volatile uint8_t *)state+472)
+#define GT_LOAD (*(volatile uint16_t *)((volatile uint8_t *)state+474))
+#define GT_NOW (*(volatile uint32_t *)0x20000820)
+#define GT_MS(at,since) do { uint32_t d=GT_NOW-(since);GT[at]=(uint8_t)(d>255?255:d); } while(0)
+#endif
+#if G_CARRY
+uint32_t c_gr_runtime_begin_replace(GRuntime *state,uint32_t ready,uint32_t uploading,uint32_t apply) {
+#else
 uint32_t c_gr_runtime_begin_replace(GRuntime *state,uint32_t ready,uint32_t uploading) {
+#endif
     c_gr_runtime_init(state);
     if(state->replace_depth) { state->replace_depth++;return 1; }
     if(uploading) return 0;
@@ -1561,24 +1811,126 @@ uint32_t c_gr_runtime_begin_replace(GRuntime *state,uint32_t ready,uint32_t uplo
     /* Granular may never have been set up (no Granular track yet), which clears GR_READY below. */
     state->flags=ready?state->flags|GR_LOAD_READY:state->flags&~GR_LOAD_READY;
 #endif
+#if G_CARRY
+    /* A project change keeps a playing Texture track's note and epoch; after the load it plays on or fades out. */
+    uint32_t carry=0,old[8];
+    for(uint32_t track=0;track<8;track++) {
+        const GTrack *owner=&state->owner.track[track];
+        old[track]=owner->epoch;
+#if G_SOFT_LEAVE
+        /* Every Granular track: a new epoch or word 3 while it sounds drops its grains at once (a click). */
+        if(apply && ready && (state->flags&GR_INITIALIZED) && owner->mode!=G_OFF && !owner->phase) carry|=1u<<track;
+#else
+        if(apply && ready && (state->flags&GR_INITIALIZED) && owner->mode==G_TEXTURE && !owner->phase &&
+           !(owner->settings&2) && (state->running&state->playing&(1u<<track))) carry|=1u<<track;
+#endif
+    }
+#if G_SOFT_LEAVE
+    uint32_t texture=0;
+    for(uint32_t track=0;track<8;track++) if(state->owner.track[track].mode==G_TEXTURE) texture|=1u<<track;
+#endif
+#endif
     state->replace_depth=1;state->running=state->pending=0;state->tail=0;c_gr_ui_release(&state->ui);
     uint32_t owned=0;
     for(uint32_t track=0;track<8;track++) if(state->owner.track[track].mode!=G_OFF) owned|=1u<<track;
+#if G_LOAD_TIMES
+    uint32_t gt0=GT_NOW;
+    GT[0]=GT[1]=GT[4]=GT[7]=0;GT[5]=(owned?1:0)|(state->flags&GR_INITIALIZED?16:0);GT[6]++;GT_LOAD=(uint16_t)gt0;
+#endif
     c_gr_owner_quiesce(&state->owner);
     for(uint32_t track=0;track<8;track++) if(!(owned&(1u<<track))) state->owner.track[track].phase=G_PASSHELD;
+#if G_CARRY
+    for(uint32_t track=0;track<8;track++) if(carry&(1u<<track)) {
+        GTrack *owner=&state->owner.track[track];
+        owner->epoch=old[track];owner->wanted=G_TEXTURE;owner->phase=G_PASSHELD;
+    }
+#if G_SOFT_LEAVE
+    GM=(uint8_t)(carry&texture);
+#else
+    state->running|=carry;
+#endif
+    GC=(uint8_t)carry;owned&=~carry;
+#endif
     if(!ready || !(state->flags&GR_INITIALIZED)) {
         state->flags&=~(GR_INITIALIZED|GR_READY);
         for(uint32_t track=0;track<8;track++) {
             state->owner.track[track].mode=G_OFF;state->owner.track[track].phase=G_PASSHELD;
         }
+#if G_LOAD_TIMES
+        GT_LOAD=(uint16_t)GT_NOW;
+#endif
         return 1;
     }
-    for(uint32_t track=0;track<8;track++) if(owned&(1u<<track)) gr_invalidate(state,track);
-    for(uint32_t attempt=0;attempt<100;attempt++) {
-        for(uint32_t track=0;track<8;track++) c_gr_owner_poll(&state->owner,track,GR_SNAPSHOT+8*track,c_gr_shared_read);
-        if(c_gr_owner_held(&state->owner)) return 1;
+#if G_LEAVE_FADE
+    /* Word 3 = 1 lets the voice end check run, so the stopped note fades and ends while the route stays Granular's. */
+    for(uint32_t track=0;track<8;track++) if(owned&(1u<<track)) {
+        gr_write(GR_CONTROL+4*track+3,1);
+        gr_stop(track);
+        gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
+    }
+    state->running&=~owned;GL|=owned;GL_AT=(uint16_t)*(volatile uint32_t *)0x20000820;
+#elif G_LOAD_DIRECT>=4
+    /* A route handed back with its note on plays the plain sample for a moment: stop the notes while Granular
+     * still has the routes, and hand them back once the voices are idle (at most G_LEAVE_MS). */
+    for(uint32_t track=0;track<8;track++) if(owned&(1u<<track)) gr_stop(track);
+#if G_LEAVE_QUEUE
+    /* Core 1 takes the stock's messages once a block: its read index (Y:$307B6) reaching the ARM's write index
+     * (0x20006F38) means the stops arrived. At most G_LEAVE_QUEUE ms or 4096 reads. */
+    if(owned) {
+        uint32_t sent=*(volatile uint32_t *)0x20006f38&15,start=*(volatile uint32_t *)0x20000820,reads=0;
+        while((c_gr_sample_read(0x307b6)&15)!=sent) {
+            if(++reads>=4096 || *(volatile uint32_t *)0x20000820-start>=G_LEAVE_QUEUE) {
+#if G_LOAD_TIMES
+                GT[5]|=8;
+#endif
+                break;
+            }
+        }
+#if G_LOAD_TIMES
+        GT[7]=(uint8_t)(reads>255?255:reads);
+#endif
+    }
+#else
+    for(uint32_t wait=0;wait<G_LEAVE_MS;wait++) {
+        uint32_t sounding=0;
+        for(uint32_t track=0;track<8;track++) if(owned&(1u<<track)) {
+            uint32_t status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+            if(!status) status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+            if(!gr_status_quiet(status)) sounding=1;
+#if G_LOAD_TIMES
+            GT[7]=(uint8_t)(status>>8);
+#endif
+        }
+        if(!sounding) break;
+#if G_LOAD_TIMES
+        if(wait+1==G_LEAVE_MS) GT[5]|=8;
+#endif
         ((void(*)(uint32_t))0x08024151)(1);
     }
+#endif
+#if G_LOAD_TIMES
+    GT_MS(0,gt0);
+#endif
+#endif
+#if !G_LEAVE_FADE
+    for(uint32_t track=0;track<8;track++) if(owned&(1u<<track)) gr_invalidate(state,track);
+#endif
+#if G_LOAD_TIMES
+    uint32_t gt1=GT_NOW;
+#endif
+    for(uint32_t attempt=0;attempt<100;attempt++) {
+        for(uint32_t track=0;track<8;track++) c_gr_owner_poll(&state->owner,track,GR_SNAPSHOT+8*track,c_gr_shared_read);
+        if(c_gr_owner_held(&state->owner)) {
+#if G_LOAD_TIMES
+            GT_MS(1,gt1);GT[5]|=2;GT_LOAD=(uint16_t)GT_NOW;
+#endif
+            return 1;
+        }
+        ((void(*)(uint32_t))0x08024151)(1);
+    }
+#if G_LOAD_TIMES
+    GT_MS(1,gt1);
+#endif
     // Never replace memory on timeout. Restore ordinary stock operation with
     // granular routes disabled; the native caller receives its failure result.
     for(uint32_t track=0;track<8;track++) {
@@ -1620,6 +1972,30 @@ static void gr_load_direct(GRuntime *state) {
         if(!mode || owner->mode!=G_OFF || owner->phase) continue;
         uint32_t status=c_gr_shared_read(GR_SNAPSHOT+8*track);
         if(!status) status=c_gr_shared_read(GR_SNAPSHOT+8*track);
+#if G_LEAVE_FADE
+        if(GL&bit) { GL&=~bit;G_DUE(state,track); }
+        else
+#endif
+#if G_STRETCH && G_STRETCH_HANDOFF
+        /* Stretch's sound crossfades out (word 3 = 3) under the stock stop; the frame takes the track after it. */
+        if(G_STRETCHED(track)) {
+            if(!(GS&bit)) {
+                if(!GS) GS_AT=(uint8_t)*(volatile uint32_t *)0x20000820;
+                GS|=bit;
+                gr_write(GR_CONTROL+4*track+3,3);
+                gr_stop(track);
+            }
+            continue;
+        } else
+#elif G_STRETCH && G_LOAD_DIRECT>=3
+        /* A stretched track shows the route key; the load stopped its note, so Granular takes all its words now. */
+        if(G_STRETCHED(track)) {
+            gr_write(GR_CONTROL+4*track,0);
+            gr_write(GR_POOL+256*track,gr_field(state,track,0));
+            gr_write(GR_POOL+256*track+2,gr_field(state,track,2));
+            gr_write(GR_POOL+256*track+15,gr_field(state,track,15));
+        } else
+#endif
         if(!gr_status_quiet(status)) continue;
 #else
         if(!mode || owner->mode!=G_OFF || owner->phase || c_gr_shared_read(GR_SNAPSHOT+8*track)!=0x674732) continue;
@@ -1635,20 +2011,74 @@ static void gr_load_direct(GRuntime *state) {
     }
 }
 #endif
+#if G_CARRY
+/* The load reset every track. A carried track plays on when it stays Texture, without Retrigger, on the same sample;
+ * the setup then sends its new settings but keeps its route and word 3. Otherwise its note fades out. */
+static void gr_carry_end(GRuntime *state) {
+    uint32_t now=*(volatile uint32_t *)0x20000820;
+    for(uint32_t track=0;track<8;track++) if(GC&(1u<<track)) {
+        GTrack *owner=&state->owner.track[track];
+#if G_SOFT_LEAVE
+        uint32_t was=GM&(1u<<track)?G_TEXTURE:G_TRIGGERED;
+#if G_KEEP_CHOKE
+        if((state->config[track]&3)==was && (uint8_t)G_STOCK_VALUE(track,0)==G_STOCK_SENT(track)) {
+            /* The stock sends the sample again after the load, with a choke: the carried note keeps playing. */
+            GK|=1u<<track;
+#else
+        if((state->config[track]&3)==was && !(was==G_TEXTURE && (owner->settings&2)) &&
+           (uint8_t)G_STOCK_VALUE(track,0)==G_STOCK_SENT(track)) {
+#endif
+            owner->mode=owner->wanted=(uint8_t)was;owner->phase=0;
+            if(was==G_TEXTURE) state->running|=state->playing&(1u<<track);
+            continue;
+        }
+        GC&=~(1u<<track);
+        /* Only the stock stop: its fade ends the sound; the route, epoch and word 3 change once it is silent. */
+        gr_stop(track);
+#else
+        if((state->config[track]&3)==G_TEXTURE && !(owner->settings&2) &&
+           (uint8_t)G_STOCK_VALUE(track,0)==G_STOCK_SENT(track)) {
+            owner->mode=owner->wanted=G_TEXTURE;owner->phase=0;state->running|=1u<<track;
+            continue;
+        }
+        GC&=~(1u<<track);
+        gr_write(GR_CONTROL+4*track+3,1);
+        gr_stop(track);
+        owner->epoch=(owner->epoch+1)&0xffffff;if(!owner->epoch) owner->epoch=1;
+        gr_write(GR_CONTROL+4*track+1,owner->epoch);
+#endif
+        owner->mode=owner->wanted=G_OFF;state->running&=~(1u<<track);
+        GL|=1u<<track;GL_AT=(uint16_t)now;
+    }
+}
+#endif
 uint32_t c_gr_runtime_end_replace(GRuntime *state) {
     if(!state->replace_depth) return 0;
     if(state->replace_depth>1) { state->replace_depth--;return 1; }
+#if G_LOAD_TIMES
+    GT_LOAD=(uint16_t)(GT_NOW-GT_LOAD);
+    uint32_t gt2=GT_NOW;
+#endif
     if(state->flags&GR_READY) {
         uint32_t complete=0;
         for(uint32_t attempt=0;attempt<100;attempt++) {
             if(c_gr_shared_read(0x372fb)==0 && c_gr_shared_read(0x372fc)==0) { complete=1;break; }
             ((void(*)(uint32_t))0x08024151)(1);
         }
+#if G_LOAD_TIMES
+        GT_MS(4,gt2);if(complete) GT[5]|=4;
+#endif
         if(!complete) for(uint32_t track=0;track<8;track++) state->config[track]&=~3u;
     }
     state->replace_depth=0;
 #if G_LOAD_DIRECT
     uint32_t resumed=c_gr_owner_resume(&state->owner);
+#if G_CARRY
+    if(resumed) gr_carry_end(state);
+    if(resumed && (state->flags&GR_LOAD_READY)) gr_load_direct(state);
+    GC=0;
+    return resumed;
+#endif
 #if G_LOAD_DIRECT>=2
     if(resumed && (state->flags&GR_LOAD_READY)) gr_load_direct(state);
 #else

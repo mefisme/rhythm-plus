@@ -3,6 +3,7 @@ Granular's writer, the lights, the tempo, the reach of the whole sample or its K
 
     python tests/emu_stretch_arm.py STOCK.bin BUILT.bin RAM.bin
 """
+import json
 import os
 import struct
 import sys
@@ -234,6 +235,7 @@ def main():
 
     serial = SNAP_HOST + 8 * t + 7
     SNAP[serial] = 0x1D7
+    SNAP[SNAP_HOST + 8 * t] = 0x674E31                 # the note sounds
     pad(uc, 8)
     check("pad 9 again: off, the length kept", rec(uc, t)[1] == 4 | 1200 << 8, hex(rec(uc, t)[1]))
     tick(uc, 1000)
@@ -247,10 +249,25 @@ def main():
         out(uc)
         seen += [w for w in writes() if w[1] == t]
     check("off: the same note: nothing more, however long", seen == [], seen)
+    if json.loads((Path(sys.argv[2]).parent / "manifest.json").read_text())["report"]["granular"].get("stretch_drain_idle"):
+        SNAP[SNAP_HOST + 8 * t] = 0x674531
+        tick(uc, 9000)
+        out(uc)
+        back = [w for w in writes() if w[1] == t]
+        check("off, the voice silent: the route goes back at once, with no next note", (("c", 0), t, 0) in back and (("c", 3), t, 1) in back, back)
+        SNAP[SNAP_HOST + 8 * t] = 0x674E31
     pad(uc, 8)
     out(uc)
     check("on again while draining: the kept length (2 bars), all the words again, word 3 = 2",
           [w for w in writes() if w[1] == t] == on_words(t, 0, 192000), writes())
+    if json.loads((Path(sys.argv[2]).parent / "manifest.json").read_text())["report"]["granular"].get("stretch_handoff"):
+        uc.mem_write(GSTATE + 477, bytes([1 << t]))
+        seen = []
+        for _ in range(9):
+            out(uc)
+            seen += [w for w in writes() if w[1] == t]
+        uc.mem_write(GSTATE + 477, b"\0")
+        check("while Granular fades the track out to take it: stretch writes nothing to it", seen == [], seen)
     pad(uc, 8)
     out(uc)
     check("off again: the drain words again", [w for w in writes() if w[1] == t] == drain, writes())
@@ -341,7 +358,6 @@ def main():
           stretched >> t & 1 and not stretched >> o & 1 and flags() & 2, (hex(stretched), hex(flags())))
     check("its setup leaves the stretched track's route words and words 0, 2 and 15", not [x for x in w if x[1] == t and
           (x[0][0] == "c" or x[0][1] in (0, 2, 15))] and any(x[1] == t and x[0] == ("p", 1) for x in w), [x for x in w if x[1] == t])
-    import json
     word3 = 0 if json.loads((Path(sys.argv[2]).parent / "manifest.json").read_text())["report"]["granular"].get("oneshot_scan") else 1
     check("its setup writes another track's route words", ((("c", 3), 3, word3) in w) and ((("c", 0), 3, 0) in w), w[:12])
     SNAP.clear()

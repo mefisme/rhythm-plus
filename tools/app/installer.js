@@ -1,9 +1,9 @@
 "use strict";
 const PATCHES = __PATCHES__;
 const STOCK_SYX = "__STOCK_SYX__", STOCK_IMG = "__STOCK_IMG__";
-// [{v, kind: "stable" | "test", es, en}]; the first build is picked when the page opens.
+// [{v, kind: "stable" | "previous" | "test", es, en}]; the first build is picked when the page opens.
 const BUILDS = __BUILDS__;
-const KIND = { stable: ["Estable", "Stable"], test: ["En desarrollo", "In development"], official: ["Oficial", "Official"], custom: ["Personalizado", "Custom"] };
+const KIND = { stable: ["Estable", "Stable"], previous: ["Estable anterior", "Previous stable"], test: ["En desarrollo", "In development"], official: ["Oficial", "Official"], custom: ["Personalizado", "Custom"] };
 const NOV = [0xF0, 0x00, 0x20, 0x29, 0x00];
 const $ = id => document.getElementById(id);
 let LANG = (() => { const q = new URLSearchParams(location.search).get("lang"); if (q === "es" || q === "en") return q;

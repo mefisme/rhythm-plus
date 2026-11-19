@@ -5,12 +5,14 @@ import rhbuild
 import upguard
 
 APPLY,PACK,FREE,RESET,RECORD=0x080378c6,0x08053e24,0x08064460,0x08064416,0x0806446e
+REFRESH,REFRESH_CALL=0x0803081c,0x0802a0b8
 
 
 def install(img,report,base,persist=True,companion=False):
     kernel=report['granular']['arm_kernel']['labels'];bridge=report['granular']['bridge']
     state=int(bridge['labels']['c_gstate'],16);ready=int(bridge['labels']['c_gready'],16)
     uploader=int(report['upguard']['labels']['c_upw'],16)
+    carry='c_gr_runtime_refresh' in kernel
     assert all(rhbuild.bl_target(img,address)==uploader for address in upguard.CALLS)
     a=Asm(base);E=a.emit
     def call(name):E(bl,kernel['c_gr_'+name])
@@ -30,6 +32,7 @@ def install(img,report,base,persist=True,companion=False):
             E(mov_reg,0,4);E(ldr_sp,1,4);call('runtime_replace_needed');E(cmp_imm,0,0);E(b_cond,'record_pass','eq')
             a.label('record_guard')
         E(bl,ready);E(mov_reg,1,0);imm(2,int(bridge['upload'],16));E(ldrb_imm,2,2,0)
+        if carry:E(movs_imm,3,int(name=='apply'))
         E(mov_reg,0,4);call('runtime_begin_replace');E(cmp_imm,0,0);E(b_cond,name+'_fail','eq')
         for register in range(4):E(ldr_sp,register,register*4)
         E(bl,target);E(mov_reg,6,0)
@@ -43,6 +46,13 @@ def install(img,report,base,persist=True,companion=False):
         E(mov_reg,0,4);call('runtime_end_replace');E(mov_reg,0,6);finish()
         a.label(name+'_fail');E(movs_imm,0,0);finish()
         a.label(name+'_pass');tail(target)
+    if carry:
+        # The stock's per-track settings pass (0x0802A08A): Granular may hold a fading track's settings.
+        a.label('c_glrefresh');E(push_list,[0,1,2,3,4,5,6],lr=True)
+        E(bl,state);E(cmp_imm,0,0);E(b_cond,'refresh_pass','eq')
+        E(ldr_sp,1,0);call('runtime_refresh');E(cmp_imm,0,0);E(b_cond,'refresh_pass','eq')
+        finish()
+        a.label('refresh_pass');tail(REFRESH)
     a.label('apply_native');E(raw,bytes(img[APPLY-rhbuild.BASE:APPLY-rhbuild.BASE+4]));E(b_w,APPLY+4)
     a.label('pack_native');E(raw,bytes(img[PACK-rhbuild.BASE:PACK-rhbuild.BASE+2]));E(bl,0x08040e28);E(b_w,PACK+6)
     a.label('free_native');E(raw,bytes(img[FREE-rhbuild.BASE:FREE-rhbuild.BASE+2]));imm(2,0x372fc);E(b_w,FREE+4)
@@ -56,6 +66,7 @@ def install(img,report,base,persist=True,companion=False):
     rhbuild.patch(img,RESET,'push {r3, r4, r5, lr}|ldr r5, [pc, #0x16c]',b_w(RESET,labels['c_glreset']))
     rhbuild.patch(img,RECORD,'push {r3, r4, r5, lr}|movs r3, #1',b_w(RECORD,labels['c_glrecord']))
     for address in upguard.CALLS:rhbuild.patch(img,address,f'bl #{uploader:#x}',bl(address,labels['c_glupload']))
+    if carry:rhbuild.patch(img,REFRESH_CALL,f'bl #{REFRESH:#x}',bl(REFRESH_CALL,labels['c_glrefresh']))
     report['granular']['lifecycle']=dict(bytes=len(code),labels={name:hex(value) for name,value in labels.items()},
         apply=hex(APPLY),pack=hex(PACK),free=hex(FREE),reset=hex(RESET),record=hex(RECORD),uploads=[hex(address) for address in upguard.CALLS],previous_upload=hex(uploader),
         scope='Idle acknowledgement barrier before native project apply/pack allocator reset/sample upload; nested calls hold until outer completion')

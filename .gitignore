@@ -8,7 +8,6 @@ firmware/*/*.syx
 
 # Generated locally
 buildtmp/
-tools/uploader.html
 tools/rhythm_plus_app.html
 tools/rm_uploader.html
 

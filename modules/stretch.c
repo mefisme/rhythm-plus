@@ -251,6 +251,10 @@ static void dsp_frame(u32 bpm)
     S->round = (u8)(rt + 1);
     for (u32 t = 0; t < 8; t++) {
         u32 bit = 1u << t;
+#ifdef C_GHANDOFF
+        if (((u32 (*)(u32, u32))FN(C_GHANDOFF))(GSTATE, t))
+            continue;                       /* Granular fades the track out before it takes it */
+#endif
         if (BUSY(t)) {
             if (S->on & bit) {                  /* stretch's word 3 can land after Granular's: hand back Granular's value */
                 words_granular(t);
@@ -272,6 +276,16 @@ static void dsp_frame(u32 bpm)
             /* core 1's own reader stopped where the engine took the note: the engine ends the note at speed 1, and at
                the next note, with both readers at its start, core 1 fades back to its own */
             u16 now = (u16)R32(HAL_TICK), serial = (u16)SHARED_READ(SNAPSHOT + 8 * t + 7);
+#ifdef DRAIN_IDLE
+            /* a silent voice has no note to drain: on a track with no next note, draining would hold the route */
+            u32 voice = SHARED_READ(SNAPSHOT + 8 * t);
+            if ((voice == 0x674531u || voice == 0x674732u) && !(S->fading & bit)) {
+                DSP_WRITE(CONTROL + 4 * t, 0);
+                DSP_WRITE(CONTROL + 4 * t + 3, 1);
+                words_granular(t);
+                continue;
+            }
+#endif
             if (!((S->fading | S->draining) & bit)) {
                 DSP_WRITE(POOL + 256 * t + W_SPD, SPEED_ONE);
                 DSP_WRITE(POOL + 256 * t + W_TGT, 0);

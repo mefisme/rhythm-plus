@@ -44,6 +44,20 @@ if '--oneshot-scan' in sys.argv:os.environ['RH_GRANULAR_ONESHOT_SCAN']='1'
 if '--oneshot-scan2' in sys.argv:os.environ['RH_GRANULAR_ONESHOT_SCAN']='2'
 if '--load-direct' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='1'
 if '--load-direct2' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='2'
+if '--load-direct3' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='3'
+if '--load-direct4' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='4'
+if '--load-direct5' in sys.argv:os.environ['RH_GRANULAR_LOAD_DIRECT']='5'
+if '--load-times' in sys.argv:os.environ['RH_GRANULAR_LOAD_TIMES']='1'
+if '--leave-queue' in sys.argv:os.environ['RH_GRANULAR_LEAVE_QUEUE']='3'
+if '--replace-ack' in sys.argv:os.environ['RH_GRANULAR_REPLACE_ACK']='1'
+if '--leave-fade' in sys.argv:os.environ['RH_GRANULAR_LEAVE_FADE']='200'
+if '--route-sweep' in sys.argv:os.environ['RH_GRANULAR_ROUTE_SWEEP']='1'
+if '--carry' in sys.argv:os.environ['RH_GRANULAR_CARRY']='1'
+if '--soft-leave' in sys.argv:os.environ['RH_GRANULAR_SOFT_LEAVE']='1'
+if '--keep-choke' in sys.argv:os.environ['RH_GRANULAR_KEEP_CHOKE']='1'
+if '--load-busy' in sys.argv:os.environ['RH_GRANULAR_LOAD_BUSY']='1'
+if '--drain-idle' in sys.argv:os.environ['RH_STRETCH_DRAIN_IDLE']='1'
+if '--stretch-handoff' in sys.argv:os.environ['RH_GRANULAR_STRETCH_HANDOFF']='1'
 if SHIFT_TAP:os.environ['RH_TPE_REVERSE_CYCLE']='1'
 if ZONE_PADS:os.environ['RH_GRANULAR_SLICE_WORD7']='1'
 if EASY_ZONES:os.environ['RH_GRANULAR_SLICE_SCATTER']='1'
@@ -124,14 +138,26 @@ def main():
     if STOCK_BAR:g['ui']['stock_bar']=True
     if FULL_FREEZE:g['full_freeze']=True
     if os.environ.get('RH_GRANULAR_ONESHOT_SCAN') in ('1','2'):g['oneshot_scan']=True
+    if os.environ.get('RH_GRANULAR_LEAVE_QUEUE'):g['leave_queue_ms']=int(os.environ['RH_GRANULAR_LEAVE_QUEUE'])
+    if os.environ.get('RH_GRANULAR_REPLACE_ACK')=='1':g['replace_ack']=True
+    if os.environ.get('RH_GRANULAR_LEAVE_FADE'):g['leave_fade_ms']=int(os.environ['RH_GRANULAR_LEAVE_FADE'])
+    if os.environ.get('RH_GRANULAR_ROUTE_SWEEP')=='1':g['route_sweep']=True
+    if os.environ.get('RH_GRANULAR_CARRY')=='1':g['carry']=True
+    if os.environ.get('RH_GRANULAR_SOFT_LEAVE')=='1':g['soft_leave']=True
+    if os.environ.get('RH_GRANULAR_KEEP_CHOKE')=='1':g['keep_choke']=True
+    if os.environ.get('RH_GRANULAR_LOAD_BUSY')=='1':g['load_busy']=True
+    if os.environ.get('RH_STRETCH_DRAIN_IDLE')=='1':g['stretch_drain_idle']=True
+    if os.environ.get('RH_GRANULAR_STRETCH_HANDOFF')=='1':g['stretch_handoff']=True
+    if os.environ.get('RH_GRANULAR_LOAD_TIMES')=='1':g['load_times']=dict(at=hex(int(b.report['granular']['bridge']['slot'],16)+472),bytes=8)
     if os.environ.get('RH_GRANULAR_LOAD_DIRECT'):g['load_direct']=True if os.environ['RH_GRANULAR_LOAD_DIRECT']=='1' else int(os.environ['RH_GRANULAR_LOAD_DIRECT'])
     if STICKY_ASSIGN:g['ui']['sticky_assign']=True
     if ZONE_PADS:g['easy_zones'].update(slices=[0]*8+[2]*8+[n for n in (3,4,6,8,12,16,32) for _ in range(16)],slice_word=7,zone_pads=True)
     if TRIM_UNUSED:b.report['unused_code_trim']=dict(policy='preserve exposed adapters; discard unreachable helpers',reference='A0204',recovered_bytes=1328)
     if '--release' in sys.argv:
-        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232','a0233','a0234','a0235','a0236','a0237','a0238','a0239','a0240','a0241','a0242','a0243') and BASE=='a0192' and CONNECT and PAGES and STORE
-        out=b.finish(ROOT/'firmware'/NAME)
+        assert NAME in ('a0193','a0194','a0195','a0196','a0197','a0198','a0199','a0200','a0201','a0202','a0203','a0204','a0205','a0206','a0207','a0208','a0209','a0210','a0211','a0212','a0213','a0214','a0215','a0216','a0217','a0218','a0219','a0220','a0221','a0222','a0223','a0224','a0225','a0226','a0227','a0228','a0229','a0230','a0231','a0232','a0233','a0234','a0235','a0236','a0237','a0238','a0239','a0240','a0241','a0242','a0243','a0244','a0245','a0246','a0247','a0248','a0249','a0250','a0251','a0252','a0253','a0254','a0255','a0256') and BASE=='a0192' and CONNECT and PAGES and STORE
+        out=b.finish(ROOT/'buildtmp'/'release'/NAME)
         for f in out.glob(f'circuitrhythm-5706-{NAME.upper()}.*'):f.replace(out/f'rhythmplus-{NAME.upper()}{f.suffix}')
+        keep_released(out,ROOT/'firmware'/NAME)
         return
     folder=ROOT/'firmware'/NAME;folder.mkdir(exist_ok=True)
     raw=bytes(b.img);(folder/f'rhythmplus-{NAME.upper()}.bin').write_bytes(raw)
@@ -139,4 +165,14 @@ def main():
         image_sha256=hashlib.sha256(raw).hexdigest(),free_to_0x70000=hex(0x70000-len(raw)),report=b.report)
     (folder/'manifest.json').write_text(json.dumps(m,indent=2)+'\n')
     print(json.dumps({k:v for k,v in m.items() if k!='report'},indent=2))
+def keep_released(out,folder):
+    """A committed build is never replaced by a different image: its folder changes only when the image is the same."""
+    import subprocess
+    new=json.loads((out/'manifest.json').read_text())['image_sha256']
+    shown=subprocess.run(['git','show',f'HEAD:firmware/{folder.name}/manifest.json'],cwd=ROOT,capture_output=True,text=True)
+    if shown.returncode==0:
+        old=json.loads(shown.stdout)['image_sha256']
+        if old!=new:raise SystemExit(f'{folder.name} is released and this image differs ({new[:16]} != {old[:16]}); firmware/{folder.name} is unchanged, the new build is in {out}')
+    folder.mkdir(parents=True,exist_ok=True)
+    for f in out.iterdir():f.replace(folder/f.name)
 if __name__=='__main__':main()
