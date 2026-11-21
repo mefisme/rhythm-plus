@@ -106,7 +106,7 @@ def install(img, report, base_addr, route=None):
         at = int(report[mod]["labels"][lab], 16) + off
         rhbuild.patch(img, at, f"bl #{WR16:#x}", bl(at, labels["c_dspw"]))
         sites.append(hex(at))
-    assert sites, "no DSP writer"
+    assert sites or "endfade" in report, "no DSP writer"
     report["upguard"] = dict(flag=hex(flag()), labels={k: hex(v) for k, v in labels.items() if k.startswith("c_")},
                              calls=[hex(x) for x in CALLS], writers=sites,
                              **({"route": [[[hex(x), hex(y)] for x, y in r] for r in route]} if route else {}))

@@ -122,9 +122,9 @@ def main():
     st, _ = send(0x20, 8); assert st == BUSY, "before the first frame sets up the private memory"
     call(u, L["c_sh_out"], 0, 0x2000b800, 0, 0)                   # one LED frame: ready() sets the guards up
     st, r = send(0x20, 8)
-    ok(st, "info"); assert un32(r, 14) == 1
+    ok(st, "info"); assert un32(r, 14) in (1, 2, 3)
     n = r[22]; assert bytes(r[23:23 + n]) == b"1:/Rhythm/07_Beats/Sessions/", bytes(r[23:23 + n])
-    print("PASS info: version 1 and the pack's Sessions folder")
+    print("PASS info: the version and the pack's Sessions folder")
 
     body = bytes((i * 37 + 11) & 255 for i in range(150))
     name = b"RP_05_Intro Groove_DEADBEEF.rps"
@@ -188,6 +188,60 @@ def main():
     st, _ = send(0x21, 5, b"", nib32(0)); assert st == NOPACK
     print("PASS refused: paths, project files, wrong suffix or digits, a pack name in RP_AUTO, a missing pack")
 
+    if "filetools" in report:
+        SESS, AT = 0x29484, 0x29110 + 276
+        def project(path, key, size=150):
+            b = bytearray(SESS); b[:4] = b"RUSE"; b[12] = 10; b[16:48] = path.rsplit("_", 1)[-1][:-4].encode().ljust(32)
+            if key: b[AT:AT + 12] = b"SO\x04\x01" + struct.pack("<II", key, size)
+            disk[path] = b
+        A, B = "1:/Rhythm/07_Beats/Sessions/", "1:/Rhythm/26_Other Pack/Sessions/"
+        project(A + "06_Groove.ncs", 0x0BADC0DE); disk[A + "RP_06_Groove_0BADC0DE.rps"] = bytearray(body)
+        project(A + "04_Stock.ncs", 0)
+        st, r = send(0x28, 8, b"", bytes((6,))); ok(st, "meta")
+        m = bytes(((r[22 + 2 * i] & 15) << 4) | (r[23 + 2 * i] & 15) for i in range(20))
+        assert un32(r, 14) == SESS and m[:12] == b"SO\x04\x01" + struct.pack("<II", 0x0BADC0DE, 150), m
+        st, _ = send(0x28, 8, b"", bytes((7,))); assert st == 4
+        st, v = send(0x20, 0, b"", b""); ok(st, "info")
+        if un32(v, 14) == 2:
+            assert (((r[62] & 15) << 4) | (r[63] & 15)) == 10, r[62:64]
+            print("PASS project meta, version 2: the project's colour after the Plus bytes")
+        if un32(v, 14) >= 3:
+            h = bytes(((r[62 + 2 * i] & 15) << 4) | (r[63 + 2 * i] & 15) for i in range(48))
+            assert h[:4] == b"RUSE" and h[12] == 10 and h[16:48] == b"Groove".ljust(32), h
+            print("PASS project meta, version 3: the project's first 48 bytes (header, colour, name) after the Plus bytes")
+        print("PASS project meta: a slot's size and Plus bytes; an empty slot is 4")
+        st, r = send(0x29, 8, b"", bytes((6, 27, 3, 0))); ok(st, "slot copy")
+        assert un32(r, 14) == 1 and disk[B + "RP_03_0BADC0DE.rps"] == body
+        project(B + "03_Groove.ncs", 0x0BADC0DE); disk[B + "RP_03_Old_11111111.rps"] = bytearray(b"old")
+        st, _ = send(0x29, 8, b"", bytes((6, 27, 3, 1))); ok(st, "slot drop")
+        assert B + "RP_03_Old_11111111.rps" not in disk and B + "RP_03_0BADC0DE.rps" in disk
+        print("PASS a project copy's Plus file: to the other pack under the new slot, then the slot's older files deleted")
+        st, r = send(0x29, 8, b"", bytes((4, 27, 5, 0))); ok(st, "stock project"); assert un32(r, 14) == 0
+        st, r = send(0x29, 0, b"", bytes((4, 27, 5, 0))); ok(st, "internal pack"); assert un32(r, 14) == 0
+        project(A + "09_Lost.ncs", 0x01234567)
+        st, _ = send(0x29, 8, b"", bytes((9, 27, 6, 0))); assert st == 4 and not any("RP_06_" in k for k in disk if k.startswith(B))
+        send(0x23, 0, b"01234567.RPS", nib32(0) + b"\x02\x07\x07\x08\x08"); disk["1:/RP_AUTO/01234567.RPS"] = bytearray(b"auto")
+        st, r = send(0x29, 8, b"", bytes((9, 27, 6, 0))); ok(st, "from RP_AUTO"); assert disk[B + "RP_06_01234567.rps"] == b"auto"
+        print("PASS no Plus file to copy: a stock project or the internal pack; a missing file is 4 and writes nothing; RP_AUTO's copy is found")
+        COPY = 0x0804143e
+        result = [0]
+        u.hook_add(UC_HOOK_CODE, lambda uc, a, n, d: ret(result[0]), None, COPY, COPY + 1)
+        for k in [k for k in disk if k.startswith(B)]: del disk[k]
+        ours = sorted(k[len(A):] for k in disk if k.startswith(A) and k[len(A):].startswith("RP_") and k.endswith(".rps"))
+        ITEMS = 0x2000b600
+        def packcopy(kind, a_, b_):
+            u.mem_write(ITEMS, struct.pack("<3I3I", kind, 0, a_, kind, 0, b_)); w(STACK + 0xF0000, 0)
+            call(u, L["c_sh_packcopy"], ITEMS, ITEMS + 12, 0, 0)
+            return u.reg_read(UC_ARM_REG_R0)
+        result[0] = 2
+        assert packcopy(1, 8, 27) == 2 and not any(k.startswith(B) for k in disk), "a failed stock copy: nothing follows"
+        result[0] = 0
+        assert packcopy(2, 8, 27) == 0 and not any(k.startswith(B) for k in disk), "one item: nothing follows"
+        assert packcopy(1, 0, 27) == 0 and not any(k.startswith(B) for k in disk), "from the internal pack: no Plus files"
+        assert packcopy(1, 8, 27) == 0
+        got = sorted(k[len(B):] for k in disk if k.startswith(B))
+        assert got == ours and all(disk[B + n] == disk[A + n] for n in ours), (got, ours)
+        print(f"PASS pack duplicate: the stock's copy, then the pack's {len(ours)} Plus files with it; nothing after a failed copy, one item or the internal pack")
     w(slot + 4, 1)                                                 # m[ACTIVE]: a project load or save under way
     st, _ = send(0x21, 8, b"", nib32(0)); assert st == BUSY
     w(slot + 4, 0)

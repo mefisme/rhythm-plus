@@ -54,7 +54,7 @@ def main():
         rep = json.loads((d / "manifest.json").read_text())["report"]
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))
-        fs = rep["smswitch"] if "smswitch" in rep else rep["fshape"]
+        fs = rep.get("smswitch") or rep.get("endfade") or rep["fshape"]
         smf = int(fs["smf"], 16) if fs.get("sm") else None
         ef = 4
         for name, mode, fetch, zero in CASES:

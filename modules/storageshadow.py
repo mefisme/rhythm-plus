@@ -14,6 +14,7 @@ HOOKS=((0x08037366,'apply','push.w {r3, r4, r5, r6, r7, r8, sb, sl, fp, lr}'),
        (0x08022e98,'read','push {r3, r4, r5, r6, r7, lr}|mov r4, r0'),
        (0x08022efc,'write','push {r3, r4, r5, r6, r7, lr}|mov r7, r0'))
 # The stock delete request's pack and project deletes: our wrappers also remove the Plus files.
+PACK_COPY=0x0802af64                                 # the storage task's copy request: its one top-level call of the item copy
 DELETE_CALLS=((0x080413c2,'packdelete',0x0802e938),(0x08041428,'itemdelete',0x0802e8e4))
 
 
@@ -45,6 +46,16 @@ def install(img,report,base_addr,offload=False,automation=False):
     if plus_usb:
         assert pack_files==2 and report['rdiag'].get('plus_usb')
         defs['PLUS_USB']=1
+    file_tools=os.environ.get('RH_FILETOOLS')=='1'
+    if file_tools:
+        assert plus_usb
+        defs['FILE_TOOLS']=1
+    if os.environ.get('RH_PX_COLOUR')=='1':
+        assert file_tools
+        defs['PX_COLOUR']=1
+    if os.environ.get('RH_PX_NAME')=='1':
+        assert defs.get('PX_COLOUR')
+        defs['PX_PROJHEAD']=1
     if cow and not no_a3:
         for name in ('bankfilesize','bankfile','banksnapshot','bankrelease','bankimport','bankmaintain'):
             defs['A3_'+name.upper()]=int(report['automation3']['labels']['c_a3_'+name],16)
@@ -63,6 +74,7 @@ def install(img,report,base_addr,offload=False,automation=False):
     source.write_bytes((ROOT/'modules/projectfile.c').read_bytes()+b'\n'+implementation.read_bytes())
     need=tuple('c_sh_'+name for _,name,_ in hooks)+('c_sh_out', 'c_sh_block' if offload else 'c_sh_complete')
     if pack_files:need+=tuple('c_sh_'+name for _,name,_ in DELETE_CALLS)
+    if file_tools:need+=('c_sh_packcopy',)
     if plus_usb:need+=('c_sh_pxmidi',)
     code,labels=compile_c(base_addr+len(prefix),defs,src=source,name='storageshadow',
                           prefix='c_sh_',need=need,max_code=0x3000)
@@ -83,6 +95,7 @@ def install(img,report,base_addr,offload=False,automation=False):
         img[ext-rhbuild.BASE:ext-rhbuild.BASE+4]=b_w(ext,labels['c_sh_pxmidi'])
     if pack_files:
         for addr,name,target in DELETE_CALLS:rhbuild.patch(img,addr,f'bl #{target:#x}',bl(addr,labels['c_sh_'+name]))
+    if file_tools:rhbuild.patch(img,PACK_COPY,'bl #0x804143e',bl(PACK_COPY,labels['c_sh_packcopy']))
     report['storageshadow']=dict(slot=hex(slot),bytes=1024,fil=hex(0x400),fil_bytes=4136,
         prev_out=hex(defs['PREV_OUT']),
         bounce=hex(slot+512),offload=offload,native_settings_authoritative=not offload,
@@ -99,4 +112,7 @@ def install(img,report,base_addr,offload=False,automation=False):
     if plus_usb:report['storageshadow'].update(plus_usb=dict(commands='0x20 info, 0x21 list, 0x22 read, 0x23 write, 0x24 delete, 0x25 crc, 0x26 rename, 0x27 copy',
         version=1,max_chunk=64,item_kind='0x58555052',content_read='0x8046054',lseek='0x80223d8'))
     if pack_files==2:report['storageshadow'].update(pack_files=2,directory='<pack>/Sessions/RP_<slot>_<name>_<key>.rps; deletes move to 1:/RP_AUTO; Shift + Save accepts defaults')
+    if file_tools:
+        report['storageshadow']['plus_usb']['commands']+=', 0x28 project meta, 0x29 project copy'
+        report['storageshadow']['pack_copy']=hex(PACK_COPY)
     return labels,code

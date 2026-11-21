@@ -19,8 +19,11 @@ OUT = HERE / "tools" / "rhythm_plus_app.html"
 # Keep descriptions short: included features and key fixes; controls belong in the manual.
 BUILDS = (
     ("A0256", "stable", HERE / "firmware" / "a0256",
-     "A0213 con time stretch (modo Sample, pads 9-17), Clear + pista, los ajustes de Rhythm Plus junto a cada proyecto, página 2 de la pista FX y archivos de Rhythm Plus por USB. Granular One Shot sigue el Scan; Granular suena al momento tras cualquier cambio de proyecto, sin chasquidos. Sin Drone. Cambio de proyecto rápido; Granular sigue sonando al recargar con la misma muestra, también con Retrigger, y se apaga sin chasquido al salir; ninguna pista suena a Granular sin tenerlo activado; un loop con stretch sigue sonando al cambiar de proyecto y pasa a Granular con un fundido.",
-     "A0213 with time stretch (Sample mode pads 9-17), Clear + track, Rhythm Plus settings next to each project, FX track page 2 and Rhythm Plus files over USB. Granular One Shot follows the Scan; Granular plays at once after any project change, with no clicks. No Drone. Fast project change; Granular plays straight through a reload on the same sample, Retrigger too, and fades out when you leave; no track sounds Granular unless it is turned on; a stretched loop plays on through a project change and fades into Granular."),
+     "A0213 con time stretch (modo Sample, pads 9-17), Clear + pista, ajustes Plus junto a cada proyecto y archivos Plus por USB. Cambios de proyecto rápidos y sin chasquidos con Granular y stretch.",
+     "A0213 with time stretch (Sample mode pads 9-17), Clear + track, Plus settings next to each project and Plus files over USB. Fast project changes with no clicks from Granular or stretch."),
+    ("A276", "test", HERE / "firmware" / "a276",
+     "Copia proyectos y muestras, y borra packs, en la unidad. Sin Easy Start. Granular: sin blip al cambiar de modo, Scan centrado en 63-65, los pads de largo de Scan a tiempo con el reloj, también por muestra.",
+     "Copy projects and samples, and delete packs, on the unit. No Easy Start. Granular: no blip on mode changes, Scan centred at 63-65, and the Scan length pads in time with the clock, per sample too."),
 )
 
 INSTALLER = APP / "installer.js"

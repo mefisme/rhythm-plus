@@ -64,6 +64,7 @@ POOLED = {"countin", "vismet", "clkci", "smswitch", "pageclear", "smpads", "tmen
 
 
 def build(name=NAME, *, granular_stage=False):
+    sm_stock = os.environ.get("RH_SM_STOCK") == "1"
     smswitch.strip()
     b = rhbuild.Build(name)
     add = b.add
@@ -85,17 +86,21 @@ def build(name=NAME, *, granular_stage=False):
     b.add("stepload", stepload)
     b.add("cthresh", dspready)                    # the DSP's READY byte under cthresh's name
     b.add("rhrec", rhrec)
-    b.add("pitchmod", pitchmod, **PITCHMOD)
-    b.add("smswitch", smswitch)
+    b.add("pitchmod", pitchmod, **({k: v for k, v in PITCHMOD.items() if k != "loopxf"} if sm_stock else PITCHMOD))
+    if sm_stock:
+        b.add("endfade", smswitch.EndFade)
+    else:
+        b.add("smswitch", smswitch)
     b.add("pageclear", pageclear, viewsync=True, stockonly=True, allreset=False)
-    b.add("smpads", smpads, sm=3)
+    b.add("smpads", smpads, sm=0 if sm_stock else 3)
     b.add("tmenu", tmenu, **TMENU)
     b.add("trackreset", trackreset, viewsync=True, softclear=True)
     b.add("mutset", mutset, **MUTSET)
     b.add("stepmut", stepmut)
     b.add("gfxmix", gfxmix)
     b.add("upguard", upguard)
-    b.add("pvloop", pvloop)
+    if os.environ.get("RH_NO_PVLOOP") != "1":
+        b.add("pvloop", pvloop)
     b.add("rdiag", diagread)
     forbidden = {"acdiag", "dsdiag", "autoprot", "autobank", "stockplus", "pshape", "fshape", "c0fx", "granular", "errled"}
     if granular_stage:forbidden.remove('granular')

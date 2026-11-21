@@ -1,9 +1,9 @@
-"""Writes manual/rhythm_plus_manual.html: Pattern Mutate, Step Mutate, the Track Parameter Editor and the Sample mode switches (A4 pages, pad drawings in the unit's colours).
+"""Writes manual/rhythm_plus_manual.html: Pattern Mutate, Step Mutate, the Track Parameter Editor and Sample mode (A4 pages, pad drawings in the unit's colours).
 Print it to PDF with:  chrome --headless --print-to-pdf=manual/rhythm_plus_manual.pdf manual/rhythm_plus_manual.html"""
 from html import escape
 from pathlib import Path
 
-FIRMWARE = "A0238"
+FIRMWARE = "A276"
 OUT = Path(__file__).resolve().parents[1] / "manual" / "rhythm_plus_manual.html"
 
 GRAD = ["ffc866", "ffd966", "fff766", "e5ff66", "c7ff66", "a6ff66", "87ff66", "66ff66"]   # the probability page's colours
@@ -281,7 +281,7 @@ def build():
     pages.append(page(f"""
 <div class="mast"><div class="eyebrow">Rhythm Plus firmware {FIRMWARE} · Circuit Rhythm</div>
 <h1>Pattern Mutate, Step Mutate<br>and the Track Parameter Editor</h1>
-<p>New ways to vary your patterns, a full view of each track's knobs, and three switches for each track's sample. This manual
+<p>New ways to vary your patterns, a full view of each track's knobs, and time stretch for each track's sample. This manual
 shows every control and light.</p></div>
 <h3>Contents</h3>
 <ul class="toc">
@@ -295,17 +295,18 @@ shows every control and light.</p></div>
 <li><span>8 · The Step Mutate targets</span><span>9</span></li>
 <li><span>9 · The Track Parameter Editor</span><span>12</span></li>
 <li><span>10 · The knobs: view, automate and lock</span><span>13</span></li>
-<li><span>11 · The Sample mode switches</span><span>14</span></li>
+<li><span>11 · Sample mode</span><span>14</span></li>
 <li><span>12 · Resetting knobs and tracks</span><span>15-16</span></li>
 <li><span>13 · Grid FX sends</span><span>17</span></li>
-<li><span>14 · The FX track and Shift controls</span><span>18-20</span></li>
-<li><span>15 · The playhead scrub</span><span>21</span></li>
+<li><span>14 · The FX track and Shift controls</span><span>18-21</span></li>
+<li><span>15 · The playhead scrub</span><span>22</span></li>
+<li><span>16 · Copying projects and samples, deleting packs</span><span>23-24</span></li>
 </ul>
 <div class="note">The drawings show the pads and buttons of the Circuit Rhythm as a plan, not to scale. The colours are close to the colours
 on the unit; on the unit, a dim pad is darker than it is on paper.</div>
 <div class="note">Rhythm Plus saves some project settings in a small file next to the project, in the pack's Sessions folder. Its
 name starts with RP_, the same number and the project's name: <b>RP_05_MyBeat_…rps</b> goes with <b>05_MyBeat.ncs</b>. When you copy a
-project on a computer, copy its RP_ file too. If the file is missing, Save flashes red and does not save. Hold {SH} and press Save
+project on a computer, copy its RP_ file too. A project copy made on the unit (chapter 16) and a pack copy with Duplicate take the RP_ files with them. If the file is missing, Save flashes red and does not save. Hold {SH} and press Save
 to save the project with the default Rhythm Plus settings.</div>""", "cover"))
 
     pages.append(page(f"""
@@ -578,23 +579,23 @@ on the held step, the bar shows the step's value.</p>
 <p>While Record is armed and you turn a knob, the bar is red. While you hold a step with Record armed, the step's pad is red.</p>"""))
 
     pages.append(page(f"""
-<div class="eyebrow">Chapter 11</div><h2>The Sample mode switches</h2>
-<p>Press Samples two times to open Sample mode. Pads 19 and 21 are two switches for the selected track. Tap a pad to turn its
-switch on or off. Pad 20 is dark and does nothing. A switch that is on has the stock's chosen colour; a switch that is off has the not chosen colour.</p>
-{table(["Pad", "Switch", "Default", "What it does"], [
-        ["19", "Loop crossfade", "Off", "In Loop mode, the end of the loop fades into its start, so the loop point does not click."],
-        ["21", "End fade", "On", "On: the sound fades out at the end of the sample, as on the stock unit. Off: no fade; the sample plays to its last sample."]])}
-<p>Each track keeps its own switches. The project saves them. A project from an earlier firmware opens with the defaults.</p>
+<div class="eyebrow">Chapter 11</div><h2>Sample mode</h2>
+<p>Press Samples two times to open Sample mode. It shows the selected track's sample settings.</p>
+<p>A sample in One Shot or Gated mode fades out at its end, as on the stock unit. A looped sample plays through its loop point
+with no drop in level.</p>
 <h3>Pitch</h3>
 <p>In Sample mode, hold {CL} and tap pad 1 or 2: the track's pitch goes back to the sample's own pitch.</p>
 <h3>Time stretch</h3>
 <p>Pads 9-16 change the length of the selected track's sample without a change to its pitch. The length follows the tempo.
 Pads 1 and 2 and the pitch knob change only the pitch.</p>
 {table(["Pad", "What it does"], [
-        ["9", "Stretch on or off. Green: on. Dim red: off. Off keeps the length (half bright) for the next on. With no length kept, on starts Follow."],
+        ["9", "Stretch on or off. Green: on. Red: off, as Granular's off. Off keeps the length (half bright) for the next on. With no length kept, on starts Follow."],
         ["10", "What fits the length. White: the whole sample. K2 and K3 then choose the part that plays, and it stays in time. Amber: the part from the start (K2) to the end (K3) fills the length."],
         ["11-16", "The sample lasts 1/4, 1/2, 1, 2, 4 or 8 bars, and stretch turns on. The bright length again: Follow."],
-        ["17", "Granular on or off, as in the Track Parameter Editor. Green: on. Red: off. Granular on turns stretch off; pad 9 turns it back."]])}
+        ["17", "Granular on or off, as in the Track Parameter Editor. Green: on. Red: off. Granular on turns stretch off; pad 9 turns it back."],
+        ["18", "Granular's mode, as in its settings. White: Triggered. Amber: Textured. Set it before or after Granular is on."],
+        ["19", "Retrigger, shown with Textured: bright on, dim off. On: each note starts the texture again."],
+        ["20", "Scan length, as in Granular's settings (pad 20 there). White: the track's sample. Amber: each sample."]])}
 <p>Follow: no length is bright. The sample plays at its own speed at the tempo when Follow starts, and stretches with later tempo
 changes. The chosen length is bright and the other lengths are dim. A dim red pad is a length the track's sample cannot get to: it must play more
 than 4 times slower or faster. The pads show this as soon as you choose the sample. A flipped step's sample gets the same length.
@@ -603,11 +604,20 @@ one time; in Gated mode it stops at the end of the note. Each track keeps its ow
 <p>You can turn stretch on and off while the sample plays. On: the sound goes on from where it is. Off: it goes on at the sample's own
 speed to the end of the note; the next note plays without stretch. Each change fades over about 5 ms, so it does not click.</p>
 <p>On a Granular track, pads 11-16 set Scan, so the playhead moves through the part from K2 to K3 in that length, at the tempo. Tap
-the bright pad again: Scan goes back to the value it had before. If you turn Scan, the pad is no longer chosen. The track keeps its
-Scan length when Granular is turned off and on, apart from the stretch length. Pad 9 is dim red and
+the bright pad again: Scan goes back to the value it had before. The sweeps stay on the clock, also when the tempo changes: each
+one ends on a multiple of its length, counted from bar 1. A pad tapped part way through starts a sweep that ends on the next
+multiple, or on the one after it when less than half the length is left. When notes restart the playhead (Triggered, or Retrigger
+on), each note plays one sweep of that length. If you turn Scan, the pad is no longer chosen. The track keeps its
+Scan length when Granular is turned off and on, apart from the stretch length, and the project saves it. Pad 9 is red and
 pad 10 is dark. While Slice is on, pads 11-16 are dim red.</p>
+<p>Pad 20 picks which sample sets the sweep's speed. White: the track's sample, the one chosen in Sample View. A flipped step's sample then moves at the same
+speed, so a shorter one plays through more than once in the length and a longer one is cut off at its end. Amber: each sample.
+Every note's own sample, flipped or not, moves through its part once in the length.</p>
 <p>In One Shot mode, a Granular note plays until the playhead has moved through the part one time. If the sample at its own
-speed plays longer, the note lasts that long. Then the grains that play fade out, and no new grains start until the next note.</p>"""))
+speed plays longer, the note lasts that long. Then the grains that play fade out, and no new grains start until the next note.</p>
+<p>Scan starts in the middle, so the playhead stays still. Turn Scan back to the middle and the playhead goes back to the start of
+the part, unless Freeze is on. The middle is Scan 63 to 65, with any fine setting. The slower the Scan, the longer a One Shot
+note: near the middle a sweep through a short drum takes minutes.</p>"""))
 
     pages.append(page(f"""
 <div class="eyebrow">Chapter 12</div><h2>Resetting knobs and tracks</h2>
@@ -621,7 +631,7 @@ speed plays longer, the note lasts that long. Then the grains that play fade out
         [f"Hold {CL}", "Pad 26 turns dim red."],
         [f"{CL} + tap pad 26", "The eight knobs go back to their defaults, the fine values too. Their automation in the current pattern is deleted. Pad 26 flashes red three times."],
         [f"Let go of {CL}", "Pad 26 is white again."]])}
-<p>This works on the selected track only. It does not change the sample, the mixer, the FX sends or the Sample mode switches.</p>
+<p>This works on the selected track only. It does not change the sample, the mixer or the FX sends.</p>
 """))
 
     pages.append(page(f"""
@@ -634,7 +644,6 @@ pad. Use it to start a track again with a clean sound. To go back to the last sa
         ["Level, pan, reverb send, delay send", "100, centre, 0, 0"],
         ["Side-chain", "Its defaults"],
         ["Play mode, reverse, choke, slices", "One Shot; reverse and choke off; the slice settings at their defaults"],
-        ["Sample mode pads 19-21", "Their defaults"],
         ["Granular", "Off; its knobs and settings at their defaults"],
         ["Time stretch", "Off; the whole sample fits"],
         ["Automation", "Deleted in all 8 patterns of the track"],
@@ -762,6 +771,49 @@ Hold {CL} and turn a control until it stops: left sets 0, right sets full. With 
 <h3>Sound and effects</h3>
 <p>Stopped audition uses the native step-preview path: normal sample playback, with no turntable effect or time stretching. With K2 on, each turn can audition the located step, including the first and last steps. Preview notes release when you let go or after about 120 ms without a turn, subject to the sample's play mode.</p>
 <p>The FX track plays no sequenced effects while scrub is held, preventing irregular triggers during running scrubs. Shift's alternate pages do not open. Release restores normal knob controls. Ordinary Play starts from the song's start; ordinary playback still loops normally.</p>"""))
+
+    PR, SR = key("Projects"), key("Sample Rec")
+    packs_cells = {i: lit(RED, DIM) for i in (5, 6, 9)}
+    packs_cells[2] = lit(WHITE)
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 16</div><h2>Copying projects and samples</h2>
+<p>Copy a project or a sample to another slot of the loaded pack. The internal memory is never changed. Stop playback first:
+while the unit plays, these pads do nothing.</p>
+<h3>A project</h3>
+<p>Press {PR} to see the projects. {DU} is white on this page, and green while you hold it. Hold {DU} for every step.</p>
+{table(["Do this", "Result"], [
+        [f"{DU} + tap a project", "It is the source. Its pad pulses green."],
+        [f"{DU} + tap an empty slot", "The project is copied there. The pad pulses green three times. The source is no longer chosen."],
+        [f"{DU} + tap a slot that has a project", f"The pad pulses red: the project there will be replaced. Tap it again, with {DU} still held, to copy."],
+        [f"{DU} + tap the source again", "The source is no longer chosen."],
+        [f"Let go of {DU}", "Nothing is chosen. To copy again, hold {DU} and tap the source again."]])}
+<p>The project's Rhythm Plus settings go with it. The project that is loaded is never replaced: its pad shows red. The copy is
+the project as it was last saved.</p>
+<h3>A sample</h3>
+<p>Press {SR}. Pads 1-16 show the samples of the page. {DU} is lit here too. Hold {DU} for every step; the steps are the same as for a project.</p>
+{table(["Do this", "Result"], [
+        [f"{DU} + tap a sample", "It is the source. Its pad pulses green."],
+        [f"{DU} + tap an empty slot", "The sample is copied there and is ready to play. The pad pulses green three times. The source is no longer chosen."],
+        [f"{DU} + tap a slot that has a sample", "The pad pulses red. Tap it again to replace that sample."]])}
+<p>A pad shows steady red and nothing is copied when the sample memory is full, or while the unit saves or deletes a sample.</p>"""))
+
+    pages.append(page(f"""
+<div class="eyebrow">Chapter 16, continued</div><h2>Deleting a pack</h2>
+<p>Press {PR} two times to see the packs. {CL} is white on this page, and red while you hold it. Stop playback first.</p>
+{figure(grid(packs_cells),
+        f"{CL} held: the packs that can be deleted are dim red. The loaded pack keeps its light.")}
+{table(["Do this", "Result"], [
+        [f"Hold {CL}", "Every pack that can be deleted turns dim red. Other pads are dark, apart from the loaded pack."],
+        [f"{CL} + tap a pack", "It lights and pulses red. Nothing is deleted yet. Tap another pack to choose that one instead."],
+        [f"{CL} + tap the same pack again", "The pack is deleted from the SD card, with all its projects and samples. The pad pulses red three times, then goes dark."],
+        [f"Let go of {CL}", "Nothing is chosen. The pads show the packs again."]])}
+<p>You cannot delete the loaded pack or the internal pack. A deleted pack cannot be brought back on the unit, so keep a backup
+of the SD card. The pack's Rhythm Plus settings files move to the RP_AUTO folder, as when you delete a pack with Components.</p>
+<h3>Copying a pack</h3>
+<p>The unit's own pack copy ({DU} + tap an empty pack slot) also copies the pack's Rhythm Plus settings files.</p>
+<h3>USB</h3>
+<p>Over USB the unit is a MIDI device only. Easy Start, the USB drive with Novation's links, is not available: button 9 of
+Advanced Setup is dark and does nothing.</p>"""))
 
     head = ('<title>Rhythm Plus Manual</title><meta name="viewport" content="width=device-width, initial-scale=1">'
             '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600&'

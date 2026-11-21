@@ -31,6 +31,9 @@ LABELS = {}
 
 def lfade_items():
     """(from P:$261, the end fade's `brset #0,y1`) a loop returns at the stock's rts; with the track's end fade off too; else the stock's tests"""
+    if os.environ.get("RH_SM_STOCK") == "1":                         # no switches: the end fade always on, loops still skip it
+        return [("label", "lfade"), f"jset #1,y1,${FS.EF_RTS:x}", f"jset #0,y1,${FS.EF_REV:x}", f"jmp ${FS.EF_FWD:x}",
+                *["nop"] * 7]                                             # the switch test's length: later core 1 code keeps its addresses
     return [("label", "lfade"), f"jset #1,y1,${FS.EF_RTS:x}",
             f"move #>${FS.SMF:x},r5", "move y:>$1405,n5", "lua (r5)+n5,r5", f"btst #{FS.SM_EF.bit_length() - 1},y:(r5)", f"jcs ${FS.EF_RTS:x}",
             f"jset #0,y1,${FS.EF_REV:x}", f"jmp ${FS.EF_FWD:x}"]
@@ -174,6 +177,19 @@ def arm_code(base, L):
     a.label("sf_x")
     E(pop_list, [4, 5, 6, 7], pc=True)
     return a.assemble()
+
+
+class EndFade:
+    """RH_SM_STOCK: only the end fade's DSP hook; Sample mode pads 19-21 stay the stock's"""
+    @staticmethod
+    def install(img, report, base_addr):
+        import rhdsp1
+        assert PM.code is code and "lfade" in LABELS and "drone" not in LABELS and "loopxf_v" not in report["pitchmod"]
+        lf = LABELS["lfade"]
+        rhdsp1.patch_p(img, FS.EF_SITE, FS.EF_OLD[0], 0x0AF080)
+        rhdsp1.patch_p(img, FS.EF_SITE + 1, FS.EF_OLD[1], lf)
+        report["endfade"] = dict(loopfade=hex(lf), site=hex(FS.EF_SITE))
+        return {}, b""
 
 
 def install(img, report, base_addr):

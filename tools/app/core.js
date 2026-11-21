@@ -16,7 +16,7 @@ const SAMPLE_FILE = 26, SAMPLE_MAX = 0x2F0000;              // NN_Name before .w
 const PAGES = 2695, PAGE_WORDS = 4096;                      // a pack's sample memory on the unit: 2,695 pages of 4,096 16-bit words (~230 s mono at 48 kHz)
 const samplePages = size => Math.ceil(Math.min(Math.max(0, size - 44), SAMPLE_MAX) / 2 / PAGE_WORDS);   // size = the WAV file's bytes
 const SLOT_AT = 0x28CEC, PAT0 = 0x2E4, PAT = 0xA28, NSTEPS = 32, STEP = 8;    // a project's sample per track; each step's sample flip at +5
-const TRASH = "Rhythm Plus trash", AUTO = "RP_AUTO", BACKUP_FILE = "rhythm-plus-backup.json", TMP = "~rp-rename.tmp";
+const AUTO = "RP_AUTO", BACKUP_FILE = "rhythm-plus-backup.json", TMP = "~rp-rename.tmp";
 const pad2 = n => String(n).padStart(2, "0");
 const hex8 = k => (k >>> 0).toString(16).toUpperCase().padStart(8, "0");
 const lower = s => s.toLowerCase();
@@ -134,7 +134,7 @@ class Pack {
   drop() { this._list = null; this._samples = null; }
 }
 // root: the card's top folder, or null when only the Rhythm folder was given (the browser may not offer a drive's top folder).
-// Then RP_AUTO is the folder given with useAuto, and the trash goes in the Rhythm folder, outside every pack.
+// Then RP_AUTO is the folder given with useAuto.
 class Card {
   constructor(root, rhythm) { this.root = root; this.rhythm = rhythm; this.device = !!rhythm.device; this.autoDir = null; this.packs = []; this._auto = null; }
   static async open(dir) {
@@ -166,15 +166,6 @@ class Card {
     if (d) for (const [n, h] of await entries(d)) { const k = autoParse(n); if (k !== null && h.kind === "file" && !m.has(k)) m.set(k, {name: n, handle: h}); }
     return this._auto = m;
   }
-  async trash(parts, name, dir) {                           // the file moves to <top>/Rhythm Plus trash/<stamp>/<parts>/name; over USB it is deleted
-    if (!this.device) await this.keep(parts, name, await readHandle(await dir.getFileHandle(name)));
-    await dir.removeEntry(name);
-  }
-  async keep(parts, name, bytes) {                          // a copy in the trash; the file stays
-    if (this.device) return;
-    this._stamp = this._stamp || stamp();
-    await writeChecked(await dirPath(this.top, [TRASH, this._stamp, ...parts], true), name, bytes);
-  }
 }
 
 // A pack's projects with the state of their Plus file:
@@ -188,10 +179,20 @@ async function projects(pack) {
     const r = /^(\d\d)_(.*)\.ncs$/i.exec(n), q = plusParse(n);
     if (q) plus.push({name: n, handle: h, ...q});
     if (!r || +r[1] >= NSESS || list.some(p => p.slot === +r[1])) continue;
-    if (h.device) { list.push({slot: +r[1], file: n, name: projectPart(n), key: null, plusSize: 0, usb: true, plus: []}); continue; }
+    if (h.device && !h.folder.dev.metaOk) { list.push({slot: +r[1], file: n, name: projectPart(n), key: null, plusSize: 0, usb: true, plus: []}); continue; }
+    if (h.device) {                                         // over USB the unit reads the project's Plus bytes itself
+      const x = await h.folder.dev.plusMeta(h.folder.P, +r[1]).catch(() => undefined);
+      if (x === null) continue;
+      if (!x) { list.push({slot: +r[1], file: n, name: projectPart(n), key: null, plusSize: 0, usb: true, plus: []}); continue; }
+      const m = x.m, claimed = x.size === SESS_SIZE && m[0] === 0x53 && m[1] === 0x4F && m[3] !== 0;
+      list.push({slot: +r[1], file: n, name: projectPart(n), size: x.size, colour: x.colour == null ? null : colourOf(x.colour), inner: x.head ? innerName(x.head) : undefined,
+                 key: claimed ? u32(m, 4) : null, plusSize: claimed ? u32(m, 8) : 0});
+      continue;
+    }
     const f = await h.getFile(), m = new Uint8Array(await f.slice(META, META + 20).arrayBuffer());
+    const head = new Uint8Array(await f.slice(0, PROJ_HEAD).arrayBuffer());
     const claimed = f.size === SESS_SIZE && m[0] === 0x53 && m[1] === 0x4F && m[3] !== 0;
-    list.push({slot: +r[1], file: n, name: projectPart(n), size: f.size, key: claimed ? u32(m, 4) : null, plusSize: claimed ? u32(m, 8) : 0});
+    list.push({slot: +r[1], file: n, name: projectPart(n), size: f.size, colour: colourOf(head[PROJ_COLOUR]), inner: innerName(head), key: claimed ? u32(m, 4) : null, plusSize: claimed ? u32(m, 8) : 0});
   }
   const auto = await pack.card.auto();
   for (const p of list) {
@@ -223,23 +224,33 @@ async function project(pack, slot) { return (await projects(pack)).find(p => p.s
 async function plusBytes(p) { return p.source && p.state !== "bad" ? readHandle(p.source.handle) : null; }
 
 // ---------------------------------------------------------------- project operations: the Plus file always goes with its project
+const NAME_AT = 16, NAME_LEN = 32, PROJ_HEAD = 48;          // the project's name inside its file, padded with spaces
+const innerName = h => isBlank(h) ? null : String.fromCharCode(...h.subarray(NAME_AT, NAME_AT + NAME_LEN)).replace(/[\s\0]+$/, "");   // null: a blank project
+function withName(b, name) {
+  const o = b.slice();
+  o.fill(0x20, NAME_AT, NAME_AT + NAME_LEN);
+  for (let i = 0; i < Math.min(name.length, NAME_LEN); i++) { const c = name.charCodeAt(i); o[NAME_AT + i] = c < 32 || c > 126 ? 0x5F : c; }
+  return o;
+}
 async function renameProject(pack, slot, name) {
   const p = await project(pack, slot), list = await projects(pack);
   if (!p) throw new Error("gone");
   const bad = nameProblem(name, slot, list.filter(x => x !== p).map(x => x.file));
   if (bad) throw new Error(bad);
   const d = await subdir(pack.dir, "Sessions"), file = pad2(slot) + "_" + name + ".ncs";
+  const b = await readHandle(await d.getFileHandle(p.file));
+  if (!projectProblem(b)) await writeChecked(d, p.file, withName(b, name));
   await renameIn(d, p.file, file);
   if (p.usb && p.plus.length) await renameIn(d, p.plus[0].name, plusName(pack, slot, name, p.plus[0].key));
   if (p.key !== null) {
     const want = plusName(pack, slot, name, p.key);
     if (p.plus.length) await renameIn(d, p.plus[0].name, want);
     else if (p.source) await writeChecked(d, want, await readHandle(p.source.handle));
-    for (const x of p.plus.slice(1)) await pack.card.trash([pack.folder, "Sessions"], x.name, d);
+    for (const x of p.plus.slice(1)) await d.removeEntry(x.name);
   }
   pack.drop();
 }
-// Copy (or move) a project to a slot of a pack. A project already in that slot goes to the trash only with replace.
+// Copy (or move) a project to a slot of a pack. A project already in that slot is deleted only with replace.
 async function copyProject(src, slot, dst, to, {move = false, replace = false} = {}) {
   const p = await project(src, slot);
   if (!p) throw new Error("gone");
@@ -260,8 +271,8 @@ async function copyProject(src, slot, dst, to, {move = false, replace = false} =
   src.drop(); dst.drop();
 }
 async function deleteFiles(pack, p, d) {
-  await pack.card.trash([pack.folder, "Sessions"], p.file, d);
-  for (const x of p.plus) await pack.card.trash([pack.folder, "Sessions"], x.name, d);
+  await d.removeEntry(p.file);
+  for (const x of p.plus) await d.removeEntry(x.name);
 }
 async function deleteProject(pack, slot) {
   const p = await project(pack, slot);
@@ -271,8 +282,8 @@ async function deleteProject(pack, slot) {
 }
 
 // ---------------------------------------------------------------- slots: copy, move, swap, delete and rename of projects and samples
-// A placement writes items read beforehand, so sources and targets may overlap (a reorder). An item already in a target slot that is not
-// itself being moved goes to the trash. A project takes its Plus file along, under the unit's name for its new slot.
+// A placement writes items read beforehand, so sources and targets may overlap (a reorder). An item already in a target slot is deleted.
+// A project takes its Plus file along, under the unit's name for its new slot.
 const KIND = {projects: {folder: "Sessions", size: NSESS, list: projects}, samples: {folder: "PCM", size: NSAMPLES, list: samples}};
 const fileFor = (kind, slot, name) => prefix(slot) + "_" + name + (kind === "projects" ? ".ncs" : ".wav");
 async function itemAt(kind, pack, slot) { return (await KIND[kind].list(pack)).find(x => x.slot === slot) || null; }
@@ -298,13 +309,11 @@ async function usbPlus(pack, bytes, item) {
   if (crc32(plus) !== key) throw Object.assign(new Error("plus-bad"), {item});
   return {bytes, key, plus};
 }
-async function removeAt(kind, pack, slot, toTrash) {       // a slot's file(s); toTrash keeps a copy in the trash
+async function removeAt(kind, pack, slot) {                 // a slot's file(s)
   const x = await itemAt(kind, pack, slot);
   if (!x) return;
-  const d = await subdir(pack.dir, KIND[kind].folder), parts = [pack.folder, KIND[kind].folder];
-  for (const n of [...(x.plus || []).map(y => y.name), x.file]) {
-    if (toTrash) await pack.card.trash(parts, n, d); else await d.removeEntry(n);
-  }
+  const d = await subdir(pack.dir, KIND[kind].folder);
+  for (const n of [...(x.plus || []).map(y => y.name), x.file]) await d.removeEntry(n);
   pack.drop();
 }
 async function writeAt(kind, pack, slot, item) {
@@ -317,16 +326,15 @@ async function writeAt(kind, pack, slot, item) {
 async function place(kind, moves, {keepSources = false} = {}, tick) {
   const id = (pk, n) => pk.slot + ":" + n;
   for (const m of moves) if (m.from && !m.item) m.item = await readItem(kind, m.from.pack, m.from.slot);
-  const sources = new Set(moves.filter(m => m.from).map(m => id(m.from.pack, m.from.slot)));
   const targets = new Set(moves.map(m => id(m.to.pack, m.to.slot)));
   let n = 0;
   for (const m of moves) {
-    const t = m.to, moving = sources.has(id(t.pack, t.slot)) && !keepSources;
-    await removeAt(kind, t.pack, t.slot, !moving);
+    const t = m.to;
+    await removeAt(kind, t.pack, t.slot);
     if (m.item) await writeAt(kind, t.pack, t.slot, m.item);
     if (tick) tick(++n, moves.length);
   }
-  if (!keepSources) for (const m of moves) if (m.from && !targets.has(id(m.from.pack, m.from.slot))) await removeAt(kind, m.from.pack, m.from.slot, false);
+  if (!keepSources) for (const m of moves) if (m.from && !targets.has(id(m.from.pack, m.from.slot))) await removeAt(kind, m.from.pack, m.from.slot);
 }
 // Copy, move or swap the items of src's slots `from` to dst's slots `to` (as many). Samples moved or swapped inside one pack keep playing in
 // every project of that pack: the projects follow the new numbers.
@@ -350,7 +358,7 @@ async function transfer(kind, src, from, dst, to, {move = false, swap = false} =
   }
   return [];
 }
-async function deleteItems(kind, pack, slots) { for (const n of slots) await removeAt(kind, pack, n, true); }
+async function deleteItems(kind, pack, slots) { for (const n of slots) await removeAt(kind, pack, n); }
 async function renameItem(kind, pack, slot, name) {
   const x = await itemAt(kind, pack, slot), list = await KIND[kind].list(pack);
   if (!x) throw new Error("gone");
@@ -370,15 +378,13 @@ function remapSession(b, map) {
   }
   return n;
 }
-async function remapPack(pack, map) {                       // -> the project slots rewritten; each one's old file kept in the trash
+async function remapPack(pack, map) {                       // -> the project slots rewritten
   const d = await subdir(pack.dir, "Sessions"), out = [];
   if (!d) return out;
   for (const x of await projects(pack)) {
     const b = await readHandle(await d.getFileHandle(x.file));
     if (b.length !== SESS_SIZE) continue;
-    const old = b.slice();
     if (!remapSession(b, map)) continue;
-    await pack.card.keep([pack.folder, "Sessions"], x.file, old);
     await writeChecked(d, x.file, b);
     out.push(x.slot);
   }
@@ -434,15 +440,42 @@ function wavEncode(f32) {                                   // mono 48 kHz float
 function projectProblem(b) {                                // -> null, or why these bytes are not a project (proj-*)
   if (b.length !== SESS_SIZE) return "proj-size";
   const h = String.fromCharCode(...b.subarray(0, 4));
-  return h === "RUSE" || h === "RDEM" ? null : "proj-head";
+  return h === "RUSE" || h === "RDEM" || h === "INIT" ? null : "proj-head";       // INIT: a blank project, as Components packs hold
+}
+// ---------------------------------------------------------------- colours of packs and projects: the stock's 14 (its table at 0x08069060)
+const COLOURS = ["#fa0005", "#fc2d5d", "#fc7035", "#fd4000", "#ff982b", "#ffff00", "#e9e838", "#90ef1a", "#18ff00", "#7cff43", "#3cd6fe", "#1000ff", "#6f00fe", "#b718b9"];
+// on screen: the same 14 as Components draws them (the LED values above look darker on a screen)
+const COLOURS_SHOWN = ["#ff3d3d", "#ff3374", "#ff7f73", "#ffa033", "#ffc47d", "#fff033", "#e3ff80", "#a8ec1c", "#3dff3d", "#4ef58f", "#38aaff", "#3d5cff", "#7b38ff", "#ff52d1"];
+const PROJ_COLOUR = 12, META_FILE = "00_META.ncm";           // a project's colour byte; a pack's is byte 0 of meta/00_META.ncm (byte 1: its last project)
+const colourOf = v => v < COLOURS.length ? v : null;
+async function packColour(pack) {                           // -> 0-13, or null with no meta file
+  const d = await subdir(pack.dir, "meta"), h = d && await fileIn(d, META_FILE);
+  const b = h ? await readHandle(h) : null;
+  return b && b.length ? colourOf(b[0]) : null;
+}
+async function setPackColour(pack, c) {
+  if (colourOf(c) === null) throw new Error("colour");
+  const d = await subdir(pack.dir, "meta", true), h = await fileIn(d, META_FILE), b = h ? await readHandle(h) : null;
+  const out = b && b.length >= 2 ? b.slice() : META_DEFAULT.slice();
+  out[0] = c;
+  await writeChecked(d, META_FILE, out);
+}
+async function setProjectColour(pack, slot, c) {           // the whole project is read and written back, with one byte changed
+  if (colourOf(c) === null) throw new Error("colour");
+  const p = (await projects(pack)).find(x => x.slot === slot);
+  if (!p) throw notFound();
+  const d = await subdir(pack.dir, "Sessions"), b = await readHandle(await d.getFileHandle(p.file));
+  if (projectProblem(b)) throw new Error("proj-head");
+  b[PROJ_COLOUR] = c;
+  await writeChecked(d, p.file, b);
+  pack.drop();
 }
 function projectKey(b) {                                    // the key of the Plus file a project wants, or null
   return b.length === SESS_SIZE && b[META] === 0x53 && b[META + 1] === 0x4F && b[META + 3] !== 0 ? u32(b, META + 4) : null;
 }
+const safeName = (s, max) => s.replace(/^\d{2,3}_/, "").replace(/[^ -~]|[\\/:*?"<>|]/g, "_").slice(0, max).replace(/^[\s.]+|[\s.]+$/g, "");
 function fileName(file, kind) {                             // a computer file's name, made safe for its slot
-  const max = kind === "samples" ? SAMPLE_FILE - 4 : PROJ_NAME;
-  const s = file.replace(/\.[^.]+$/, "").replace(/^\d{2,3}_/, "").replace(/[^ -~]|[\\/:*?"<>|]/g, "_").slice(0, max).replace(/^[\s.]+|[\s.]+$/g, "");
-  return s || (kind === "samples" ? "Sample" : "SESSION");
+  return safeName(file.replace(/\.[^.]+$/, ""), kind === "samples" ? SAMPLE_FILE - 4 : PROJ_NAME) || (kind === "samples" ? "Sample" : "SESSION");
 }
 function freeRun(list, size, count, start = -1) {           // -> count slots from start (the first free run when start < 0), or null
   const used = new Set(list.map(x => x.slot));
@@ -451,6 +484,7 @@ function freeRun(list, size, count, start = -1) {           // -> count slots fr
   return Array.from({length: count}, (_, k) => start + k);
 }
 async function putFiles(kind, pack, items, to, tick) {      // items: [{name, bytes, key?, plus?}] into slots to
+  if (kind === "projects") items = items.map(x => ({...x, bytes: withName(x.bytes, x.name)}));
   await place(kind, items.map((item, i) => ({from: null, item, to: {pack, slot: to[i]}})), {}, tick);
 }
 
@@ -459,8 +493,12 @@ async function putFiles(kind, pack, items, to, tick) {      // items: [{name, by
 //     dup: [keys of RP_AUTO files that every project already has next to it], orphan: [keys of RP_AUTO files that no project on the card uses],
 //     missing: [{pack, p}], bad: [{pack, p}]}
 async function tidyPlan(card) {
-  const plan = {fix: [], extra: [], dup: [], orphan: [], missing: [], bad: []}, used = new Map();
+  const plan = {fix: [], extra: [], dup: [], orphan: [], missing: [], bad: [], names: [], namesUnread: false}, used = new Map();
+  let unread = false;
   for (const pack of card.packs) for (const p of await projects(pack)) {
+    if (p.inner === undefined) plan.namesUnread = true;
+    else if (p.inner !== null && safeName(p.inner, PROJ_NAME) !== p.name) plan.names.push({pack, p});
+    if (p.usb) unread = true;
     if (p.key === null) continue;
     if (!used.has(p.key)) used.set(p.key, []);
     used.get(p.key).push({pack, p});
@@ -474,31 +512,130 @@ async function tidyPlan(card) {
   }
   for (const [key] of await card.auto()) {
     const u = used.get(key);
-    if (!u) plan.orphan.push(key);
+    if (!u) { if (!unread) plan.orphan.push(key); }     // a project the unit could not read may use it
     else if (u.every(x => x.p.state === "here" || x.p.state === "renamed")) plan.dup.push(key);
   }
   return plan;
 }
-// A project's second Plus files go to the trash; every Plus file gets the unit's name, next to its project; then the RP_AUTO files that every
-// project has go to the trash, and the orphans too with orphans. -> the number of files changed
+// A project's second Plus files are deleted; every Plus file gets the unit's name, next to its project; then the RP_AUTO files that every
+// project has are deleted, and the orphans too with orphans. -> the number of files changed; plan.done has them by kind
 async function tidyApply(card, plan, {orphans = false} = {}, tick) {
   let n = 0;
-  const step = () => { n++; if (tick) tick(n); };
-  for (const {pack, name} of plan.extra) { await card.trash([pack.folder, "Sessions"], name, await subdir(pack.dir, "Sessions")); pack.drop(); step(); }
+  const done = plan.done = {names: 0, extra: 0, placed: 0, copies: 0, unused: 0};
+  const step = k => { done[k]++; n++; if (tick) tick(n); };
+  for (const {pack, p} of plan.names) {
+    const d = await subdir(pack.dir, "Sessions"), b = await readHandle(await d.getFileHandle(p.file));
+    if (!projectProblem(b)) { await writeChecked(d, p.file, withName(b, p.name)); step("names"); }
+    pack.drop();
+  }
+  for (const {pack, name} of plan.extra) { await (await subdir(pack.dir, "Sessions")).removeEntry(name); pack.drop(); step("extra"); }
   for (const {pack, p} of plan.fix) {
     const d = await subdir(pack.dir, "Sessions", true), keep = p.plus.filter(x => !plan.extra.some(e => e.pack === pack && e.name === x.name));
     if (p.state === "renamed" && keep.length) await renameIn(d, keep[0].name, p.want);
     else await writeChecked(d, p.want, await readHandle(p.source.handle));
-    pack.drop(); step();
+    pack.drop(); step("placed");
   }
   card._auto = null;
   const again = await tidyPlan(card), d = card.autoDir, auto = await card.auto();
-  for (const key of [...again.dup, ...(orphans ? again.orphan : [])]) {
+  for (const [keys, k] of [[again.dup, "copies"], [orphans ? again.orphan : [], "unused"]]) for (const key of keys) {
     const e = auto.get(key);
-    if (e) { await card.trash([AUTO], e.name, d); step(); }
+    if (e) { await d.removeEntry(e.name); step(k); }
   }
   card.drop();
   return n;
+}
+
+// ---------------------------------------------------------------- a Components pack file (.circuitrhythmpack): a zip with index.json
+async function inflate(raw) { return new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()); }
+async function unzip(bytes) {                               // -> Map(name -> bytes); stored or deflated entries, each checked against its CRC
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), out = new Map(), dec = new TextDecoder();
+  let e = bytes.length - 22;
+  while (e >= 0 && v.getUint32(e, true) !== 0x06054B50) e--;
+  if (e < 0) throw new Error("pack-bad");
+  for (let i = 0, n = v.getUint16(e + 10, true), o = v.getUint32(e + 16, true); i < n; i++) {
+    if (v.getUint32(o, true) !== 0x02014B50) throw new Error("pack-bad");
+    const method = v.getUint16(o + 10, true), crc = v.getUint32(o + 16, true), csize = v.getUint32(o + 20, true), size = v.getUint32(o + 24, true);
+    const nl = v.getUint16(o + 28, true), at = v.getUint32(o + 42, true), name = dec.decode(bytes.subarray(o + 46, o + 46 + nl));
+    o += 46 + nl + v.getUint16(o + 30, true) + v.getUint16(o + 32, true);
+    if (name.endsWith("/")) continue;
+    if (v.getUint32(at, true) !== 0x04034B50) throw new Error("pack-bad");
+    const from = at + 30 + v.getUint16(at + 26, true) + v.getUint16(at + 28, true), raw = bytes.subarray(from, from + csize);
+    const b = method === 0 ? raw.slice() : method === 8 ? await inflate(raw) : null;
+    if (!b || b.length !== size || crc32(b) !== crc) throw new Error("pack-bad");
+    out.set(name, b);
+  }
+  return out;
+}
+const GRIDFX_SIZE = 7, NGRIDFX = 16, META_DEFAULT = Uint8Array.of(0, 0);     // META_DEFAULT: red, last project 0, as Components writes
+const isBlank = b => String.fromCharCode(...b.subarray(0, 4)) === "INIT";
+// -> {name, projects: [{slot, name, bytes}], blank: the blank projects left out, samples: [{slot, name, bytes}], gridfx: the 16 Grid FX as one file, or null}
+async function readPack(bytes) {
+  const z = await unzip(bytes), index = z.get("index.json");
+  if (!index) throw new Error("pack-bad");
+  const j = JSON.parse(new TextDecoder().decode(index));
+  if (j.product !== "circuit-rhythm") throw new Error("pack-product");
+  // an entry with no name and no file is an empty slot; a named entry with no file is a damaged pack
+  const get = x => { const b = z.get(x.url); if (!b && x.name) throw new Error("pack-bad"); return b || null; };
+  const all = (j.projects || []).slice(0, NSESS).map((x, slot) => {
+    const b = get(x);
+    if (b && projectProblem(b)) throw new Error("pack-bad");
+    return b && {slot, name: safeName(x.name || "", PROJ_NAME) || "SESSION", bytes: b};
+  }).filter(Boolean);
+  const projects = all.filter(x => !isBlank(x.bytes)).map(x => ({...x, bytes: withName(x.bytes, x.name)}));     // an empty slot loads the same blank project
+  const samples = (j.samples || []).slice(0, NSAMPLES).map((x, slot) => { const b = get(x); return b && {slot, name: safeName(x.name || "", nameMax(slot, "sample")) || "PCM", bytes: b}; })
+    .filter(Boolean);
+  const fx = (j.gridEffects || []).map(x => z.get(x.url));
+  const gridfx = fx.length === NGRIDFX && fx.every(b => b && b.length === GRIDFX_SIZE) ? Uint8Array.from(fx.flatMap(b => [...b])) : null;
+  return {name: safeName(j.name || "", FOLDER_MAX - 3) || "PACK", projects, blank: all.length - projects.length, samples, gridfx};
+}
+// A whole pack, deleted. Its Plus files go to RP_AUTO first, as the unit does.
+async function deletePack(card, pack) {
+  if (card.device) await card.rhythm.removeEntry(pack.folder);
+  else {
+    const have = await card.auto(), auto = card.autoDir || await placeOf(card, [AUTO], true);
+    if (auto) for (const p of await projects(pack)) {
+      if (p.key === null || have.has(p.key)) continue;
+      const b = await plusBytes(p);
+      if (b) { await writeChecked(auto, hex8(p.key) + ".RPS", b); have.set(p.key, {name: hex8(p.key) + ".RPS"}); }
+    }
+    card._auto = null;
+    await card.rhythm.removeEntry(pack.folder, {recursive: true});
+  }
+  await card.scan();
+}
+// A read pack into an empty pack slot, as the unit lays a pack out. Over USB the unit makes the folders as it writes. -> the new Pack
+async function loadPack(card, slot, name, pk, tick) {
+  if (card.pack(slot)) throw new Error("pack-used");
+  const bad = nameProblem(name, slot, card.packs.map(x => x.folder), "pack");
+  if (bad) throw new Error(bad);
+  const folder = pad2(slot) + "_" + name, files = [
+    ...pk.projects.map(x => ["Sessions", 3, x.slot, prefix(x.slot) + "_" + x.name + ".ncs", x.bytes]),
+    ...pk.samples.map(x => ["PCM", 5, x.slot, prefix(x.slot) + "_" + x.name + ".wav", x.bytes]),
+    ...(pk.gridfx ? [["GridFx", 6, 0, "00_GRIDFX.ncg", pk.gridfx]] : []),
+    ["meta", 7, 0, "00_META.ncm", META_DEFAULT]];
+  let n = 0;
+  if (card.device) {
+    const dev = card.rhythm.dev, P = slot + 1, def = new Map(DEV_FOLDERS.map(([d, T, f]) => [T, f]));
+    for (const [, T, I, file, b] of files) {
+      dev.name(file);
+      checkHalt();
+      await dev.write(T, P, I, b);
+      if (file !== prefix(I) + "_" + def.get(T)) await dev.rename(T, P, I, file);
+      if (tick) tick(++n, files.length);
+    }
+    await dev.renamePack(P, folder);
+    card.rhythm.cache = null;
+  } else {
+    const top = await card.rhythm.getDirectoryHandle(folder, {create: true}), dirs = new Map();
+    for (const [sub, , , file, b] of files) {
+      checkHalt();
+      if (!dirs.has(sub)) dirs.set(sub, await subdir(top, sub, true));
+      await writeChecked(dirs.get(sub), file, b);
+      if (tick) tick(++n, files.length);
+    }
+  }
+  await card.scan();
+  return card.pack(slot);
 }
 
 // ---------------------------------------------------------------- backup and restore: the Rhythm folder and RP_AUTO, in a folder outside the card's packs
@@ -554,7 +691,7 @@ async function restoreApply(card, plan, tick) {
   const gone = new Set();
   for (const x of [...plan.twins, ...plan.write.filter(w => w.old)]) {
     const id = lower([...x.parts, x.name].join("/"));
-    if (!gone.has(id)) { gone.add(id); await card.trash(x.parts, x.name, await placeOf(card, x.parts, false)); }
+    if (!gone.has(id)) { gone.add(id); await (await placeOf(card, x.parts, false)).removeEntry(x.name); }
   }
   for (const w of plan.write) { await writeChecked(await placeOf(card, w.parts, true), w.name, await readHandle(w.handle)); if (tick) tick(w.name, ++n); }
   await card.scan(); card.drop();
@@ -714,6 +851,7 @@ class Device {
   }
   rename(T, P, I, name) { const b = this.name(name); return this.run(async () => { this.file(7, T, P, I, ...b); await this.must(10000); }); }
   renamePack(P, name) { const b = this.name(name); return this.run(async () => { this.file(7, 2, P, ...b); await this.must(30000); }); }
+  delPack(P) { return this.run(async () => { this.file(8, 2, P); await this.must(60000); }); }
   del(T, P, I) { return this.run(async () => { this.file(8, T, P, I); await this.must(10000); }); }
   px(cmd, dir, name = "", fields = [], ms = 4000) {
     if (!/^[ -~]{0,64}$/.test(name)) return Promise.reject(new Error("device-name"));
@@ -743,14 +881,24 @@ class Device {
   async plusHello() {                                       // -> true when the firmware has the Plus file commands
     const a = await this.px(0x20, 0, "", [], 800).catch(() => null);
     this.plusOk = !!a && a.st === 0 && un32(a.r, 14) >= 1;
+    this.pxVersion = this.plusOk ? un32(a.r, 14) : 0;
+    this.metaOk = false;
+    if (this.plusOk) { const b = await this.px(0x28, 0, "", [0], 800).catch(() => null); this.metaOk = !!b && b.st !== PX.BAD; }
     return this.plusOk;
+  }
+  async plusMeta(dir, slot) {                               // -> {size, m: the 20 Plus bytes, head: the first 48 bytes (version 3), colour (version 2+)}, or null for an empty slot
+    const {st, r} = await this.px(0x28, dir, "", [slot]);
+    if (st === 4) return null;
+    if (st) throw pxError(st);
+    const head = this.pxVersion >= 3 ? unnib(r, 62, 48) : null;
+    return {size: un32(r, 14), m: unnib(r, 22, 20), head, colour: head ? head[12] : this.pxVersion >= 2 ? unnib(r, 62, 1)[0] : null};
   }
   async plusFolder(dir) { const {st, r} = await this.px(0x20, dir); if (st) throw pxError(st); return String.fromCharCode(...r.subarray(23, 23 + r[22])); }
   async plusList(dir) {
     const out = [];
     for (let i = 0; i < 512; i++) {
       const {st, r} = await this.px(0x21, dir, "", n32(i));
-      if (st === PX.END) return out;
+      if (st === PX.END || !i && (st === 4 || st === 5)) return out;     // 4, 5: the folder is not on the card, so it holds none
       if (st) throw pxError(st);
       out.push({name: String.fromCharCode(...r.subarray(23, 23 + r[22])), size: un32(r, 14)});
     }
@@ -781,7 +929,8 @@ class Device {
   async plusRename(dir, name, to) { const {st} = await this.px(0x26, dir, name, [to.length, ...[...to].map(c => c.charCodeAt(0))]); if (st) throw pxError(st); }
 }
 // The unit as folders: Rhythm's packs, each with Sessions (type 3) and PCM (type 5); a file is (type, pack, slot).
-const DEV_FOLDERS = [["Sessions", 3, "SESSION.ncs"], ["PCM", 5, "PCM.wav"]];
+// the stock USB types: 3 Sessions, 5 PCM, 6 GridFx, 7 meta (a pack may have no GridFx folder)
+const DEV_FOLDERS = [["Sessions", 3, "SESSION.ncs"], ["PCM", 5, "PCM.wav"], ["GridFx", 6, "GRIDFX.ncg"], ["meta", 7, "META.ncm"]], DEV_OPTIONAL = new Set([6, 7]);
 class DevFile {
   constructor(folder, I, name) { this.kind = "file"; this.device = true; this.folder = folder; this.I = I; this.name = name; }
   async getFile() {
@@ -811,7 +960,7 @@ class DevFolder {
   isPlus(n) { return this.plus && (this.T === null ? autoParse(n) !== null : !!plusParse(n)); }
   async list() {
     if (this.cache) return this.cache;
-    const out = this.T === null ? [] : await this.dev.items(this.T, this.P);
+    const out = this.T === null ? [] : DEV_OPTIONAL.has(this.T) ? await this.dev.items(this.T, this.P).catch(() => []) : await this.dev.items(this.T, this.P);
     if (this.plus) {
       if (this.T !== null && !this.pack.checked) {           // the unit's folder for this pack number must be this pack
         const want = "1:/Rhythm/" + this.pack.name + "/Sessions/", got = await this.dev.plusFolder(this.P);
@@ -873,11 +1022,17 @@ class DevRoot {
     await this.dev.renamePack(x.P, to);
     this.cache = null; this.open.delete(name);
   }
+  async removeEntry(name) {                                 // the whole pack; Rhythm Plus moves the pack's Plus files to RP_AUTO first
+    const x = (await this.list()).find(e => e.name === name);
+    if (!x) throw notFound();
+    await this.dev.delPack(x.P);
+    this.cache = null; this.open.delete(name);
+  }
 }
 
 return {stop, go, NSAMPLES, SAMPLE_MAX, PAGES, PAGE_WORDS, samplePages, SLOT_AT, Device, DevRoot, enc7, dec7, KIND, transfer, place, deleteItems, renameItem, renamePack, remapSession, remapPack,
-  wavInfo, unitWav, wavEncode, projectProblem, projectKey, fileName, freeRun, putFiles, nameMax, itemAt,
-  NSESS, NPACKS, SESS_SIZE, META, PROJ_NAME, FOLDER_MAX, TRASH, AUTO, BACKUP_FILE, pad2, hex8, crc32, stamp, entries, subdir, readHandle, writeFile, treeInfo,
+  wavInfo, unitWav, wavEncode, projectProblem, projectKey, fileName, freeRun, putFiles, nameMax, itemAt, unzip, readPack, loadPack, deletePack, COLOURS, COLOURS_SHOWN, packColour, NAME_AT, setPackColour, setProjectColour,
+  NSESS, NPACKS, SESS_SIZE, META, PROJ_NAME, FOLDER_MAX, AUTO, BACKUP_FILE, pad2, hex8, crc32, stamp, entries, subdir, readHandle, writeFile, treeInfo,
   plusName, plusParse, autoParse, nameProblem, Card, Pack, projects, project, samples, renameProject, copyProject, deleteProject, tidyPlan, tidyApply,
   backup, restorePlan, restoreApply};
 })();

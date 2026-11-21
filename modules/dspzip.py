@@ -24,9 +24,12 @@ ROOT=Path(__file__).resolve().parents[1]
 CACHE=ROOT/'buildtmp/dspzip-cache'
 
 def is_packed(img):
-    return bytes(img[BLK0-BASE:BLK0-BASE+4]) in (MAGIC,SPLIT)
+    import dsppack
+    return bytes(img[BLK0-BASE:BLK0-BASE+4]) in (MAGIC,SPLIT) or dsppack.is_packed(img)
 
 def raw_stream(img):
+    import dsppack
+    if dsppack.is_packed(img):return dsppack.raw_streams(img)[0]
     off=BLK0-BASE
     assert is_packed(img)
     words,crc=struct.unpack_from('<II',img,off+4)

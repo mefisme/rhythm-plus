@@ -94,7 +94,7 @@ def sm_checks(uc):
         check(f"sm: pad {pd + 1}: the record's block \"SM\", its check byte, the change from the defaults",
               data[:2] == b"SM" and data[2] == (sum(body) & 0xFF) ^ FS.CHECK and struct.unpack("<8H", body) == tuple(bit if k == t else 0 for k in range(8)),
               data.hex())
-        check(f"sm: pad {pd + 1}: track {t + 1} marked to write", uc.mem_read(slot, 1)[0] >> t & 1 == 1, uc.mem_read(slot, 1)[0])
+        check(f"sm: pad {pd + 1}: track {t + 1} marked to send to the sound chip", uc.mem_read(slot, 1)[0] >> t & 1 == 1, uc.mem_read(slot, 1)[0])
         uc.mem_write(cv, struct.pack("<I", M.CONT))
         uc.mem_write(cm, bytes([M.MODE_SMP]))
         f = ET.led(uc, lab("smpads", "c_smled"))
@@ -152,6 +152,9 @@ def sm_checks(uc):
 
 
 def rhstate_slot():
+    rep = ET.MAN["report"][sw()]
+    if "slot" in rep:
+        return int(rep["slot"], 16)
     import rhstate
     return rhstate.ST + rhstate.OFF[sw()][0]
 

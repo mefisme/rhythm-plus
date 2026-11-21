@@ -83,7 +83,17 @@ def main():
     check("c_upw: the mark cleared after, the upload's result kept",
           uc.mem_read(FLAG, 1)[0] == 0 and uc.reg_read(UC_ARM_REG_R0) == 0x1234)
 
-    spw = int(R["stockplus"]["labels"]["c_spw"], 16) if "stockplus" in R else int(R["smswitch"]["labels"]["c_sww"], 16)
+    spw = int(R["stockplus"]["labels"]["c_spw"], 16) if "stockplus" in R else int(R["smswitch"]["labels"]["c_sww"], 16) if "smswitch" in R else None
+    if spw is None:                                     # no switch writer of ours: only the guard's own writer
+        check("no DSP writer patched", R["upguard"]["writers"] == [] and "route" not in G, R["upguard"]["writers"])
+        for mark in (0, 1):
+            uc.mem_write(FLAG, bytes([mark]))
+            writes.clear()
+            call(uc, C_DSPW, 0, 0x111111 << 8, 0x9E70)
+            check(f"mark {mark}: a write {'dropped' if mark else 'passes as it is'}", writes == ([] if mark else [(0, 0x111111 << 8, 0x9E70)]),
+                  f"{[tuple(hex(x) for x in w) for w in writes]}")
+        print("ALL PASS" if not FAILS else f"FAILED: {FAILS}")
+        sys.exit(1 if FAILS else 0)
     flsw = int(R["fshape"]["labels"]["c_flsw"], 16) if "c_flsw" in R.get("fshape", {}).get("labels", {}) else None
     for mark in (0, 1):
         uc.mem_write(FLAG, bytes([mark]))

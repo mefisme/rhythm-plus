@@ -48,7 +48,21 @@ def main():
     from drone_gone import undrone
     before=undrone(before,baseline['report'],report)
     changed={0x122,0x23d,0x25c,0x25d,0x22f,0x230,0x231,0x232,0x233,0x2f3,0x4e6}
-    assert all(after[a]==w for a,w in before.items() if a not in changed)
+    if 'pvloop' in baseline['report'] and 'pvloop' not in report:     # the stock preview player back in its place
+        import pvloop as PV
+        stock=flat(rhdsp1.parse(rhdsp1.sent(bytearray((ROOT/'remix/stock/circuitrhythm-firmware-5706-STOCK.bin').read_bytes()),baseline['report'],'pitchmod'))[0])
+        room=set(range(PV.A1,PV.E1))|set(range(PV.A2,PV.E2))|{PV.CALL_PV,PV.CALL_ENV}
+        assert all(after[a]==stock[a] for a in room)
+        changed|=room
+    if 'smswitch' in baseline['report'] and 'endfade' in report:      # no loop crossfade: Remix's XF / WC back to the stock's
+        import loopxf as XF
+        stock=flat(rhdsp1.parse(rhdsp1.sent(bytearray((ROOT/'remix/stock/circuitrhythm-firmware-5706-STOCK.bin').read_bytes()),baseline['report'],'pitchmod'))[0])
+        room=set(range(XF.AT,XF.END))|set(range(XF.WC_AT,XF.WC_END))|{0x197,0x19f}
+        assert all(after[a]==stock[a] for a in room),'the crossfade areas are not the stock code'
+        lf=int(report['endfade']['loopfade'],16)
+        changed|=room|set(range(lf,lf+14))
+    bad=[hex(a) for a,w in before.items() if a not in changed and after.get(a)!=w]
+    assert not bad,("core 1 words changed",bad[:12],len(bad))
     assert after[0x2f3]==g['core1_stages']['notes']['labels']['note_on']
     print('PASS current Grid FX hooks/sound code retained; only declared granular dispatch hooks alter native core1')
     with CURRENT.allocated():

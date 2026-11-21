@@ -543,7 +543,15 @@ u32 c_sh_grsettings(void) {
    to Content through the stock synchronous read (op 6) with a private item, and c_sh_backend runs it there, under Content's
    filesystem serialization, writing the reply over the request. Only Plus file names are accepted. */
 #define PX_KIND 0x58555052u
+#if PX_PROJHEAD
+#define PX_VERSION 3u                                            /* 3: 0x28 adds the project's first 48 bytes: header, colour, name */
+#define PROJ_HEAD 48u
+#elif PX_COLOUR
+#define PX_VERSION 2u                                            /* 2: 0x28 adds the project's colour */
+#define PROJ_COLOUR 12u
+#else
 #define PX_VERSION 1u
+#endif
 #define PX_NMAX 64u
 #define PX_NAME 64u
 #define F_LSEEK 0x080223d9u
@@ -655,6 +663,124 @@ static u32 px_copy(u32 dir,const u8 *name,u32 L,u32 dir2,const u8 *name2,u32 L2)
     if(r && r!=8)((px_f1)F_UNLINK)((u32)S->path);
     return r;
 }
+#if FILE_TOOLS
+static int px_lc(char c){return c>='A' && c<='Z'?c+32:c;}
+/* S->path = the pack's project file for slot (NN_*.ncs); 4 = none */
+static u32 px_project(u32 dir,u32 slot){
+    u32 n=dir?px_folder(dir):0,r,found=4;
+    if(!n)return PX_NOPACK;
+    u8 *d=SNAP,*info=SNAP+64;const char *name=(const char *)(info+0x16);
+    S->path[n-1]=0;r=((px_f2)F_OPENDIR)((u32)d,(u32)S->path);S->path[n-1]='/';
+    if(r)return r;
+    while(found && !((px_f2)F_READDIR)((u32)d,(u32)info) && name[0]){
+        u32 L=0;while(L<128 && name[L])L++;
+        if(info[8]&0x10 || L<8 || n+L+1>PATH_MAX || !digit(name[0]) || !digit(name[1]) || name[2]!='_' ||
+           (u32)(name[0]-'0')*10+(u32)(name[1]-'0')!=slot || name[L-4]!='.' || px_lc(name[L-3])!='n' ||
+           px_lc(name[L-2])!='c' || px_lc(name[L-1])!='s')continue;
+        for(u32 i=0;i<=L;i++)S->path[n+i]=name[i];
+        found=0;
+    }
+    ((px_f1)F_CLOSEDIR)((u32)d);
+    return found;
+}
+/* The project's size and its 20 Plus bytes at TAIL+META (m: 'S' 'O' version claimed, key, size, -, crc) */
+static u32 px_meta(u32 dir,u32 slot,u32 *size,u8 *m){
+    u32 r=px_project(dir,slot),done=0;
+    if(!r)r=px_read(TAIL+META,m,20,&done,size);
+    if(!r && done!=20)r=PX_SHORT;
+    return r;
+}
+static u32 px_claimed(const u8 *m){return m[0]=='S' && m[1]=='O' && m[3] && *(const u32 *)(m+4)?*(const u32 *)(m+4):0;}
+/* A project copy's Plus file. Phase 0: A's file to B's pack as RP_<B>_<key>.rps (*copied 0: A has none).
+   Phase 1, after the project: B's other Plus files deleted, as after a save. */
+static u32 px_slotcopy(u32 pa,u32 sa,u32 pb,u32 sb,u32 phase,u32 *copied){
+    u8 *m=SNAP+256;u32 size,r,n,key;
+    char *src=PX_PATH2,*dst=PX_TMP;
+    *copied=0;
+    if(sa>=ANY_SLOT || sb>=ANY_SLOT || !pb)return PX_BAD;
+    if(phase){
+        r=px_meta(pb,sb,&size,m);
+        if(r)return r;
+        key=px_claimed(m);
+        if(!(n=px_folder(pb)))return PX_NOPACK;
+        if(!key){drop(n,sb,0,0);return 0;}
+        u32 e=put_name(n,sb,key,0,0);
+        for(u32 i=n;i<=e;i++)dst[i-n]=S->path[i];
+        drop(n,sb,dst,0);
+        return 0;
+    }
+    if(!pa)return 0;                                           /* the internal pack keeps its settings in the project */
+    r=px_meta(pa,sa,&size,m);
+    if(r)return r;
+    if(!(key=px_claimed(m)))return 0;
+    if(!(n=px_folder(pa)))return PX_NOPACK;
+    if(!find_plus(n,sa,key,0,0)){
+        path(key);
+        if(px_open(1)){if(!(n=px_folder(pa)) || !find_plus(n,ANY_SLOT,key,0,0))return 4;}
+        else file_ops.close((void *)FIL);
+    }
+    for(u32 i=0;i<PATH_MAX;i++)src[i]=S->path[i];
+    if(!(n=px_folder(pb)))return PX_NOPACK;
+    put_name(n,sb,key,0,0);
+    for(u32 i=0;i<PATH_MAX;i++)dst[i]=S->path[i];
+    if((r=px_mkdir(n)))return r;
+    u32 done=0;r=0;size=0;
+    for(u32 off=0;!r && (!off || off<size);off+=done){
+        for(u32 i=0;i<PATH_MAX;i++)S->path[i]=src[i];
+        r=px_read(off,SNAP,PX_DATA,&done,&size);
+        for(u32 i=0;i<PATH_MAX;i++)S->path[i]=dst[i];
+        if(!r)r=px_write(off,SNAP,done,0);
+        if(!r && !done)break;
+        if(!r && !guards())r=PX_BUSY;
+    }
+    if(r){((px_f1)F_UNLINK)((u32)S->path);return r;}
+    *copied=1;return 0;
+}
+/* S->path = the idx-th Plus file of the folder S->path[0..n); 0 = none */
+static u32 nth_plus(u32 n,u32 idx){
+    u8 *d=SNAP,*info=SNAP+64;const char *name=(const char *)(info+0x16);
+    S->path[n-1]=0;u32 r=((px_f2)F_OPENDIR)((u32)d,(u32)S->path),found=0;S->path[n-1]='/';
+    if(r)return 0;
+    while(!found && !((px_f2)F_READDIR)((u32)d,(u32)info) && name[0]){
+        u32 sl,k,L=0;while(L<128 && name[L])L++;
+        if(info[8]&0x10 || !plus_parse(name,&sl,&k) || n+L+1>PATH_MAX || idx--)continue;
+        for(u32 i=0;i<=L;i++)S->path[n+i]=name[i];
+        found=1;
+    }
+    ((px_f1)F_CLOSEDIR)((u32)d);
+    return found;
+}
+/* Every Plus file of pack a to pack b, same names. */
+static void plus_follow(u32 a,u32 b){
+    char *src=PX_PATH2,*dst=PX_TMP;
+    for(u32 idx=0;idx<256;idx++){
+        u32 n=pack_sessions(a),m,L,size=0,done=0,r=0;
+        if(!n || !nth_plus(n,idx))return;
+        for(u32 i=0;i<PATH_MAX;i++)src[i]=S->path[i];
+        L=0;while(src[n+L])L++;
+        if(!(m=pack_sessions(b)) || m+L+1>PATH_MAX)return;
+        for(u32 i=0;i<=L;i++)S->path[m+i]=src[n+i];
+        for(u32 i=0;i<PATH_MAX;i++)dst[i]=S->path[i];
+        if(px_mkdir(m))return;
+        for(u32 off=0;!r && (!off || off<size);off+=done){
+            for(u32 i=0;i<PATH_MAX;i++)S->path[i]=src[i];
+            r=px_read(off,SNAP,PX_DATA,&done,&size);
+            for(u32 i=0;i<PATH_MAX;i++)S->path[i]=dst[i];
+            if(!r)r=px_write(off,SNAP,done,0);
+            if(!r && !done)break;
+        }
+        if(r){((px_f1)F_UNLINK)((u32)S->path);return;}
+        if(!guards())return;
+    }
+}
+/* The stock pack copy (Duplicate + an empty pack slot) takes only the files it knows: the Plus files follow it. */
+u32 c_sh_packcopy(u32 *src,u32 *dst,u32 p3,u32 cb,u32 p5){
+    u32 r=((u32 (*)(u32 *,u32 *,u32,u32,u32))0x0804143fu)(src,dst,p3,cb,p5);
+    if(!r && src[0]==1 && (src[2]&255) && (dst[2]&255) && ready() && !S->job.opened && !S->m[ACTIVE] && guards())
+        plus_follow(src[2]&255,dst[2]&255);
+    return r;
+}
+#endif
 /* request: [6] dir (0 = RP_AUTO, 1-31 = a pack), [7] name length, the name, then the command's fields */
 static u32 px_run(u8 *q,u32 len){
     u32 cmd=q[4]&0x3f,dir=q[6],L=q[7],e=PX_BAD,n,size=0,done=0;
@@ -668,6 +794,29 @@ static u32 px_run(u8 *q,u32 len){
         goto out;
     }
     if(cmd==0x21){e=px_list(dir,px_g32(a),&o);goto out;}       /* list: the index-th Plus file: size, name */
+#if FILE_TOOLS
+    if(cmd==0x28){                                               /* project [a] slot: size, its 20 Plus bytes */
+        u8 *m=SNAP+256;
+        e=px_meta(dir,a[0],&size,m);
+#if PX_PROJHEAD
+        if(!e)e=px_read(0,m+20,PROJ_HEAD,&done,&size);
+        if(!e && done!=PROJ_HEAD)e=PX_SHORT;
+        if(!e){o=px_p32(o,size);for(u32 i=0;i<20+PROJ_HEAD;i++){*o++=m[i]>>4;*o++=m[i]&15;}}
+#elif PX_COLOUR
+        if(!e)e=px_read(PROJ_COLOUR,m+20,1,&done,&size);
+        if(!e && done!=1)e=PX_SHORT;
+        if(!e){o=px_p32(o,size);for(u32 i=0;i<21;i++){*o++=m[i]>>4;*o++=m[i]&15;}}
+#else
+        if(!e){o=px_p32(o,size);for(u32 i=0;i<20;i++){*o++=m[i]>>4;*o++=m[i]&15;}}
+#endif
+        goto out;
+    }
+    if(cmd==0x29){                                               /* a project copy's Plus file: [a] slot A, pack B, slot B, phase */
+        e=px_slotcopy(dir,a[0],a[1],a[2],a[3],&done);
+        if(!e)o=px_p32(o,done);
+        goto out;
+    }
+#endif
     if(!(n=px_path(dir,q+8,L,&e)))goto out;
     if(cmd==0x22){                                               /* read: size, count, the bytes as nibbles */
         u32 c=a[8]>PX_NMAX?PX_NMAX:a[8];

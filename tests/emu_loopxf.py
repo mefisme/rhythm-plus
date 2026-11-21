@@ -14,6 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(HERE / d) for d in ("modules", "builds", "tests", "remix/tools")]
+import rhdsp, rhdsp1  # noqa: E402,F401  (ours first: they read dsppack images)
 import rpasm  # noqa: E402
 rpasm.use()
 import loopxf as XF  # noqa: E402

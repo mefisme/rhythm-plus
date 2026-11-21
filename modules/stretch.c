@@ -74,13 +74,23 @@ typedef u32 (*read_fn)(u32);
 #define SPD_MIN (1u << 18)                  /* 0.25 and 4 in Q20 */
 #define SPD_MAX (4u << 20)
 #define SCAN_STILL 1024                     /* Granular's Scan in sixteenths of a knob step */
-#define SCAN_DEFAULT (72 * 16)              /* Granular's default Scan */
+#ifndef SCAN_DEFAULT_STEP
+#define SCAN_DEFAULT_STEP 72
+#endif
+#define SCAN_DEFAULT (SCAN_DEFAULT_STEP * 16) /* Granular's default Scan */
 
 #define PAD_ON 8                            /* pad 9: on (the kept length, or Follow) / off */
 #define PAD_FIT 9                           /* pad 10: the whole sample (white) or the part K2 / K3 play (amber) fits the length */
 #define PAD_LEN 10                          /* pads 11-16: the lengths; the lit one again is Follow */
 #define NLEN 6
 #define PAD_GRAN 16                         /* pad 17: Granular on / off, as in its editor */
+#ifdef SCAN_EACH
+#define PAD_MODE 17                         /* pads 18-20: Textured / Triggered, Retrigger, Scan length, as in Granular's settings */
+#define PAD_EACH 19
+#define LIME 0x9EFF59                       /* Granular's page colour */
+#define VIEW ((route_fn)FN(C_GVIEW))       /* (state, t): bit 0 Textured, bit 1 Retrigger, bit 2 each sample */
+#define SAMPLE_PAD ((scan_fn)FN(C_GSPAD))   /* (state, t, which) */
+#endif
 static const u8 QUARTERS[NLEN] = { 1, 2, 4, 8, 16, 32 };      /* 1/4, 1/2, 1, 2, 4 and 8 bars, in beats */
 static const u32 RGB[NLEN] = { 0xE6D166, 0xCCDA66, 0xB3E466, 0x99ED66, 0x80F666, 0x66FF66 };  /* the probability gradient */
 #define GREEN 0x66FF66
@@ -109,9 +119,19 @@ typedef struct {
     u8 fading;                              /* tracks fading out (route word 3 = FADING_OUT) */
     u8 draining;                            /* tracks off that play the note on at speed 1 until the next note */
     u8 round;
+#ifdef CLOCK_LOCK
+    u32 clock;                              /* the sequencer position at the last frame */
+    u8 restart;                             /* tracks whose playhead was sent to the start last frame */
+#endif
+#ifdef SCAN_LOCK
+    u8 lock;                                /* tracks whose Scan word the lock sends; Granular reads it (G_LOCK_OFF) */
+#endif
 } State;
 _Static_assert(sizeof(State) <= SLOT_LEN, "stretch: the RAM slot");
 _Static_assert(__builtin_offsetof(State, on) == 0, "stretch: Granular reads the on byte at the slot");
+#ifdef SCAN_LOCK
+_Static_assert(__builtin_offsetof(State, lock) == LOCK_OFF, "stretch: Granular reads the lock byte");
+#endif
 #define S ((volatile State *)SLOT)
 
 static u32 sel_track(void) { return *PARAM_GET(R32(CONT + O_SELTRK), 0) & 7; }
@@ -245,8 +265,240 @@ static void granular_follow(u32 t, u32 bpm)  /* a length pad's Scan follows the 
         S->gscan[t] = (u16)v;
     }
 }
+#ifdef CLOCK_LOCK
+#define SEQ 0x2003C410u                     /* [ ]: the sequencer's position store; param 0 = 24ths of a beat from bar 1 */
+#define RESTART ((void (*)(u32, u32, u32))FN(C_GRESTART))   /* (state, t, on): Granular's field 13 with or without Scan home */
+static u32 seq_pos(void)
+{
+    u32 st = R32(SEQ);
+#ifdef SCAN_LOCK
+    return built(st) ? *(volatile u32 *)PARAM_GET(st, 0) : 0;
+#else
+    return built(st) ? *PARAM_GET(st, 0) : 0;
+#endif
+}
+#ifdef SCAN_LOCK
+typedef uint64_t u64;
+static void restart(u32 t)
+{
+    RESTART(GSTATE, t, 1);
+    S->restart |= 1u << t;
+}
+#define WORD ((scan_fn)FN(C_GWORD))         /* (state, t, field): the word Granular sends */
+#define PLAYING 0x200122B0u                 /* the transport store: param 0 nonzero while it plays */
+#define LK_MAGIC 0x4C4B3031u
+#define TICK_SAMPLES 120000u                /* a 24th of a beat's samples x the tempo */
+#define SWEEP_ONE (1u << 24)
+#define LOCK_NEAR 1024                      /* samples: closer to the end of a sweep the last speed stays */
+typedef struct {
+    u32 magic, ms, off;                     /* HAL_TICK at the last frame; samples since the position's tick began */
+    u32 p[8];                               /* the sweep's distance so far, 1/256 samples: the Scan words sent x their time */
+    u32 f[8];                               /* a note's sweep: the part gone, of SWEEP_ONE */
+    u16 sent[8];                            /* the Scan word sent, 0 none */
+    u16 serial[8];
+    u8 known, note, skip, start;            /* p is the playhead; a note's sweep; the sweep ends one boundary later; a pad was tapped */
+#ifdef SCAN_EACH
+    u32 n[8];                               /* the part the sweep covers, samples */
+#endif
+} Lock;
+_Static_assert(sizeof(Lock) <= 0x6E0, "stretch: the lock's ITCM, below the guard at 0x3AE0");
+#define LK ((volatile Lock *)LOCK_RAM)
+static u32 div64(u64 n, u32 d)              /* n / d with a quotient below 2^32 */
+{
+    u64 r = 0;
+    u32 q = 0;
+    for (u32 i = 0; i < 64; i++) {
+        r = r << 1 | n >> 63;
+        n <<= 1;
+        q <<= 1;
+        if (r >= d) { r -= d; q |= 1; }
+    }
+    return q;
+}
+static u32 lock_pad(u32 t)                  /* the length pad (1-6) in charge of the sweep, else 0 */
+{
+    u32 ch = (rec(t) & GLEN) >> GLEN_AT;
+    if (!ch || ch > NLEN)
+        return 0;
+    u32 now = SCAN(GSTATE, t, ~0u);
+    if (now != S->gscan[t] && now == scan_for(src_len(t, 1), length_of(ch - 1, tempo())))
+        S->gscan[t] = (u16)now;             /* a loaded project: the saved pad's own Scan puts the pad in charge again */
+    return S->gscan[t] && now == S->gscan[t] ? ch : 0;
+}
+#ifdef SCAN_EACH
+static u32 note_len(u32 t)                  /* the sounding note's region (K2 / K3 on its own sample), 0 none */
+{
+    u32 tag = SHARED_READ(SNAPSHOT + 8 * t);
+#ifdef EACH_TAGS
+    /* core 0 re-tags word 0 each block (seen, published); words 4-5 keep the last note's region after it ends */
+    if (tag != ROUTE_KEY && tag != 0x674331u && tag != 0x674132u && tag != 0x674531u && tag != 0x674732u)
+        return 0;
+#else
+    if (tag != ROUTE_KEY)
+        return 0;
+#endif
+    u32 a = SHARED_READ(SNAPSHOT + 8 * t + 4), b = SHARED_READ(SNAPSHOT + 8 * t + 5), n = a > b ? a - b : b - a;
+#ifdef EACH_TAGS
+    if (SHARED_READ(SNAPSHOT + 8 * t + 4) != a)
+        return 0;
+#endif
+    return n >= 8 && n < 1u << 24 ? n : 0;
+}
+#endif
+#endif
+/* A length pad's sweep starts on the clock: at every multiple of its length from bar 1, and when playback starts again. */
+static void granular_clock(u32 t, u32 now, u32 last)
+{
+#ifdef SCAN_LOCK
+    u32 ch = lock_pad(t), bit = 1u << t;
+    if (!ch || WORD(GSTATE, t, 13) & 1)     /* notes restart the playhead: each note is a sweep */
+        return;
+    u32 len = QUARTERS[ch - 1] * 24;
+    if (now < last) {
+        LK->skip &= ~bit;
+        restart(t);
+    } else if (now / len != last / len) {
+        if (LK->skip & bit)
+            LK->skip &= ~bit;
+        else
+            restart(t);
+    }
+#else
+    u32 ch = (rec(t) & GLEN) >> GLEN_AT;
+    if (!ch || ch > NLEN || !S->gscan[t] || SCAN(GSTATE, t, ~0u) != S->gscan[t])
+        return;
+    u32 len = QUARTERS[ch - 1] * 24;
+    if (now < last || now / len != last / len) {
+        RESTART(GSTATE, t, 1);
+        S->restart |= 1u << t;
+    }
+#endif
+}
+#ifdef SCAN_LOCK
+static void unlock(u32 t)
+{
+    u32 bit = 1u << t;
+    LK->sent[t] = 0;
+    LK->known &= ~bit;
+    LK->note &= ~bit;
+    LK->skip &= ~bit;
+    if (S->lock & bit) {                    /* Granular's own Scan word and field 13 again */
+        S->lock &= ~bit;
+        DSP_WRITE(POOL + 256 * t + 6, WORD(GSTATE, t, 6));
+        RESTART(GSTATE, t, 0);
+    }
+}
+/* The sweep a length pad set ends on time: on the clock's next boundary (Textured), or one length after its note (notes restart
+   the playhead). Each frame the Scan word is the speed that covers the rest of the part in the time left. */
+static void lock_frame(u32 t, u32 bpm, u32 pos, u32 ds, u32 held)
+{
+    u32 bit = 1u << t, ch = lock_pad(t), n = src_len(t, 1);
+    if (!ch || !n || n >= 1u << 24 || WORD(GSTATE, t, 13) & 2 || WORD(GSTATE, t, 7) >> 8 & 0x1F) {
+        unlock(t);
+        return;
+    }
+    if (!(S->lock & bit)) {
+        S->lock |= bit;
+        RESTART(GSTATE, t, 0);              /* field 13 without the Scan home a centred word sets */
+    }
+    u32 c = length_of(ch - 1, bpm), nom = S->gscan[t] - SCAN_STILL, s = LK->sent[t], left = 0;
+#ifdef SCAN_EACH
+    u32 own = VIEW(GSTATE, t) & 4 ? note_len(t) : 0;
+    if (own) {                              /* the note's own sample: its sweep takes the pad's length */
+        u32 w = scan_for(own, c);
+        n = own;
+        nom = w != ~0u ? w - SCAN_STILL : own > c ? SCAN_STILL - 1 : 1;
+    }
+    if (LK->n[t] != n) {                    /* another sample: core 0 wraps the playhead's samples in its part */
+        if (LK->n[t] && LK->p[t] >= n * 256)
+            LK->p[t] %= n * 256;
+        LK->n[t] = n;
+    }
+#endif
+    LK->p[t] += (u32)((u64)s * s * ds >> 11);
+    if (WORD(GSTATE, t, 13) & 1) {
+        u16 serial = (u16)SHARED_READ(SNAPSHOT + 8 * t + 7);
+        if (!(LK->note & bit)) {
+            LK->note |= bit;
+            LK->known &= ~bit;
+        } else if (serial != LK->serial[t]) {
+            LK->known |= bit;
+            LK->p[t] = LK->f[t] = 0;
+            ds = 0;
+        }
+        LK->serial[t] = serial;
+        LK->start &= ~bit;
+        LK->f[t] += div64((u64)ds << 24, c);
+        while (LK->f[t] >= SWEEP_ONE) {
+            LK->f[t] -= SWEEP_ONE;
+            LK->p[t] = LK->p[t] > n * 256 ? LK->p[t] - n * 256 : 0;
+        }
+        left = (u32)((u64)c * (SWEEP_ONE - LK->f[t]) >> 24);
+    } else {
+        LK->note &= ~bit;
+        if (held & bit) {
+            LK->known |= bit;
+            LK->p[t] = 0;
+        }
+        if (LK->start & bit) {
+            LK->start &= ~bit;
+            LK->known &= ~bit;
+        }
+        u32 len = QUARTERS[ch - 1] * 24, e = (pos % len) * TICK_SAMPLES / bpm + LK->off;
+        if (e >= c)
+            e = c - 1;
+        if (!*PARAM_GET(PLAYING, 0)) {
+            LK->known &= ~bit;
+        } else if (!(LK->known & bit) && !(S->restart & bit)) {
+            restart(t);                     /* from the start of the part: the sweep ends on the next boundary, or the one after */
+            if (2 * (c - e) < c)
+                LK->skip |= bit;
+            else
+                LK->skip &= ~bit;
+        }
+        left = c - e + (LK->skip & bit ? c : 0);
+    }
+    u32 v = (LK->known & bit) && s ? s : nom;
+    if ((LK->known & bit) && left >= LOCK_NEAR) {
+        u32 lo = nom * 7 / 10, hi = nom * 10 / 7, r = n * 256 > LK->p[t] ? n * 256 - LK->p[t] : 0;
+        u64 num = (u64)r << 11;             /* s^2 = 2^19 (the samples left) / (the time left) */
+        v = num >= (u64)hi * hi * left ? hi : isqrt(div64(num, left));
+        v = v < lo ? lo : v;
+    }
+    v = v < 1 ? 1 : v >= SCAN_STILL ? SCAN_STILL - 1 : v;
+    LK->sent[t] = (u16)v;
+    DSP_WRITE(POOL + 256 * t + 6, v);
+}
+#endif
+#endif
 static void dsp_frame(u32 bpm)
 {
+#ifdef CLOCK_LOCK
+    u32 now = seq_pos(), last = S->clock, held = S->restart;
+    S->clock = now;
+#ifdef SCAN_LOCK
+    u32 ms = R32(HAL_TICK);
+    if (LK->magic != LK_MAGIC) {
+        for (u32 i = 0; i < sizeof(Lock) / 4; i++)
+            ((volatile u32 *)LOCK_RAM)[i] = 0;
+        LK->magic = LK_MAGIC;
+        LK->ms = ms;
+    }
+    u32 dms = ms - LK->ms, ds = (dms > 64 ? 64 : dms) * 48, spt = TICK_SAMPLES / bpm, ticks = now - last;
+    LK->ms = ms;
+    if (now < last) {
+        LK->off = 0;
+    } else {                                /* runs on with the time, within the tick the position shows */
+        u32 off = LK->off + ds;
+        off = off > ticks * spt ? off - ticks * spt : 0;
+        LK->off = off < spt ? off : spt - 1;
+    }
+#endif
+    S->restart = 0;
+    for (u32 t = 0; t < 8; t++)             /* the home bit stays one frame: the playhead waits at the start of the part */
+        if (held >> t & 1)
+            RESTART(GSTATE, t, 0);
+#endif
     u32 rt = S->round & 7;
     S->round = (u8)(rt + 1);
     for (u32 t = 0; t < 8; t++) {
@@ -261,8 +513,18 @@ static void dsp_frame(u32 bpm)
                 DSP_WRITE(CONTROL + 4 * t + 3, ROUTE(GSTATE, t));
             }
             granular_follow(t, bpm);
+#ifdef CLOCK_LOCK
+            if (now != last)
+                granular_clock(t, now, last);
+#endif
+#ifdef SCAN_LOCK
+            lock_frame(t, bpm, now, ds, held);
+#endif
             continue;
         }
+#ifdef SCAN_LOCK
+        unlock(t);
+#endif
         u32 spd, tgt;
         want(t, bpm, &spd, &tgt);
         if (spd | tgt) {
@@ -322,8 +584,24 @@ static void draw(volatile u32 *out, u32 t, u32 bpm)
     u32 dimmed = (*(volatile u32 *)PARAM_GET(R32(CTRL + O_DIMS), 2) >> 10) & 1;
     u32 full = dimmed ? DIM_MUL : 255, lo = DIM * full >> 8, half = HALF * full >> 8;
     u32 r = rec(t), on = r & ON, ch = r & 7, n = src_len(t, BUSY(t) || (r & PART)), cue = scl(R32(COLOURS + 4 * CLR_CUE), full);
+#ifdef OFF_MATCH
+    u32 lit = on ? full : half, red = scl(GR_OFF_RGB, full);   /* Granular's off */
+#else
     u32 lit = on ? full : half, red = scl(R32(COLOURS + 4 * CLR_RED), lo);
+#endif
     out[PAD_GRAN] = PLUS_OK() ? scl(GSWITCH(GSTATE, t, ~0u) ? GR_ON_RGB : GR_OFF_RGB, full) : 0;
+#ifdef SCAN_EACH
+#ifdef SAMPLE_HIDE
+    if (PLUS_OK() && GSWITCH(GSTATE, t, ~0u)) {     /* shown only on a Granular track */
+#else
+    if (PLUS_OK()) {
+#endif
+        u32 view = VIEW(GSTATE, t);
+        out[PAD_MODE] = scl(view & 1 ? AMBER : WHITE, full);
+        out[PAD_MODE + 1] = view & 1 ? scl(LIME, view & 2 ? full : full / 4) : 0;
+        out[PAD_EACH] = scl(view & 4 ? AMBER : WHITE, full);
+    }
+#endif
     if (BUSY(t)) {
         u32 now = SCAN(GSTATE, t, ~0u);
         out[PAD_ON] = red;
@@ -370,9 +648,22 @@ u32 c_st_wipe(u32 t, u32 a1, u32 a2, u32 a3)
 /* Sample mode's pads (slot 0 of its subview, presses only): 9-17 ours, the rest the stock's */
 u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
 {
+#ifdef SAMPLE_HIDE
+    if (pad < PAD_ON || pad > PAD_EACH || !RST() || (pad > PAD_GRAN && !(PLUS_OK() && GSWITCH(GSTATE, sel_track(), ~0u))))
+#elif defined(SCAN_EACH)
+    if (pad < PAD_ON || pad > PAD_EACH || !RST())
+#else
     if (pad < PAD_ON || pad > PAD_GRAN || !RST())
+#endif
         return ((hook_fn)FN(PREV_PAD))(sub, pad, vel, a3);
     u32 t = sel_track(), bpm = tempo(), r = rec(t), ch = r & 7, t10 = r >> 8, part = r & PART;
+#ifdef SCAN_EACH
+    if (pad > PAD_GRAN) {
+        if (PLUS_OK())
+            SAMPLE_PAD(GSTATE, t, pad - PAD_MODE);
+        return 0;
+    }
+#endif
     u32 glen = r & GLEN, off = (r & ~ON & 0xFF) | t10 << 8, follow = ON | glen | part | (bpm * 10) << 8;    /* Follow takes the tempo each time it starts */
     u32 back = ch ? ON | (r & 0xFF) | t10 << 8 : follow;                            /* on again: the kept length */
     if (pad == PAD_GRAN) {                  /* Granular and stretch turn each other off */
@@ -403,6 +694,9 @@ u32 c_st_pad(u32 sub, u32 pad, u32 vel, u32 a3)
                 S->gprev[t] = (u16)now;
             SCAN(GSTATE, t, v);
             S->gscan[t] = (u16)v;
+#ifdef SCAN_LOCK
+            LK->start |= 1u << t;
+#endif
             rec_put(t, (r & ~GLEN & 0xFF) | (k + 1) << GLEN_AT | t10 << 8);
         }
         return 0;

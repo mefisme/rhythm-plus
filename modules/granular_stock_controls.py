@@ -310,6 +310,13 @@ def oneshot_end(result):
                    ('label','os_spawn')]
 
 
+def scan_home(result):
+    # Field 13 bit 15 (Scan centred, Freeze off): the playhead goes back to Position.
+    at=result.index(('label','g_w2'))+1
+    assert result[at]==f'move b1,x:(r7+${G.V_PH:x})',result[at]
+    result[at:at]=['move x:(r6+$d),x1','btst #$f,x1',('jcc','cc','scan_away'),'clr b',('label','scan_away')]
+
+
 def oneshot_clear():
     return [f'move a,x:>${k:x}' for k in (BURST_LEFT,BURST_GAP,BURST_RNG,BURST_PH)]
 
@@ -353,6 +360,9 @@ def items(source,latched_source=False,raw_output=None,grain_cap=None,tab_at=None
     if os.environ.get('RH_GRANULAR_ONESHOT_SCAN') in ('1','2'):
         assert os.environ.get('RH_GRANULAR_NOBURST')=='1'
         oneshot_end(result)
+    if os.environ.get('RH_GRANULAR_SCAN_HOME')=='1':
+        assert os.environ.get('RH_GRANULAR_SLICE_WORD7')=='1'
+        scan_home(result)
     # Convert the 12-word grain offset to a slot index. The rounded-up Q23
     # reciprocal gives the exact quotient for all 16 valid offsets.
     ratio_address=['move r2,x0',f'move #>${G.GR0:x},a','neg a','add x0,a',

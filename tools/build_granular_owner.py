@@ -45,6 +45,13 @@ def SOFT_LEAVE():return os.environ.get('RH_GRANULAR_SOFT_LEAVE')=='1'
 def KEEP_CHOKE():return os.environ.get('RH_GRANULAR_KEEP_CHOKE')=='1'
 def LOAD_BUSY():return os.environ.get('RH_GRANULAR_LOAD_BUSY')=='1'
 def STRETCH_HANDOFF():return os.environ.get('RH_GRANULAR_STRETCH_HANDOFF')=='1'
+def SCAN_HOME():return os.environ.get('RH_GRANULAR_SCAN_HOME')=='1'
+def STEADY_SWITCH():return os.environ.get('RH_GRANULAR_STEADY_SWITCH')=='1'
+def MODE_FADE():return os.environ.get('RH_GRANULAR_MODE_FADE')=='1'
+def SCAN_CLOCK():return os.environ.get('RH_SCAN_CLOCK')=='1'
+def SCAN_CENTRE():return os.environ.get('RH_GRANULAR_SCAN_CENTRE')=='1'
+def SCAN_LOCK():return os.environ.get('RH_SCAN_LOCK')=='1'
+def SCAN_EACH():return os.environ.get('RH_GRANULAR_SCAN_EACH')=='1'
 
 
 def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,storage_address=0,held_address=0,menu_pulse=False,view_colors=False,remember_views=False,reverse_cycle=False,editor_settings=False,menu_address=0,trim_unused=False,fine_controls=False,fine_all=False,no_burst=False,turn_bar=False,dark_spare=False,easy_zones=False,stock_bar=False,zone_pads=False,full_freeze=False,shift_tap=False,sticky_assign=False,stretch_on=0):
@@ -53,7 +60,7 @@ def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,sto
     source=ROOT/'modules/granular_owner.c'
     work=ROOT/(('buildtmp/granular-owner' if origin==ORIGIN else f'buildtmp/granular-owner-{origin:08x}')+('-pages' if pages else '')+f'-pad{page_pad}-assign{int(assign)}')
     work.mkdir(parents=True,exist_ok=True)
-    policy=(b'trim-standalone-v1' if trim_unused else b'')+(b'fine-v1' if fine_controls else b'')+(b'fine-all-v1' if fine_all else b'')+(b'no-burst-v1' if no_burst else b'')+(b'turn-bar-v1' if turn_bar else b'')+(b'dark-spare-v1' if dark_spare else b'')+(b'easy-zones-v1' if easy_zones else b'')+(b'stock-bar-v1' if stock_bar else b'')+(b'zone-pads-v1' if zone_pads else b'')+(b'full-freeze-v1' if full_freeze else b'')+(b'shift-tap-v1' if shift_tap else b'')+(b'sticky-assign-v1' if sticky_assign else b'')+(b'stretch-v2-%x'%stretch_on if stretch_on else b'')+(b'oneshot-scan-v1' if ONESHOT_SCAN() else b'')+(b'load-direct-v%d'%LOAD_DIRECT() if LOAD_DIRECT() else b'')+(b'load-times-v1' if LOAD_TIMES() else b'')+(b'leave-queue-%d'%LEAVE_QUEUE() if LEAVE_QUEUE() else b'')+(b'replace-ack-v1' if REPLACE_ACK() else b'')+(b'leave-fade-%d'%LEAVE_FADE() if LEAVE_FADE() else b'')+(b'route-sweep-v1' if ROUTE_SWEEP() else b'')+(b'carry-v1' if CARRY() else b'')+(b'soft-leave-v1' if SOFT_LEAVE() else b'')+(b'keep-choke-v1' if KEEP_CHOKE() else b'')+(b'load-busy-v1' if LOAD_BUSY() else b'')+(b'stretch-handoff-v1' if STRETCH_HANDOFF() else b'')
+    policy=(b'trim-standalone-v1' if trim_unused else b'')+(b'fine-v1' if fine_controls else b'')+(b'fine-all-v1' if fine_all else b'')+(b'no-burst-v1' if no_burst else b'')+(b'turn-bar-v1' if turn_bar else b'')+(b'dark-spare-v1' if dark_spare else b'')+(b'easy-zones-v1' if easy_zones else b'')+(b'stock-bar-v1' if stock_bar else b'')+(b'zone-pads-v1' if zone_pads else b'')+(b'full-freeze-v1' if full_freeze else b'')+(b'shift-tap-v1' if shift_tap else b'')+(b'sticky-assign-v1' if sticky_assign else b'')+(b'stretch-v2-%x'%stretch_on if stretch_on else b'')+(b'oneshot-scan-v1' if ONESHOT_SCAN() else b'')+(b'load-direct-v%d'%LOAD_DIRECT() if LOAD_DIRECT() else b'')+(b'load-times-v1' if LOAD_TIMES() else b'')+(b'leave-queue-%d'%LEAVE_QUEUE() if LEAVE_QUEUE() else b'')+(b'replace-ack-v1' if REPLACE_ACK() else b'')+(b'leave-fade-%d'%LEAVE_FADE() if LEAVE_FADE() else b'')+(b'route-sweep-v1' if ROUTE_SWEEP() else b'')+(b'carry-v1' if CARRY() else b'')+(b'soft-leave-v1' if SOFT_LEAVE() else b'')+(b'keep-choke-v1' if KEEP_CHOKE() else b'')+(b'load-busy-v1' if LOAD_BUSY() else b'')+(b'stretch-handoff-v1' if STRETCH_HANDOFF() else b'')+(b'scan-home-v1' if SCAN_HOME() else b'')+(b'steady-switch-v1' if STEADY_SWITCH() else b'')+(b'mode-fade-v1' if MODE_FADE() else b'')+(b'scan-clock-v1' if SCAN_CLOCK() else b'')+(b'scan-centre-v1' if SCAN_CENTRE() else b'')+(b'scan-lock-v1' if SCAN_LOCK() else b'')+(b'scan-each-v1' if SCAN_EACH() else b'')
     digest=hashlib.sha256(source.read_bytes()+b'zig0.13-thumb-m7-Oz-v3'+struct.pack('<13I',origin,pages,page_pad,assign,state_address,storage_address,held_address,menu_pulse,view_colors,remember_views,reverse_cycle,editor_settings,menu_address)+policy).hexdigest()
     metadata=work/'kernel.json'
     if metadata.exists():
@@ -108,6 +115,18 @@ def build(origin=ORIGIN,pages=False,page_pad=29,assign=False,state_address=0,sto
     if KEEP_CHOKE():args+=['-DG_KEEP_CHOKE=1']
     if LOAD_BUSY():args+=['-DG_LOAD_BUSY=1']
     if STRETCH_HANDOFF():args+=['-DG_STRETCH_HANDOFF=1']
+    if SCAN_HOME():
+        assert zone_pads and ONESHOT_SCAN();args+=['-DG_SCAN_HOME=1']
+    if STEADY_SWITCH():args+=['-DG_STEADY_SWITCH=1']
+    if SCAN_CLOCK():args+=['-DG_SCAN_CLOCK=1']
+    if SCAN_CENTRE():args+=['-DG_SCAN_CENTRE=1']
+    if SCAN_LOCK():
+        import stretch_arm
+        assert stretch_on
+        args+=['-DG_SCAN_LOCK=1',f'-DG_LOCK_OFF={stretch_arm.LOCK_OFF}']
+    if SCAN_EACH():args+=['-DG_SCAN_EACH=1']
+    if MODE_FADE():
+        assert LEAVE_FADE() and SOFT_LEAVE();args+=['-DG_MODE_FADE=1']
     if shift_tap:
         assert editor_settings and not reverse_cycle;args+=['-DG_SHIFT_TAP=1']
     if sticky_assign:

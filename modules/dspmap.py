@@ -51,6 +51,9 @@ def regions(rep):
         add(1, "y", FS.LN, 16, "smswitch: drone's last note-on, last note-off's block")
         add(1, "y", FS.XFS, len(FS.XF_SCRATCH), "loopxf: scratch (moved)")
         add(1, "y", FS.XFB, 8, "loopxf: on + t (moved)")
+    elif pm and "endfade" in rep:
+        add(1, "p", int(pm["start"], 16), pm["core1_words"], "our core 1 code (pitchmod's block: the end fade's test)")
+        add(1, "y", int(pm["y_idle"], 16), 3, "pitchmod: idle, burn, block count")
     elif pm:
         sh = int(pm["shift"], 16)
         yb = PM.Y_BASE + sh

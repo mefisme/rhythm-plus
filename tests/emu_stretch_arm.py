@@ -51,6 +51,13 @@ def sel(uc, t): uc.mem_write(ptr(uc, u32(uc, T.CONT + 0x25C), 0), bytes([t]))
 def pad(uc, p): STOCK.clear(); call(uc, u32(uc, SMP_VT) & ~1, 0x2004D36C, p, 100)
 
 
+def off_red(uc, full, lo):
+    """pad 9's stretch off: Granular's off with off_match, else the stock red dimmed"""
+    if REP["stretch"]["arm"].get("scan_lock", {}).get("off_match"):
+        return scl(GR_OFF_RGB, full)
+    return scl(u32(uc, COLOURS + 4 * CLR_RED), lo)
+
+
 def tempo(uc, bpm):
     call(uc, TEMPO_GET, TEMPO, 0)
     uc.mem_write(uc.reg_read(UC_ARM_REG_R0), bytes([bpm]))
@@ -105,6 +112,128 @@ def rec(uc, t):
 
 def on_words(t, spd, tgt):
     return [(("p", 0), t, spd), (("p", 2), t, tgt), (("p", 15), t, D.HOST_KEY), (("c", 3), t, 2), (("c", 0), t, ROUTE_KEY)]
+
+
+def sweeps(uc, o, position, locked):
+    """Frames of 8-9 ms against a running clock. Core 0's playhead moves s^2 / 2^19 samples a sample (measured), held at the start
+    while field 13 bit 15 is set. Each sweep must end where the clock crosses its boundary."""
+    n = 96000
+    call(uc, C.PARAM_GET, 0x200122B0, 0)
+    uc.mem_write(uc.reg_read(UC_ARM_REG_R0), b"\x01")
+
+    def run(frames, bpm_of, lens, tap=None, turn=None, notes=(), size=n):
+        ms, ticks, d, hold, ends, lock6, gone = 5000, 0.0, 0.0, False, [], 0, None
+        call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
+        s = uc.reg_read(UC_ARM_REG_R0) - 1024
+        uc.mem_write(position, struct.pack("<I", 0))
+        tick(uc, ms); out(uc); out(uc)
+        s = next((v for kind, track, v in reversed(writes()) if track == o and kind == ("p", 6)), s)   # the last Scan word sent
+        for i in range(frames):
+            bpm = bpm_of(i)
+            tempo(uc, bpm)
+            dms = 8 + (i % 4 == 0)
+            t_prev, d_prev = ticks, d
+            ticks += dms * bpm * 24 / 60000
+            if not hold:
+                d += s * s / (1 << 19) * dms * 48
+            L = lens(i) * 24
+            if gone is not None:                          # a note's sweep: one length at the tempo of each moment
+                g_prev, gone = gone, gone + dms * bpm / (lens(i) * 60000)
+                if gone >= 1:
+                    f = (1 - g_prev) / (gone - g_prev)
+                    ends.append(((d_prev + f * (d - d_prev)) - size) / size * lens(i) * 60000 / bpm)
+                    gone = None
+            elif not notes and int(ticks // L) > int(t_prev // L):
+                f = (int(ticks // L) * L - t_prev) / (ticks - t_prev)
+                ends.append(((d_prev + f * (d - d_prev)) - size) / size * lens(i) * 60000 / bpm)    # ms early (-) or late (+)
+            ms += dms
+            tick(uc, ms)
+            uc.mem_write(position, struct.pack("<I", int(ticks)))
+            if tap is not None and i == tap[0]:
+                pad(uc, tap[1])
+            if turn is not None and i == turn:
+                call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 1100)
+            if i in notes:                                # core 1 counts the note; core 0 restarts the playhead
+                SNAP[SNAP_HOST + 8 * o + 7] = SNAP.get(SNAP_HOST + 8 * o + 7, 0) + 1
+                d, gone = 0.0, 0.0
+            out(uc)
+            if not locked:                                # Granular sends its Scan knob
+                call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
+                s = uc.reg_read(UC_ARM_REG_R0) - 1024
+            for kind, track, v in writes():
+                if track == o and kind == ("p", 6):
+                    s, lock6 = v, lock6 + 1
+                elif track == o and kind == ("p", 13):
+                    hold = bool(v >> 15 & 1)
+                    if hold:
+                        d = 0.0
+        return ends, lock6
+
+    worst = lambda e: max(abs(x) for x in e)  # noqa: E731
+    rnd = lambda e: [round(x, 1) for x in e]  # noqa: E731
+    steady, _ = run(900, lambda i: 97, lambda i: 4)
+    change, _ = run(900, lambda i: 97 if i < 380 else 131, lambda i: 4)
+    print(f"  1-bar sweeps, ms from the bar: steady 97 BPM {rnd(steady)}, 97 -> 131 BPM {rnd(change)}")
+    if not locked:
+        tempo(uc, 120); out(uc)
+        return
+    check("Scan lock: 1-bar sweeps at 97 BPM end within 3 ms of the bar", worst(steady) < 3, rnd(steady))
+    check("Scan lock: a tempo change mid-bar (97 -> 131): every sweep still ends within 3 ms of the bar", worst(change) < 3, rnd(change))
+    pad(uc, 13)                                           # 2 bars
+    two, _ = run(1500, lambda i: 103, lambda i: 8)
+    check("Scan lock: 2-bar sweeps at 103 BPM end within 3 ms of the boundary", worst(two) < 3, rnd(two))
+    pad(uc, 12)                                           # 1 bar, then 2 bars tapped a third into a 2-bar cycle
+    tapped, _ = run(2000, lambda i: 97, lambda i: 4 if i <= 400 else 8, tap=(400, 13))
+    check("Scan lock: 2 bars tapped mid-cycle: one longer sweep, then every sweep ends on the boundary", worst(tapped[-2:]) < 3, rnd(tapped))
+    pad(uc, 12)
+    config = GSTATE + 168 + o                             # Retrigger on: each note restarts the playhead (field 13 bit 0)
+    old = bytes(uc.mem_read(config, 1))
+    uc.mem_write(config, bytes([old[0] | 8]))
+    timed, _ = run(2200, lambda i: 97 if i < 900 else 128, lambda i: 4, notes=(100, 550, 1000, 1450, 1900))
+    _, noted = run(60, lambda i: 97, lambda i: 4)
+    uc.mem_write(config, old)
+    check("Scan lock: notes that restart the playhead: each note's 1-bar sweep ends one bar after it, across 97 -> 128 BPM",
+          len(timed) == 5 and worst(timed) < 3, rnd(timed))
+    if REP["granular"].get("scan_each"):                  # each sample: a note's own region sets the sweep
+        setting, w = GSTATE + 292 + o, SNAP_HOST + 8 * o
+        s0 = uc.mem_read(setting, 1)[0]
+        uc.mem_write(setting, bytes([s0 | 16]))
+        tags = REP["stretch"]["arm"]["scan_lock"].get("each_tags")
+        SNAP.update({w: 0x674331 if tags else 0x674E31, w + 4: 1000, w + 5: 1000 + 48000})   # core 0's "seen" tag
+        short, _ = run(900, lambda i: 97, lambda i: 4, size=48000)
+        SNAP[w + 5] = 1000 + 150000
+        if tags:
+            SNAP[w] = 0x674732                                    # the native voice has ended; the region stays
+        long_, _ = run(900, lambda i: 97, lambda i: 4, size=150000)
+        uc.mem_write(setting, bytes([s0]))
+        followed, _ = run(900, lambda i: 97, lambda i: 4, size=150000)
+        for k in (w, w + 4, w + 5):
+            SNAP.pop(k)
+        check("Scan length each sample: a 48,000 and a 150,000 sample note both sweep once a bar, within 3 ms"
+              + (" (core 0's seen and ended tags)" if tags else ""),
+              worst(short) < 3 and worst(long_) < 3, (rnd(short), rnd(long_)))
+        check("Scan length track sample: the same 150,000 note sweeps at the track sample's speed (not on the bar)",
+              worst(followed) > 100, rnd(followed))
+    _, before = run(150, lambda i: 97, lambda i: 4)
+    call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 1100)
+    _, after = run(150, lambda i: 97, lambda i: 4)
+    check("Scan lock: Scan turned by hand is free: no Scan words from the lock", before > 100 and after <= 1, (before, after))
+    pad(uc, 12)                                           # 1 bar chosen again, the Scan before it 1100
+    tempo(uc, 120); out(uc)
+    gscan = SLOT + 36 + 2 * o                             # State.gscan[o]: RAM only, 0 after a power-up
+    call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
+    pad_scan = uc.reg_read(UC_ARM_REG_R0)
+    assert struct.unpack("<H", uc.mem_read(gscan, 2))[0] == pad_scan
+    uc.mem_write(gscan, b"\0\0")
+    _, loaded = run(150, lambda i: 120, lambda i: 4)
+    taken = struct.unpack("<H", uc.mem_read(gscan, 2))[0]
+    call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 1100)
+    uc.mem_write(gscan, b"\0\0")
+    _, turned = run(150, lambda i: 120, lambda i: 4)
+    check("Scan lock after a load: the saved pad with its own Scan takes charge again; a Scan turned by hand stays free",
+          loaded > 100 and taken == pad_scan and turned <= 1 and struct.unpack("<H", uc.mem_read(gscan, 2))[0] == 0, (loaded, taken, turned))
+    call(uc, KER["c_gr_runtime_scan"], GSTATE, o, pad_scan)
+    out(uc)
 
 
 def main():
@@ -294,7 +423,7 @@ def main():
     out(uc)
     check("10 ms later: the route off, then Granular's own words 0, 2 and 15", [w for w in writes() if w[1] == t] ==
           [(("c", 0), t, 0), (("c", 3), t, 1), (("p", 0), t, t + 1), (("p", 2), t, 0), (("p", 15), t, GR_KEY)], writes())
-    check("off: pad 9 dim red, the kept length half", f[8] == scl(u32(uc, COLOURS + 4 * CLR_RED), lo) and f[13] == scl(RGB[4], half),
+    check("off: pad 9 red, the kept length half", f[8] == off_red(uc, full, lo) and f[13] == scl(RGB[4], half),
           (hex(f[8]), hex(f[13])))
     seen = []
     for _ in range(9):
@@ -319,8 +448,9 @@ def main():
 
     pad(uc, 0)
     check("pad 1: the stock's handler", STOCK == [0], STOCK)
-    pad(uc, 17)
-    check("pad 18: the stock's handler", STOCK == [17], STOCK)
+    first = 20 if REP["granular"].get("scan_each") else 17       # pads 18-20 copy Granular's settings
+    pad(uc, first)
+    check(f"pad {first + 1}: the stock's handler", STOCK == [first], STOCK)
     page(uc, False)
     out(uc)
     uc.mem_write(OUT, bytes(69 * 4))
@@ -372,10 +502,45 @@ def main():
     want = 1024 + math.isqrt((1 << 19) * 96000 // 96000)
     check(f"Granular: pad 13 (1 bar = 96,000 samples, the region 96,000): Scan {want} (sixteenths)", scan == want, scan)
     f = out(uc)
-    red = scl(u32(uc, COLOURS + 4 * CLR_RED), lo)
-    check("Granular: pad 9 dim red (stretch off), pad 10 dark, pad 13 full, pad 17 Granular's green",
+    red = off_red(uc, full, lo)
+    check("Granular: pad 9 red (stretch off), pad 10 dark, pad 13 full, pad 17 Granular's green",
           f[8] == red and f[9] == 0 and f[12] == scl(RGB[3], full) and f[16] == scl(GR_ON_RGB, full),
           [hex(v) for v in f[8:17]])
+    if REP["granular"].get("scan_each"):
+        config, setting = GSTATE + 168 + o, GSTATE + 292 + o
+        cv = lambda: uc.mem_read(config, 1)[0]  # noqa: E731
+        sv = lambda: uc.mem_read(setting, 1)[0]  # noqa: E731
+        c0, s0 = cv(), sv()
+        uc.mem_write(config, bytes([c0 & ~32 & ~8])); uc.mem_write(setting, bytes([s0 & ~16]))
+        f = out(uc)
+        triggered = f[17] == scl(WHITE, full) and f[18] == 0 and f[19] == scl(WHITE, full)
+        pad(uc, 17); pad(uc, 18); f = out(uc)
+        textured = cv() & 32 and cv() & 8 and f[17] == scl(AMBER, full) and f[18] == scl(0x9EFF59, full)
+        pad(uc, 18); pad(uc, 19); f = out(uc)
+        back = not cv() & 8 and sv() & 16 and f[18] == scl(0x9EFF59, full // 4) and f[19] == scl(AMBER, full)
+        uc.mem_write(config, bytes([cv() & ~32])); pad(uc, 18)
+        guarded = not cv() & 8
+        check("Sample mode pads 18-20 as Granular's settings: Textured / Triggered, Retrigger (Textured only), Scan length",
+              triggered and textured and back and guarded, (triggered, textured, back, guarded, [hex(v) for v in f[16:20]]))
+        if REP["stretch"]["arm"]["scan_lock"].get("off_match") and not REP["stretch"]["arm"]["scan_lock"].get("sample_hide"):
+            on = cv()
+            uc.mem_write(config, bytes([on & ~3 & ~32])); s1 = sv()
+            pad(uc, 17); pad(uc, 19); f = out(uc)
+            check("Granular off: Sample mode pads 18-20 shown and set ahead (Textured, Scan length)",
+                  cv() & 32 and not cv() & 3 and sv() == s1 ^ 16 and f[17] == scl(AMBER, full) and STOCK == [],
+                  (hex(cv()), hex(sv()), [hex(v) for v in f[17:20]], STOCK))
+            uc.mem_write(config, bytes([on])); uc.mem_write(setting, bytes([s1]))
+        if REP["stretch"]["arm"]["scan_lock"].get("sample_hide"):
+            on = cv()
+            uc.mem_write(config, bytes([on & ~3 | 32])); a = out(uc)[17:20]
+            uc.mem_write(config, bytes([on & ~3 & ~32 | 8])); uc.mem_write(setting, bytes([sv() ^ 16])); b = out(uc)[17:20]
+            before = (cv(), sv()); passed = []
+            for k in (17, 18, 19):
+                pad(uc, k); passed += STOCK
+            check("Granular off: Sample mode pads 18-20 not drawn, presses go to the stock, no setting changes",
+                  a == b and passed == [17, 18, 19] and (cv(), sv()) == before, ([hex(v) for v in a], [hex(v) for v in b], passed))
+            uc.mem_write(config, bytes([on])); uc.mem_write(setting, bytes([sv() ^ 16]))
+        uc.mem_write(config, bytes([c0])); uc.mem_write(setting, bytes([s0]))
     tempo(uc, 60)
     out(uc)
     call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
@@ -390,6 +555,25 @@ def main():
     pad(uc, 12)
     call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
     check("Granular: pad 13 again sets Scan", uc.reg_read(UC_ARM_REG_R0) == want, uc.reg_read(UC_ARM_REG_R0))
+    if R.get("clock_lock"):
+        call(uc, C.PARAM_GET, u32(uc, 0x2003C410), 0)
+        position = uc.reg_read(UC_ARM_REG_R0)
+        home = lambda: [v >> 15 & 1 for (kind, track, v) in writes() if kind == ("p", 13) and track == o]   # noqa: E731
+
+        def at(ticks):
+            uc.mem_write(position, struct.pack("<I", ticks))
+            out(uc)
+            return home()
+        at(100); at(100)
+        inside, cross, after, still = at(150), at(193), at(200), at(200)
+        check("Granular clock: pad 13 (1 bar = 96 ticks): no restart inside a bar, a restart on crossing bar 3, released next frame",
+              inside == [] and cross == [1] and after == [0] and still == [], (inside, cross, after, still))
+        restart, freed = at(0), at(5)
+        check("Granular clock: playback from the start restarts the sweep", restart == [1] and freed == [0], (restart, freed))
+        call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 1100)
+        check("Granular clock: Scan turned by hand: no restarts", 1 not in at(300) + at(400), home())
+        call(uc, KER["c_gr_runtime_scan"], GSTATE, o, want)
+        sweeps(uc, o, position, bool(R.get("scan_lock")))
     pad(uc, 12)
     call(uc, KER["c_gr_runtime_scan"], GSTATE, o, 0xFFFFFFFF)
     back = uc.reg_read(UC_ARM_REG_R0)

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rhythm Plus</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23161a14'/%3E%3Cg fill='%2328311f'%3E%3Crect x='5' y='5' width='6' height='6' rx='1.5'/%3E%3Crect x='21' y='5' width='6' height='6' rx='1.5'/%3E%3Crect x='5' y='21' width='6' height='6' rx='1.5'/%3E%3Crect x='21' y='21' width='6' height='6' rx='1.5'/%3E%3C/g%3E%3Cg fill='%239eff59'%3E%3Crect x='13' y='5' width='6' height='6' rx='1.5'/%3E%3Crect x='5' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='13' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='21' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='13' y='21' width='6' height='6' rx='1.5'/%3E%3C/g%3E%3C/svg%3E">
 <style>
   :root { --bg:#0b0c0f; --panel:#15171c; --panel2:#1c1f25; --line:#272b33; --ink:#eef0f3; --dim:#99a0ab; --faint:#5f6570;
           --acc:#9eff59; --acc2:#6fd13a; --acc-ink:#0c1404; --ok:#7ee787; --warn:#ffb86b; --bad:#ff7b72; --info:#79c0ff; --r:16px; }
@@ -29,6 +30,7 @@
   .seg button.on { background:var(--panel2); color:var(--ink); }
 
   .top { flex-wrap:wrap; gap:12px; }
+  @media (min-width:1001px) { .top { display:grid; grid-template-columns:1fr auto 1fr; } .top .seg { justify-self:end; } }
   .nav { display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:3px; }
   .nav button { font:inherit; font-size:.86rem; font-weight:600; padding:6px 14px; border:0; border-radius:7px; background:transparent; color:var(--dim); cursor:pointer; }
   .nav button.on { background:var(--panel2); color:var(--ink); }
@@ -138,17 +140,40 @@
   .b .mem .bar i { background:var(--info); }
   .mem.near .bar i { background:var(--warn); } .mem.full .bar i { background:var(--bad); } .mem.full { color:var(--bad); }
   .pfoot { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-  #btnStop { position:fixed; right:20px; bottom:20px; width:auto; padding:10px 20px; border-radius:12px; z-index:10; box-shadow:0 6px 24px #000a; }
+  [hidden] { display:none !important; }
+  .busy { flex-basis:100%; display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--acc2); border-radius:10px; background:#141a10; }
+  .busy .bt { flex:1; min-width:0; } .busy b { display:block; font-size:.9rem; font-weight:600; }
+  .busy #btnStop { width:auto; padding:8px 16px; border-radius:10px; flex:none; }
+  .pbar { height:6px; background:#22281c; border-radius:3px; margin-top:7px; overflow:hidden; }
+  .pbar i { display:block; height:100%; width:0; background:var(--acc); transition:width .25s; }
+  .pbar.loose i { width:30%; animation:slide 1.2s linear infinite; }
+  @keyframes slide { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
+  .spin { flex:none; width:16px; height:16px; border:2px solid #2a3a1f; border-top-color:var(--acc); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .stuck { position:sticky; top:8px; z-index:20; box-shadow:0 6px 24px #000a; }
   .pfoot .btn { font-size:.84rem; padding:6px 12px; }
   .pfoot .grow { flex:1; }
   .icon { font:inherit; width:34px; height:34px; border-radius:9px; border:1px solid var(--line); background:var(--panel2); color:var(--ink); cursor:pointer; flex:none; }
+  .icon svg { display:block; margin:auto; }
+  .cdot { display:block; width:14px; height:14px; border-radius:50%; border:1px solid #0008; padding:0; margin:auto; cursor:pointer; }
+  .cdot.none { background:transparent; border:1px dashed var(--faint); }
+  .slot .cdot { width:12px; height:12px; }
+  .swatches { display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; margin-top:12px; }
+  .swatches label { margin:0; cursor:pointer; }
+  .swatches input { position:absolute; opacity:0; pointer-events:none; }
+  .swatches span { display:block; height:34px; border-radius:9px; border:2px solid transparent; }
+  .swatches input:checked + span { border-color:var(--ink); }
+  .swatches input:focus-visible + span { outline:2px solid var(--acc); outline-offset:2px; }
   .icon:disabled { color:var(--faint); cursor:not-allowed; }
   .ops { margin-top:14px; padding:10px 16px; font-size:.88rem; color:var(--dim); }
   .ops .note { margin:0; }
   .namelist { max-height:220px; overflow:auto; font-size:.84rem; margin:6px 0; padding-left:18px; }
   .note { font-size:.86rem; margin-top:10px; min-height:1.3em; }
-  .counts { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:.86rem; margin-top:10px; }
-  .counts b { font-variant-numeric:tabular-nums; text-align:right; }
+  .counts { display:grid; grid-template-columns:auto 1fr; gap:10px 12px; font-size:.86rem; margin-top:12px; align-items:baseline; }
+  .counts b { font-variant-numeric:tabular-nums; text-align:right; font-size:1.05rem; min-width:1.6em; }
+  .counts .ct { font-weight:600; }
+  .counts .cd { color:var(--faint); font-size:.8rem; margin-top:1px; }
+  .counts .zero { opacity:.4; }
   .empty { color:var(--faint); font-size:.86rem; padding:14px; text-align:center; }
 
   dialog { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:var(--r); padding:20px; width:min(440px, calc(100vw - 32px)); }
@@ -164,8 +189,8 @@
 <body>
 <div class="app">
   <div class="top">
-    <div class="brand"><div class="logo" aria-hidden="true"><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i></div>
-      <div><b>Rhythm Plus</b><small><span class="es">Firmware y tarjeta SD</span><span class="en">Firmware and SD card</span></small></div></div>
+    <div class="brand"><div class="logo" aria-hidden="true"><i></i><i class="on"></i><i></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i class="on"></i><i></i></div>
+      <div><b>Rhythm Plus</b><small><span class="es">Instalador de firmware y gestión de la tarjeta SD</span><span class="en">Firmware Uploader and SD Card Management</span></small></div></div>
     <nav class="nav" id="nav" aria-label="Páginas / Pages"><button type="button" data-page="fw"><span class="es">Firmware</span><span class="en">Firmware</span></button>
       <button type="button" data-page="packs"><span class="es">Packs</span><span class="en">Packs</span></button>
       <button type="button" data-page="keep"><span class="es">Copia</span><span class="en">Backup</span></button></nav>
@@ -230,15 +255,19 @@
   <section class="page" data-page="packs" hidden>
     <div class="col cardbar" id="cardBar">
       <div class="what"><span id="cardWhat"></span><div id="cardState" class="note"></div></div>
-      <button type="button" class="btn ghost act" id="btnFolder"><span class="es">Abrir la tarjeta</span><span class="en">Open the card</span></button>
+      <button type="button" class="btn ghost act" id="btnFolder"><span class="es">Elegir la tarjeta SD</span><span class="en">Choose SD card</span></button>
       <button type="button" class="btn ghost act" id="btnUsb"></button>
       <button type="button" class="btn ghost act" id="btnAuto" hidden><span class="es">Elegir RP_AUTO</span><span class="en">Choose RP_AUTO</span></button>
+      <button type="button" class="btn ghost act card1" id="btnLoadPack"><span class="es">Cargar un pack</span><span class="en">Load a pack</span></button>
+      <input type="file" id="packFile" accept=".circuitrhythmpack" hidden>
     </div>
     <div class="two" id="two">
     <section class="col pane a" id="paneA" aria-label="From">
       <div class="ph"><span class="pill p-stable"><span class="es">De</span><span class="en">From</span></span>
         <select data-k="pack" aria-label="Pack"></select>
-        <button type="button" class="icon act" data-k="renamePack" title="Rename the pack" aria-label="Rename the pack">✎</button></div>
+        <button type="button" class="icon act" data-k="packColour" title="Pack colour" aria-label="Pack colour"><span class="cdot none"></span></button>
+        <button type="button" class="icon act" data-k="renamePack" title="Rename the pack" aria-label="Rename the pack">✎</button>
+        <button type="button" class="icon act" data-k="deletePack" title="Delete the pack" aria-label="Delete the pack"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 7v4M9.2 7v4"/></svg></button></div>
       <div class="ptabs"><button type="button" data-kind="projects"><span class="es">Proyectos</span><span class="en">Projects</span></button>
         <button type="button" data-kind="samples"><span class="es">Samples</span><span class="en">Samples</span></button><span class="count" data-k="count"></span></div>
       <div class="slots" data-k="list" tabindex="0" role="listbox" aria-multiselectable="true"></div>
@@ -260,7 +289,9 @@
     <section class="col pane b" id="paneB" aria-label="To">
       <div class="ph"><span class="pill p-official"><span class="es">A</span><span class="en">To</span></span>
         <select data-k="pack" aria-label="Pack"></select>
-        <button type="button" class="icon act" data-k="renamePack" title="Rename the pack" aria-label="Rename the pack">✎</button></div>
+        <button type="button" class="icon act" data-k="packColour" title="Pack colour" aria-label="Pack colour"><span class="cdot none"></span></button>
+        <button type="button" class="icon act" data-k="renamePack" title="Rename the pack" aria-label="Rename the pack">✎</button>
+        <button type="button" class="icon act" data-k="deletePack" title="Delete the pack" aria-label="Delete the pack"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 7v4M9.2 7v4"/></svg></button></div>
       <div class="ptabs"><button type="button" data-kind="projects"><span class="es">Proyectos</span><span class="en">Projects</span></button>
         <button type="button" data-kind="samples"><span class="es">Samples</span><span class="en">Samples</span></button><span class="count" data-k="count"></span></div>
       <div class="slots" data-k="list" tabindex="0" role="listbox" aria-multiselectable="true"></div>
@@ -286,23 +317,23 @@
     </section>
     <section class="col">
       <div class="hd"><h3><span class="es">Restaurar</span><span class="en">Restore</span></h3></div>
-      <p class="sub"><span class="es">Devuelve a la tarjeta los archivos de una copia. Los archivos que cambia van a la papelera.</span><span class="en">Puts the files of a backup back on the card. The files it changes go to the trash.</span></p>
+      <p class="sub"><span class="es">Devuelve a la tarjeta los archivos de una copia. Los archivos de la tarjeta que cambia se sustituyen.</span><span class="en">Puts the files of a backup back on the card. The card's files that it changes are replaced.</span></p>
       <div class="row"><button class="btn ghost act card1 cardonly" id="btnPickBackup"><span class="es">Elegir una copia</span><span class="en">Choose a backup</span></button></div>
       <div id="restoreState" class="note"></div>
       <button class="btn act" id="btnRestore" disabled style="margin-top:10px"><span class="es">Restaurar</span><span class="en">Restore</span></button>
     </section>
     <section class="col">
       <div class="hd"><h3><span class="es">Archivos Plus</span><span class="en">Plus files</span></h3></div>
-      <p class="sub"><span class="es">Pone cada archivo de Rhythm Plus junto a su proyecto, con el nombre del aparato, y vacía RP_AUTO de copias.</span><span class="en">Puts each Rhythm Plus file next to its project, with the unit's name, and clears the copies out of RP_AUTO.</span></p>
-      <div class="row"><button class="btn ghost act card1 cardonly" id="btnCheck"><span class="es">Comprobar</span><span class="en">Check</span></button></div>
+      <p class="sub"><span class="es">Comprueba que cada proyecto tiene su archivo de ajustes de Rhythm Plus en su pack, con el nombre que usa el aparato. Arreglar corrige lo que se encuentre y quita de RP_AUTO las copias que ya no hacen falta.</span><span class="en">Checks that each project has its Rhythm Plus settings file in its pack, under the name the unit uses. Fix corrects what is found and removes copies from RP_AUTO that are no longer needed.</span></p>
+      <div class="row"><button class="btn ghost act card1 checkable" id="btnCheck"><span class="es">Comprobar</span><span class="en">Check</span></button></div>
       <div id="tidyState"></div>
-      <label class="check" id="orphRow" style="display:none"><input type="checkbox" id="orphans"><span><span class="es">Mover también a la papelera los archivos de RP_AUTO que ningún proyecto usa</span><span class="en">Also move RP_AUTO files that no project uses to the trash</span></span></label>
+      <label class="check" id="orphRow" style="display:none"><input type="checkbox" id="orphans"><span><span class="es">Quitar también los archivos de RP_AUTO que no usa ningún proyecto de esta tarjeta</span><span class="en">Also remove RP_AUTO files that no project on this card uses</span></span></label>
       <button class="btn act" id="btnTidy" disabled style="margin-top:10px"><span class="es">Arreglar</span><span class="en">Fix</span></button>
       <div id="tidyDone" class="note"></div>
     </section>
     </div>
-    <p class="sub" id="usbNote" hidden style="margin-top:14px;text-align:center"><span class="es">Por USB: la copia funciona; restaurar y la revisión de archivos Plus necesitan la tarjeta en el ordenador.</span><span class="en">Over USB: backup works; restore and the Plus file check need the card in the computer.</span></p>
-    <p class="sub" style="margin-top:14px;text-align:center"><span class="es">Lo que se borra o se sustituye va a la carpeta «Rhythm Plus trash» de la tarjeta. Bórrala tú cuando ya no lo necesites. Por USB, lo borrado no se puede recuperar.</span><span class="en">What is deleted or replaced goes to the "Rhythm Plus trash" folder on the card. Delete it yourself when you no longer need it. Over USB, deleted items cannot be brought back.</span></p>
+    <p class="sub" id="usbNote" hidden style="margin-top:14px;text-align:center"><span class="es">Por USB: la copia y la revisión de archivos Plus funcionan; restaurar necesita la tarjeta en el ordenador. La revisión por USB necesita A0260 o más nuevo.</span><span class="en">Over USB: backup and the Plus file check work; restore needs the card in the computer. The check over USB needs A0260 or newer.</span></p>
+    <p class="sub" style="margin-top:14px;text-align:center"><span class="es">Lo que se borra o se sustituye no se puede recuperar. Haz una copia de seguridad antes de cambios grandes.</span><span class="en">What is deleted or replaced cannot be brought back. Make a backup before big changes.</span></p>
   </section>
 
   <footer><span class="es">Esta página parchea el firmware oficial en tu navegador y comprueba cada archivo antes de enviarlo. No contiene código de Novation. Rhythm Plus no está afiliado a Novation; Circuit Rhythm y Components son marcas de Focusrite Audio Engineering Ltd.</span><span class="en">This page patches the official firmware in your browser and checks each file before it sends it. It holds no Novation code. Rhythm Plus is not affiliated with Novation; Circuit Rhythm and Components are trademarks of Focusrite Audio Engineering Ltd.</span>
@@ -312,7 +343,9 @@
       <pre class="mono">__LICENSE__</pre></details></footer>
 </div>
 
-<button type="button" class="btn danger" id="btnStop" hidden></button>
+<div class="busy" id="busy" hidden role="status" aria-live="polite"><span class="spin" aria-hidden="true"></span>
+  <div class="bt"><b id="busyText"></b><div class="pbar" id="busyBar"><i id="busyFill"></i></div></div>
+  <button type="button" class="btn danger" id="btnStop"></button></div>
 <dialog id="dlg"><form method="dialog" id="dlgForm"><h3 id="dlgTitle"></h3><div id="dlgBody"></div><div class="err" id="dlgErr"></div>
   <div class="row"><button class="btn ghost" value="cancel" formnovalidate><span class="es">Cancelar</span><span class="en">Cancel</span></button><button class="btn ghost" id="dlgOk" value="ok" style="border-color:var(--acc2)"></button></div></form></dialog>
 
@@ -360,6 +393,9 @@ const cardErr = e => {
     "backup-conflict": t("Un pack de la copia tiene otro nombre en la tarjeta.", "A pack of the backup has another name on the card."),
     "on-card": t("Elige una carpeta del ordenador, no de la tarjeta.", "Choose a folder on the computer, not on the card."),
     "rename-empty": t("Escribe un nombre.", "Type a name."),
+    "pack-bad": t("El archivo del pack está dañado o no es un pack de Components.", "The pack file is damaged or is not a Components pack."),
+    "pack-product": t("Este pack es para otro aparato, no para el Circuit Rhythm.", "This pack is for another device, not the Circuit Rhythm."),
+    "pack-used": t("Ese hueco de pack ya tiene un pack.", "That pack slot already has a pack."),
     "cancelled": t("Cancelado. Lo ya hecho queda hecho; una copia de seguridad cancelada no está completa: bórrala.",
                    "Cancelled. What was done stays done; a cancelled backup is not complete: delete it."),
     "rename-edge": t("Sin espacios ni punto al principio o al final.", "No spaces or dot at the start or the end."),
@@ -416,24 +452,41 @@ function sure(title, text, okText, list) {
   });
 }
 
-async function work(id, fn) {                               // one card operation at a time; its error goes to the line id
+async function work(id, fn, {text = t("Trabajando…", "Working…"), cancel = true} = {}) {   // one card operation at a time; its error goes to the line id
   if (card.busy) return;
   card.busy = true; RP.go(); drawButtons();
-  const st = $("btnStop"); st.hidden = false; st.disabled = false; st.textContent = t("Cancelar", "Cancel");
+  const st = $("btnStop"); st.disabled = false; st.hidden = !cancel; st.textContent = t("Cancelar", "Cancel");
+  busyShow(text);
   try { await fn(); }
   catch (e) { note(id, cardErr(e) + (e && e.item ? ` (${e.item})` : ""), e && e.message === "cancelled" ? "warn" : "bad"); }
-  finally { card.busy = false; st.hidden = true; drawButtons(); }
+  finally { card.busy = false; busyHide(); drawButtons(); }
 }
+// the progress row, in the top bar of the page in view, kept on screen while the work runs
+function busyShow(text) {
+  const page = document.querySelector(".page:not([hidden])"), bar = page && page.querySelector(".cardbar, .cardline"), b = $("busy");
+  if (bar) { bar.appendChild(b); bar.classList.add("stuck"); } else { document.querySelector(".app").prepend(b); b.classList.add("stuck"); }
+  b.hidden = false;
+  progress(text);
+}
+function busyHide() { $("busy").hidden = true; for (const x of document.querySelectorAll(".stuck")) x.classList.remove("stuck"); }
+function progress(text, k, n) {                             // n: the total, for a bar that fills; none: a moving bar
+  if (!card.busy) return;
+  $("busyText").textContent = text;
+  $("busyBar").classList.toggle("loose", !n);
+  $("busyFill").style.width = n ? Math.round(100 * k / n) + "%" : "";
+}
+const writing = (k, n) => progress(t(`Escribiendo el archivo ${k} de ${n}…`, `Writing file ${k} of ${n}…`), k, n);
 $("btnStop").onclick = () => { RP.stop(); $("btnStop").disabled = true; $("btnStop").textContent = t("Parando tras este archivo…", "Stopping after this file…"); };
 function drawButtons() {
   const have = !!card.c;
   for (const b of document.querySelectorAll(".act")) b.disabled = card.busy;
   for (const b of document.querySelectorAll(".card1")) b.disabled = card.busy || !have;
   for (const b of document.querySelectorAll(".cardonly")) b.disabled = card.busy || !have || card.c.device;
+  for (const b of document.querySelectorAll(".checkable")) b.disabled = card.busy || !have || card.c.device && !card.c.rhythm.dev.metaOk;
   for (const b of document.querySelectorAll(".pane .act, .mid .act")) b.disabled = card.busy || !have;
   $("btnRestore").disabled = card.busy || !card.restore || card.restore.plan.conflict.length > 0 || !card.restore.plan.write.length && !card.restore.plan.twins.length;
-  $("btnTidy").disabled = card.busy || !card.tidy || !card.tidy.fix.length && !card.tidy.extra.length && !card.tidy.dup.length && !($("orphans").checked && card.tidy.orphan.length);
-  if (have) for (const P of panes) { P.q("rename").disabled ||= P.chosen().length !== 1; P.q("delete").disabled ||= !P.chosen().length; P.q("renamePack").disabled ||= !P.pack; }
+  $("btnTidy").disabled = card.busy || !card.tidy || !card.tidy.names.length && !card.tidy.fix.length && !card.tidy.extra.length && !card.tidy.dup.length && !($("orphans").checked && card.tidy.orphan.length);
+  if (have) for (const P of panes) { P.q("rename").disabled ||= P.chosen().length !== 1; P.q("delete").disabled ||= !P.chosen().length; P.q("renamePack").disabled ||= !P.pack; P.q("deletePack").disabled ||= !P.pack; P.q("packColour").disabled ||= !P.pack; }
   if (have) drawHint();
 }
 
@@ -456,7 +509,7 @@ async function takeCardDir(dir) {
     if (dir.requestPermission && await dir.requestPermission({mode: "readwrite"}) !== "granted") throw Object.assign(new Error(), {name: "NotAllowedError"});
     await usbClose();
     await openCard(dir);
-  });
+  }, {text: t("Abriendo la tarjeta…", "Opening the card…"), cancel: false});
 }
 $("btnFolder").onclick = async () => {
   if (card.busy) return;
@@ -473,6 +526,8 @@ $("cardBar").addEventListener("drop", async e => {          // a drive dropped h
   if (h && h.kind === "directory") await takeCardDir(h);
   else note("cardState", t("Suelta la unidad de la tarjeta o una carpeta, no un archivo.", "Drop the card's drive or a folder, not a file."), "bad");
 });
+$("btnLoadPack").onclick = () => { if (card.c && !card.busy) $("packFile").click(); };
+$("packFile").onchange = () => { const f = $("packFile").files[0]; $("packFile").value = ""; if (f) loadPackFile(f, panes[0]); };
 $("btnAuto").onclick = async () => {
   try { const d = await pickDir("readwrite"); await work("cardState", async () => { card.c.useAuto(d); card.tidy = null; await drawCard(); }); }
   catch (e) { if (e.name !== "AbortError") note("cardState", cardErr(e), "bad"); }
@@ -487,9 +542,10 @@ async function usbClose() {
   if (card.c && card.c.device) { card.c = null; for (const P of panes) P.pack = null; }
 }
 $("btnUsb").onclick = () => work("cardState", async () => {
-  if (card.usb) { await usbClose(); await drawCard(); return; }
+  if (card.usb) { progress(t("Desconectando el aparato…", "Disconnecting the unit…")); await usbClose(); await drawCard(); return; }
   if (!navigator.requestMIDIAccess) throw new Error("no-webmidi");
-  note("cardState", t("Conectando…", "Connecting…"));
+  note("cardState", "");
+  progress(t("Conectando con el aparato por USB…", "Connecting to the unit over USB…"));
   const access = await navigator.requestMIDIAccess({sysex: true});
   const best = map => [...map.values()].filter(x => score(x.name) === 2)[0];
   const out = best(access.outputs), inp = best(access.inputs);
@@ -500,9 +556,10 @@ $("btnUsb").onclick = () => work("cardState", async () => {
   const dev = new RP.Device(tx);
   await dev.identify(); await dev.open(); await dev.plusHello(); dev.build = await dev.buildName();
   card.usb = {dev, inp, out};
+  progress(t("Leyendo los packs del aparato…", "Reading the packs from the unit…"));
   await openCard(new RP.DevRoot(dev));
   note("cardState", "");
-});
+}, {text: t("Conectando con el aparato por USB…", "Connecting to the unit over USB…"), cancel: false});
 window.addEventListener("pagehide", () => { if (card.usb) card.usb.dev.closeNow(); });
 $("btnSend").addEventListener("click", () => { if (card.usb) { card.usb.dev.closeNow(); card.usb.inp.onmidimessage = null; card.usb = null; card.c = null; drawCard(); } }, true);
 
@@ -522,23 +579,27 @@ async function loadItems(P) {
 }
 async function drawCard() {
   const c = card.c;
-  $("cardWhat").innerHTML = !c ? esc(t("Abre la carpeta de la tarjeta, suelta aquí su unidad, o conecta el aparato por USB.", "Open the card's folder, drop its drive here, or connect the unit over USB."))
+  $("cardWhat").innerHTML = !c ? esc(t("Elige la tarjeta SD, suelta aquí su unidad, o conecta el aparato por USB.", "Choose the SD card, drop its drive here, or connect the unit over USB."))
     : c.device ? `<b>Circuit Rhythm</b> · USB · ${esc(unitBuild(c.rhythm.dev))} · ${c.packs.length} packs`
     : `<b>${esc(c.root ? c.root.name : c.rhythm.name)}</b> · ${c.packs.length} packs · RP_AUTO: ${c.autoDir ? (await c.auto()).size : t("no elegida", "not chosen")}`;
   $("btnUsb").textContent = card.usb ? t("Desconectar USB", "Disconnect USB") : t("Conectar por USB", "Connect over USB");
   $("btnAuto").hidden = !c || c.device || !!c.autoDir || !!c.root;
-  $("keepCard").textContent = c ? (c.device ? "Circuit Rhythm · USB" : t("Tarjeta: ", "Card: ") + (c.root ? c.root.name : c.rhythm.name)) : t("Primero abre la tarjeta en la página Packs.", "First open the card on the Packs page.");
+  $("keepCard").textContent = c ? (c.device ? "Circuit Rhythm · USB" : t("Tarjeta: ", "Card: ") + (c.root ? c.root.name : c.rhythm.name)) : t("Primero elige la tarjeta SD en la página Packs.", "First choose the SD card on the Packs page.");
   $("keepCard").className = c ? "" : "warn";
-  $("btnToCard").textContent = c ? t("Cambiar", "Change") : t("Abrir la tarjeta", "Open the card");
+  $("btnToCard").textContent = c ? t("Cambiar", "Change") : t("Elegir la tarjeta SD", "Choose SD card");
   $("usbNote").hidden = !(c && c.device);
   $("two").style.opacity = c ? "" : ".5";
   for (const P of panes) {
     const sel = P.q("pack"); sel.innerHTML = "";
-    for (const k of c ? c.packs : []) { const o = document.createElement("option"); o.value = k.slot; o.textContent = `${k.slot + 1}: ${k.name}`; sel.appendChild(o); }
+    for (const k of c ? c.packs : []) { const o = document.createElement("option"); o.value = k.slot; o.textContent = `${packNo(k.slot)}: ${k.name}`; sel.appendChild(o); }
     if (P.pack && c) { P.pack = c.pack(P.pack.slot); sel.value = P.pack ? P.pack.slot : ""; }
     for (const b of P.el.querySelectorAll(".ptabs button")) b.classList.toggle("on", b.dataset.kind === card.kind);
     P.q("file").accept = card.kind === "projects" ? ".ncs,.rps" : "audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg";
     await loadItems(P);
+    P.colour = P.pack ? await RP.packColour(P.pack).catch(() => null) : null;
+    const dot = P.q("packColour").querySelector(".cdot");
+    dot.className = "cdot" + (P.colour == null ? " none" : ""); dot.style.cssText = P.colour == null ? "" : lit(P.colour);
+    if (c && c.device && P.pack && card.kind === "projects") for (const x of P.items) if (x && known.has(`${P.pack.slot}/${x.slot}`)) x.colour = known.get(`${P.pack.slot}/${x.slot}`);
     drawList(P);
   }
   drawButtons();
@@ -558,8 +619,8 @@ function drawMem(P) {
 function memWarning(P, to, adds) {
   if (card.kind !== "samples") return "";
   const left = P.items.filter((x, n) => !to.includes(n)), need = pagesOf(left) + pagesOf(adds);
-  return need > RP.PAGES ? t(`El pack ${P.pack.slot + 1} necesita ${clock(need)} de memoria de samples; el aparato tiene ${clock(RP.PAGES)}. No podrá cargar todos los samples.`,
-    `Pack ${P.pack.slot + 1} needs ${clock(need)} of sample memory; the unit has ${clock(RP.PAGES)}. It cannot load all the samples.`) : "";
+  return need > RP.PAGES ? t(`El pack ${packNo(P.pack.slot)} necesita ${clock(need)} de memoria de samples; el aparato tiene ${clock(RP.PAGES)}. No podrá cargar todos los samples.`,
+    `Pack ${packNo(P.pack.slot)} needs ${clock(need)} of sample memory; the unit has ${clock(RP.PAGES)}. It cannot load all the samples.`) : "";
 }
 function drawList(P) {
   drawMem(P);
@@ -575,7 +636,8 @@ function drawList(P) {
     const st = x && proj ? STATE[x.state] : null;
     const tail = !x ? "<span></span>" : proj ? (st ? `<span class="pill s-${x.state}" title="${esc(t(st[2], st[3]))}">${esc(t(st[0], st[1]))}</span>` : "<span></span>")
       : `<span class="size">${x.size === null ? "" : (Math.max(0, x.size - 44) / 96000).toFixed(1) + " s"}</span>`;
-    const play = !proj && x ? `<button type="button" class="play" aria-label="${esc(t("Escuchar", "Play"))}">▶</button>` : "<span></span>";
+    const play = !proj && x ? `<button type="button" class="play" aria-label="${esc(t("Escuchar", "Play"))}">▶</button>`
+      : proj && x ? `<button type="button" class="cdot${x.colour == null ? " none" : ""}" ${x.colour == null ? "" : `style="${lit(x.colour)}"`} title="${esc(t("Color del proyecto", "Project colour"))}" aria-label="${esc(t("Color del proyecto", "Project colour"))}"></button>` : "<span></span>";
     r.innerHTML = `<span class="n">${n + 1}</span>${play}<span class="nm" title="${esc(x ? x.file : "")}">${esc(x ? x.name : t("vacío", "empty"))}</span>${tail}`;
     frag.appendChild(r);
   });
@@ -604,9 +666,14 @@ function drawHint() {
   else { const to = targets(A, b.length); h = to ? `← ${b.length} ${t("elegidos", "chosen")}: ${range(to)}` : t("No caben ahí.", "They do not fit there."); }
   $("hint").textContent = h;
 }
-function loadedPackWarning(packs) {                         // a write to the pack the unit has loaded takes effect when the USB session closes
+const packNo = slot => slot + 2;                            // the pad the unit shows it on: pad 1 is the internal pack
+// a write to the pack the unit has loaded takes effect when the USB session closes; whole: its meta file, which reloads all of it
+function loadedPackWarning(packs, whole) {
   const u = card.usb;
-  if (!u || card.warnedLoaded || !packs.some(p => p && u.dev.loaded === p.slot + 1)) return Promise.resolve(true);
+  if (!u || !packs.some(p => p && u.dev.loaded === p.slot + 1)) return Promise.resolve(true);
+  if (whole) return sure(t("Es el pack cargado", "It is the loaded pack"), t("Al desconectar, el aparato recarga todo este pack. Se pierde lo que no esté guardado en el aparato.",
+    "On disconnect, the unit reloads this whole pack. Anything not saved on the unit is lost."), t("Seguir", "Go on")).then(f => !!f);
+  if (card.warnedLoaded) return Promise.resolve(true);
   return sure(t("Es el pack cargado", "It is the loaded pack"), t("Al desconectar, el aparato recarga lo que cambie aquí: los samples, y el proyecto cargado si lo tocas. Se pierde lo que no esté guardado.",
     "On disconnect, the unit reloads what changes here: the samples, and the loaded project if you change it. Anything not saved is lost."), t("Seguir", "Go on")).then(f => { if (f) card.warnedLoaded = true; return !!f; });
 }
@@ -621,12 +688,11 @@ async function transfer(S, Q, op, to) {
   const hit = op === "swap" ? [] : to.filter(n => Q.items[n] && !(same && from.includes(n)));
   const mem = same ? "" : [memWarning(Q, to, from.map(n => S.items[n])), op === "swap" ? memWarning(S, from, to.map(n => Q.items[n])) : ""].filter(Boolean).join(" ");
   if (mem && !hit.length && !await sure(t("Memoria de samples", "Sample memory"), mem, t("Seguir", "Go on"))) return;
-  if (hit.length && !await sure(t("Sustituir", "Replace"), (mem ? mem + " " : "") + (card.c.device ? t("Estos se borran en el aparato:", "These are deleted on the unit:") : t("Estos van a la papelera de la tarjeta:", "These go to the card's trash:")),
+  if (hit.length && !await sure(t("Sustituir", "Replace"), (mem ? mem + " " : "") + t("Estos se borran y no se pueden recuperar:", "These are deleted and cannot be brought back:"),
     t("Sustituir", "Replace"), hit.map(n => `${n + 1}: ${Q.items[n].name}`))) return;
   if (!await loadedPackWarning([S.pack, Q.pack])) return;
   await work("opState", async () => {
-    say(t("Trabajando…", "Working…"));
-    const changed = await RP.transfer(card.kind, S.pack, from, Q.pack, to, {move: op === "move", swap: op === "swap"}, (k, n) => say(t(`Escribiendo ${k} / ${n}…`, `Writing ${k} / ${n}…`)));
+    const changed = await RP.transfer(card.kind, S.pack, from, Q.pack, to, {move: op === "move", swap: op === "swap"}, writing);
     const word = {copy: t("Copiados", "Copied"), move: t("Movidos", "Moved"), swap: t("Cambiados", "Swapped")}[op];
     say(`${word}: ${from.length}` + (changed.length ? t(` · ${changed.length} proyectos del pack siguen sus samples.`, ` · ${changed.length} projects of the pack follow their samples.`) : ""), "ok");
     S.sel.clear(); Q.sel = new Set(to);
@@ -646,9 +712,10 @@ for (const P of panes) {
   L.onclick = e => {
     const r = e.target.closest(".slot"); if (!r || card.busy) return;
     if (e.target.closest(".play")) return play(P, +r.dataset.n, e.target.closest(".play"));
+    if (e.target.closest(".cdot")) return projectColourAsk(P, +r.dataset.n);
     select(P, +r.dataset.n, e);
   };
-  L.ondblclick = e => { const r = e.target.closest(".slot"); if (r && P.items[+r.dataset.n] && !e.target.closest(".play")) { P.sel = new Set([+r.dataset.n]); renameItem(P); } };
+  L.ondblclick = e => { const r = e.target.closest(".slot"); if (r && P.items[+r.dataset.n] && !e.target.closest(".play, .cdot")) { P.sel = new Set([+r.dataset.n]); renameItem(P); } };
   L.onkeydown = e => {
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteItems(P); }
     else if (e.key === "F2") { e.preventDefault(); renameItem(P); }
@@ -689,6 +756,8 @@ for (const P of panes) {
   P.q("rename").onclick = () => renameItem(P);
   P.q("delete").onclick = () => deleteItems(P);
   P.q("renamePack").onclick = () => renamePack(P);
+  P.q("deletePack").onclick = () => deletePackAsk(P);
+  P.q("packColour").onclick = () => packColourAsk(P);
   P.q("add").onclick = () => { if (P.pack) P.q("file").click(); };
   P.q("file").onchange = () => { const f = [...P.q("file").files]; P.q("file").value = ""; if (f.length) addFiles(P, f, P.chosen()[0] ?? -1); };
 }
@@ -701,13 +770,71 @@ async function renameItem(P) {
   }, f => { const bad = RP.nameProblem(f.name.value, x.slot, others, kind); return bad && cardErr(new Error(bad)); });
   if (!f) return;
   const name = f.name.value;
+  if (card.kind === "projects" && !await loadedPackWarning([P.pack])) return;
   await work("opState", async () => { await RP.renameItem(card.kind, P.pack, x.slot, name); say(t(`Renombrado: ${name}`, `Renamed: ${name}`), "ok"); await drawCard(); });
 }
+// over USB the unit says which pack it has open; while that is not known, every pack counts as open and none is deleted
+const openUnknown = () => !!(card.usb && card.usb.dev.loaded == null);
+const isLoaded = pack => !!(card.usb && pack && (openUnknown() || card.usb.dev.loaded === pack.slot + 1));
+const openRefusal = () => openUnknown() ? t("El aparato no ha dicho qué pack tiene abierto, así que no se borra ningún pack. Desconecta el USB y vuelve a conectar.",
+                                            "The unit has not said which pack is open, so no pack is deleted. Disconnect USB and connect again.")
+                                        : t("Es el pack abierto en el aparato. Abre otro pack en el aparato primero.", "It is the pack open on the unit. Open another pack on the unit first.");
+// what happens to a pack that is deleted, in full sentences
+const packGone = pack => t(`El pack ${packNo(pack.slot)}, ${pack.name}, se borra con todos sus proyectos y samples. No se puede deshacer.`,
+                           `Pack ${packNo(pack.slot)}, ${pack.name}, is deleted with all its projects and samples. This cannot be undone.`)
+  + t(" Sus archivos de ajustes de Rhythm Plus pasan a la carpeta RP_AUTO.", " Its Rhythm Plus settings files move to the RP_AUTO folder.");
+async function deletePackAsk(P) {
+  const pack = P.pack; if (!pack || card.busy) return;
+  if (isLoaded(pack)) return say(openRefusal(), "bad");
+  if (!await sure(t("Borrar el pack", "Delete the pack"), packGone(pack), t("Borrar", "Delete"))) return;
+  await work("opState", async () => {
+    progress(t(`Borrando el pack ${packNo(pack.slot)}: ${pack.name}…`, `Deleting pack ${packNo(pack.slot)}: ${pack.name}…`));
+    await RP.deletePack(card.c, pack, k => progress(t(`Borrando el pack ${packNo(pack.slot)}: ${k} archivos…`, `Deleting pack ${packNo(pack.slot)}: ${k} files…`)));
+    for (const Q of panes) if (Q.pack === pack) Q.pack = card.c.packs[0] || null;
+    say(t(`Pack borrado: ${pack.name}.`, `Pack deleted: ${pack.name}.`), "ok");
+    await drawCard();
+  });
+}
+// the 14 stock colours of packs and projects
+const lit = i => `background:${RP.COLOURS_SHOWN[i]}`;
+const COLOUR_NAMES = [["rojo", "red"], ["rosa", "pink"], ["salmón", "salmon"], ["naranja", "orange"], ["melocotón", "peach"], ["amarillo", "yellow"],
+  ["amarillo pálido", "pale yellow"], ["lima", "lime"], ["verde", "green"], ["menta", "mint"], ["azul cielo", "sky blue"], ["azul", "blue"], ["violeta", "violet"], ["magenta", "magenta"]];
+async function pickColour(title, what, current) {           // -> 0-13, or null on Cancel
+  const f = await dialog(title, t("Guardar", "Save"), b => {
+    b.innerHTML = `<p class="sub" style="margin:0">${esc(what)}</p><div class="swatches">${RP.COLOURS_SHOWN.map((c, i) => `<label title="${esc(t(...COLOUR_NAMES[i]))}"><input type="radio" name="colour" value="${i}"${i === current ? " checked" : ""} aria-label="${esc(t(...COLOUR_NAMES[i]))}"><span style="${lit(i)}"></span></label>`).join("")}</div>`;
+  }, f => f.colour.value === "" ? t("Elige un color.", "Choose a colour.") : null);
+  return f ? +f.colour.value : null;
+}
+async function packColourAsk(P) {
+  const pack = P.pack; if (!pack || card.busy) return;
+  const c = await pickColour(t("Color del pack", "Pack colour"), t(`Pack ${packNo(pack.slot)}: ${pack.name}`, `Pack ${packNo(pack.slot)}: ${pack.name}`), P.colour);
+  if (c === null || c === P.colour || !await loadedPackWarning([pack], true)) return;
+  await work("opState", async () => {
+    progress(t("Guardando el color…", "Saving the colour…"));
+    await RP.setPackColour(pack, c);
+    say(t(`Pack ${packNo(pack.slot)}: color ${COLOUR_NAMES[c][0]}.`, `Pack ${packNo(pack.slot)}: colour ${COLOUR_NAMES[c][1]}.`), "ok");
+    await drawCard();
+  }, {cancel: false});
+}
+async function projectColourAsk(P, n) {
+  const x = P.items[n]; if (!x || card.busy) return;
+  const c = await pickColour(t("Color del proyecto", "Project colour"), `${n + 1}: ${x.name}`
+    + (card.c.device ? t(". Por USB se reescribe el proyecto entero: tarda unos segundos.", ". Over USB the whole project is written again: it takes a few seconds.") : ""), x.colour);
+  if (c === null || c === x.colour || !await loadedPackWarning([P.pack])) return;
+  await work("opState", async () => {
+    progress(t(`Guardando el color de ${x.name}…`, `Saving the colour of ${x.name}…`));
+    await RP.setProjectColour(P.pack, n, c);
+    if (card.c.device) known.set(`${P.pack.slot}/${n}`, c);
+    say(t(`${x.name}: color ${COLOUR_NAMES[c][0]}.`, `${x.name}: colour ${COLOUR_NAMES[c][1]}.`), "ok");
+    await drawCard();
+  }, {cancel: false});
+}
+const known = new Map();                                   // over USB: project colours set in this session, as the list cannot read them
 async function renamePack(P) {
   const pack = P.pack; if (!pack) return;
   const others = card.c.packs.filter(x => x !== pack).map(x => x.folder);
   const f = await dialog(t("Renombrar el pack", "Rename the pack"), t("Renombrar", "Rename"), b => {
-    b.innerHTML = `<label>${t("Nombre", "Name")}<input type="text" name="name" maxlength="${RP.nameMax(pack.slot, "pack")}" autocomplete="off"></label><p class="sub" style="margin-top:6px">${esc(t(`Pack ${pack.slot + 1}. Hasta ${RP.nameMax(pack.slot, "pack")} caracteres. Su número no cambia.`, `Pack ${pack.slot + 1}. Up to ${RP.nameMax(pack.slot, "pack")} characters. Its number does not change.`))}</p>`;
+    b.innerHTML = `<label>${t("Nombre", "Name")}<input type="text" name="name" maxlength="${RP.nameMax(pack.slot, "pack")}" autocomplete="off"></label><p class="sub" style="margin-top:6px">${esc(t(`Pack ${packNo(pack.slot)}. Hasta ${RP.nameMax(pack.slot, "pack")} caracteres. Su número no cambia.`, `Pack ${packNo(pack.slot)}. Up to ${RP.nameMax(pack.slot, "pack")} characters. Its number does not change.`))}</p>`;
     b.querySelector("input").value = pack.name;
   }, f => { const bad = RP.nameProblem(f.name.value, pack.slot, others, "pack"); return bad && cardErr(new Error(bad)); });
   if (!f) return;
@@ -716,14 +843,14 @@ async function renamePack(P) {
     say(t("Renombrando…", "Renaming…"));
     const np = await RP.renamePack(pack, name);
     for (const X of panes) if (X.pack === pack || (X.pack && X.pack.slot === pack.slot)) X.pack = np;
-    say(t(`Pack ${pack.slot + 1}: ${name}`, `Pack ${pack.slot + 1}: ${name}`), "ok"); await drawCard();
+    say(t(`Pack ${packNo(pack.slot)}: ${name}`, `Pack ${packNo(pack.slot)}: ${name}`), "ok"); await drawCard();
   });
 }
 async function deleteItems(P) {
   const n = P.chosen(); if (!n.length) return;
   const proj = card.kind === "projects";
-  const text = card.c.device ? t("Se borran en el aparato y no se pueden recuperar.", "They are deleted on the unit and cannot be brought back.")
-    : proj ? t("Van a la papelera de la tarjeta, con sus archivos de Rhythm Plus.", "They go to the card's trash, with their Rhythm Plus files.") : t("Van a la papelera de la tarjeta.", "They go to the card's trash.");
+  const text = proj ? t("Se borran, con sus archivos de ajustes de Rhythm Plus. No se pueden recuperar.", "They are deleted, with their Rhythm Plus settings files. They cannot be brought back.")
+    : t("Se borran y no se pueden recuperar.", "They are deleted and cannot be brought back.");
   if (!await sure(t(`Borrar ${n.length}`, `Delete ${n.length}`), text, t("Borrar", "Delete"), n.map(k => `${k + 1}: ${P.items[k].name}`))) return;
   if (!await loadedPackWarning([P.pack])) return;
   await work("opState", async () => { await RP.deleteItems(card.kind, P.pack, n); P.sel.clear(); say(t(`Borrados: ${n.length}`, `Deleted: ${n.length}`), "ok"); await drawCard(); });
@@ -740,7 +867,42 @@ async function toUnitWav(file) {
   const out = await off.startRendering();
   return {bytes: RP.wavEncode(out.getChannelData(0)), converted: true};
 }
+// a Components pack file (.circuitrhythmpack) into an empty pack slot of the card
+const isPackFile = f => /\.circuitrhythmpack$/i.test(f.name);
+async function loadPackFile(file, P) {
+  if (!card.c || card.busy) return;
+  let pk;
+  try { pk = await RP.readPack(new Uint8Array(await file.arrayBuffer())); } catch (e) { return note("cardState", `${file.name}: ${cardErr(e)}`, "bad"); }
+  const slots = Array.from({length: RP.NPACKS}, (_, s) => s).filter(s => !isLoaded(card.c.pack(s)));
+  if (!slots.length) return note("cardState", openRefusal(), "bad");
+  const first = slots.find(s => !card.c.pack(s)) ?? slots[0];
+  const label = s => { const x = card.c.pack(s); return x ? t(`${packNo(s)}: ${x.name} (se sustituye)`, `${packNo(s)}: ${x.name} (replaced)`) : t(`${packNo(s)}: libre`, `${packNo(s)}: empty`); };
+  const what = t(`${pk.projects.length} proyectos, ${pk.samples.length} samples${pk.gridfx ? " y los Grid FX" : ""}.`,
+                 `${pk.projects.length} projects, ${pk.samples.length} samples${pk.gridfx ? " and the Grid FX" : ""}.`)
+    + (pk.blank ? t(` Los ${pk.blank} proyectos vacíos no se copian: sus huecos quedan libres.`, ` The ${pk.blank} blank projects are not copied: their slots stay empty.`) : "");
+  const f = await dialog(t("Cargar un pack", "Load a pack"), t("Cargar", "Load"), b => {
+    b.innerHTML = `<p class="sub" style="margin:0">${esc(what)}</p>
+      <label>${t("Hueco de pack", "Pack slot")}<select name="slot">${slots.map(s => `<option value="${s}"${s === first ? " selected" : ""}>${esc(label(s))}</option>`).join("")}</select></label>
+      <label>${t("Nombre", "Name")}<input type="text" name="name" autocomplete="off"></label>
+      <p class="sub" style="margin-top:6px">${esc(card.c.device ? t("Por USB tarda varios minutos. No desconectes el aparato.", "Over USB this takes several minutes. Do not disconnect the unit.")
+                                                           : t("Se escribe en la tarjeta del ordenador.", "It is written to the card in the computer."))}</p>`;
+    b.querySelector("input").value = pk.name.slice(0, RP.nameMax(first, "pack"));
+  }, f => { const s = +f.slot.value, bad = RP.nameProblem(f.name.value, s, card.c.packs.filter(x => x.slot !== s).map(x => x.folder), "pack"); return bad && cardErr(new Error(bad)); });
+  if (!f) return;
+  const slot = +f.slot.value, name = f.name.value, old = card.c.pack(slot);
+  if (old && !await sure(t("Sustituir el pack", "Replace the pack"), t(`Primero se quita el pack que hay en el hueco ${packNo(slot)}. `, `First the pack in slot ${packNo(slot)} is removed. `)
+    + packGone(old) + t(` Después se carga ${name} en el hueco ${packNo(slot)}.`, ` Then ${name} is loaded into slot ${packNo(slot)}.`), t("Sustituir", "Replace"))) return;
+  await work("opState", async () => {
+    if (old) { progress(t(`Borrando el pack ${packNo(slot)}: ${old.name}…`, `Deleting pack ${packNo(slot)}: ${old.name}…`)); await RP.deletePack(card.c, old); }
+    const made = await RP.loadPack(card.c, slot, name, pk, (k, n) => progress(t(`Cargando ${name}: archivo ${k} de ${n}…`, `Loading ${name}: file ${k} of ${n}…`), k, n));
+    if (P && made) P.pack = made;
+    say(t(`Cargado: ${name}, en el pack ${packNo(slot)}.`, `Loaded: ${name}, in pack ${packNo(slot)}.`), "ok");
+    await drawCard();
+  });
+}
 async function addFiles(P, files, at) {
+  const packFile = files.find(isPackFile);
+  if (packFile) return loadPackFile(packFile, P);
   if (!P.pack || card.busy) return;
   const proj = card.kind === "projects", items = [], refused = [], notes = [];
   if (proj) {
@@ -771,10 +933,10 @@ async function addFiles(P, files, at) {
   const lines = items.map((it, i) => `${it.from} → ${to[i] + 1}: ${it.name}${it.converted ? t(" (convertido a 48 kHz mono)", " (converted to 48 kHz mono)") : ""}${P.items[to[i]] ? t(" · sustituye a ", " · replaces ") + P.items[to[i]].name : ""}`);
   const msg = [refused.length ? t(`No se añaden: ${refused.join("; ")}.`, `Left out: ${refused.join("; ")}.`) : "", ...notes,
     memWarning(P, to, items.map(it => ({size: it.bytes.length})))].filter(Boolean).join(" ");
-  if (!await sure(t(`Añadir ${items.length} al pack ${P.pack.slot + 1}`, `Add ${items.length} to pack ${P.pack.slot + 1}`), msg || t("Se escriben en estos huecos:", "They are written to these slots:"), t("Añadir", "Add"), lines)) return;
+  if (!await sure(t(`Añadir ${items.length} al pack ${packNo(P.pack.slot)}`, `Add ${items.length} to pack ${packNo(P.pack.slot)}`), msg || t("Se escriben en estos huecos:", "They are written to these slots:"), t("Añadir", "Add"), lines)) return;
   if (!await loadedPackWarning([P.pack])) return;
   await work("opState", async () => {
-    await RP.putFiles(card.kind, P.pack, items, to, (k, n) => say(t(`Escribiendo ${k} / ${n}…`, `Writing ${k} / ${n}…`)));
+    await RP.putFiles(card.kind, P.pack, items, to, writing);
     P.sel = new Set(to); say(t(`Añadidos: ${items.length}`, `Added: ${items.length}`), "ok"); await drawCard();
   });
 }
@@ -801,8 +963,9 @@ $("btnBackup").onclick = async () => {
   let dest; try { dest = await pickDir("readwrite"); } catch (e) { if (e.name !== "AbortError") note("backupState", cardErr(e), "bad"); return; }
   await work("backupState", async () => {
     if (!await outsideCard(dest)) throw new Error("on-card");
-    note("backupState", t("Copiando…", "Copying…"));
-    const r = await RP.backup(card.c, dest, (f, n) => note("backupState", t(`Copiando… ${n} archivos`, `Copying… ${n} files`)));
+    note("backupState", "");
+    progress(t("Haciendo la copia de seguridad…", "Backing up…"));
+    const r = await RP.backup(card.c, dest, (f, n) => progress(t(`Haciendo la copia de seguridad: ${n} archivos copiados…`, `Backing up: ${n} files copied…`)));
     note("backupState", t(`Hecho y comprobado: ${r.files} archivos en «${r.name}».`, `Done and checked: ${r.files} files in "${r.name}".`), "ok");
   });
 };
@@ -810,7 +973,7 @@ $("btnPickBackup").onclick = async () => {
   let top; try { top = await pickDir("read"); } catch (e) { if (e.name !== "AbortError") note("restoreState", cardErr(e), "bad"); return; }
   card.restore = null;
   await work("restoreState", async () => {
-    note("restoreState", t("Comparando con la tarjeta…", "Comparing with the card…"));
+    progress(t("Comparando con la tarjeta…", "Comparing with the card…"));
     const plan = await RP.restorePlan(card.c, top);
     card.restore = {top, plan};
     const n = plan.write.length, lines = [];
@@ -818,17 +981,17 @@ $("btnPickBackup").onclick = async () => {
     else if (!n && !plan.twins.length) lines.push(t("La tarjeta ya tiene todos los archivos de la copia.", "The card already has every file of the backup."));
     else lines.push(t(`${n} archivos se escriben (${plan.write.filter(w => w.old).length} sustituyen a otros); ${plan.same} ya están igual.`,
       `${n} files are written (${plan.write.filter(w => w.old).length} replace others); ${plan.same} are already the same.`));
-    if (plan.twins.length) lines.push(t(`${plan.twins.length} archivos con el mismo número van a la papelera.`, `${plan.twins.length} files with the same number go to the trash.`));
+    if (plan.twins.length) lines.push(t(`${plan.twins.length} archivos con el mismo número se borran.`, `${plan.twins.length} files with the same number are deleted.`));
     if (plan.noAuto) lines.push(t("La copia tiene RP_AUTO: elige la carpeta RP_AUTO de la tarjeta en la página Packs para restaurarla también.", "The backup has RP_AUTO: choose the card's RP_AUTO folder on the Packs page to restore it too."));
     note("restoreState", lines.join(" "), plan.conflict.length ? "bad" : n || plan.twins.length ? "warn" : "ok");
   });
 };
 $("btnRestore").onclick = async () => {
   const r = card.restore; if (!r) return;
-  if (!await sure(t("Restaurar la copia", "Restore the backup"), t(`Se escriben ${r.plan.write.length} archivos en la tarjeta. Los que cambian van a la papelera.`,
-    `${r.plan.write.length} files are written to the card. The ones that change go to the trash.`), t("Restaurar", "Restore"))) return;
+  if (!await sure(t("Restaurar la copia", "Restore the backup"), t(`Se escriben ${r.plan.write.length} archivos en la tarjeta. Los que cambian se sustituyen y no se pueden recuperar.`,
+    `${r.plan.write.length} files are written to the card. The ones that change are replaced and cannot be brought back.`), t("Restaurar", "Restore"))) return;
   await work("restoreState", async () => {
-    const n = await RP.restoreApply(card.c, r.plan, (f, k) => note("restoreState", t(`Escribiendo… ${k} / ${r.plan.write.length}`, `Writing… ${k} / ${r.plan.write.length}`)));
+    const n = await RP.restoreApply(card.c, r.plan, (f, k) => progress(t(`Restaurando: archivo ${k} de ${r.plan.write.length}…`, `Restoring: file ${k} of ${r.plan.write.length}…`), k, r.plan.write.length));
     card.restore = null; card.tidy = null;
     note("restoreState", t(`Hecho: ${n} archivos escritos y comprobados.`, `Done: ${n} files written and checked.`), "ok");
     await drawCard();
@@ -836,27 +999,49 @@ $("btnRestore").onclick = async () => {
 };
 
 // ---- Plus files: check, then fix
-const who = x => x.map(({pack, p}) => `${pack.slot + 1}/${p.slot + 1} ${p.name}`).join(", ");
+const who = x => x.map(({pack, p}) => `${packNo(pack.slot)}/${p.slot + 1} ${p.name}`).join(", ");
+const counts = rows => `<div class="counts">${rows.map(([n, title, detail]) =>
+  `<b class="${n ? "" : "zero"}">${n}</b><div class="${n ? "" : "zero"}"><div class="ct">${esc(title)}</div><div class="cd">${esc(detail)}</div></div>`).join("")}</div>`;
 $("btnCheck").onclick = () => work("tidyDone", async () => {
   card.c.drop(); $("tidyDone").textContent = "";
+  progress(t("Comprobando los nombres y los archivos de ajustes…", "Checking the names and the settings files…"));
   const plan = card.tidy = await RP.tidyPlan(card.c);
-  const rows = [[plan.fix.length, t("archivos se ponen junto a su proyecto, con el nombre del aparato", "files go next to their project, with the unit's name")],
-    [plan.extra.length, t("segundos archivos de un proyecto van a la papelera", "second files of a project go to the trash")],
-    [plan.dup.length, t("copias de RP_AUTO que ya no hacen falta van a la papelera", "RP_AUTO copies that are no longer needed go to the trash")],
-    [plan.orphan.length, t("archivos de RP_AUTO que ningún proyecto usa", "RP_AUTO files that no project uses")]];
-  let html = `<div class="counts">${rows.map(([n, s]) => `<b>${n}</b><span>${esc(s)}</span>`).join("")}</div>`;
+  const gone = t("Arreglar los borra.", "Fix deletes them.");
+  let html = counts([
+    [plan.names.length, t("Proyectos con dos nombres distintos", "Projects with two different names"),
+     t("El nombre guardado dentro del proyecto no es el de su archivo. Arreglar escribe dentro el nombre del archivo.", "The name stored inside the project is not its file name. Fix writes the file name inside.")],
+    [plan.fix.length, t("Archivos de ajustes que poner en su pack", "Settings files to put in their pack"),
+     t("Están en RP_AUTO o tienen otro nombre. Arreglar los copia o les cambia el nombre.", "They are in RP_AUTO or have another name. Fix copies or renames them.")],
+    [plan.extra.length, t("Archivos de ajustes duplicados", "Duplicate settings files"),
+     t("Cada proyecto conserva el que usa. ", "Each project keeps the file it uses. ") + gone],
+    [plan.dup.length, t("Copias de RP_AUTO que ya no hacen falta", "RP_AUTO copies no longer needed"),
+     t("El pack del proyecto ya tiene el archivo. ", "The project's pack already has the file. ") + gone],
+    [plan.orphan.length, t("Archivos de RP_AUTO sin uso", "Unused RP_AUTO files"),
+     t("Ningún proyecto de esta tarjeta los usa. Se conservan, salvo que marques la casilla.", "No project on this card uses them. Fix keeps them unless you select the box below.")]]);
   if (plan.missing.length) html += `<div class="note bad">${esc(t("Falta el archivo de: ", "The file is missing for: ") + who(plan.missing))}</div>`;
   if (plan.bad.length) html += `<div class="note bad">${esc(t("Archivo dañado: ", "Damaged file: ") + who(plan.bad))}</div>`;
+  if (plan.namesUnread) html += `<div class="note warn">${esc(t("Por USB, los nombres dentro de los proyectos se comprueban desde el firmware A0264.", "Over USB, the names inside projects are checked from firmware A0264."))}</div>`;
   if (!card.c.autoDir) html += `<div class="note warn">${esc(t("No se ve RP_AUTO: elígela en la página Packs.", "RP_AUTO is not seen: choose it on the Packs page."))}</div>`;
-  if (!plan.fix.length && !plan.extra.length && !plan.dup.length && !plan.orphan.length) html += `<div class="note ok">${esc(t("Todo está en orden.", "Everything is in order."))}</div>`;
+  if (!plan.names.length && !plan.fix.length && !plan.extra.length && !plan.dup.length && !plan.orphan.length) html += `<div class="note ok">${esc(t("Todo está en orden.", "Everything is in order."))}</div>`;
   $("tidyState").innerHTML = html;
   $("orphRow").style.display = plan.orphan.length ? "flex" : "none"; $("orphans").checked = false;
 });
 $("orphans").onchange = drawButtons;
 $("btnTidy").onclick = () => work("tidyDone", async () => {
-  const n = await RP.tidyApply(card.c, card.tidy, {orphans: $("orphans").checked});
-  card.tidy = null; $("tidyState").innerHTML = ""; $("orphRow").style.display = "none";
-  note("tidyDone", t(`Hecho: ${n} archivos.`, `Done: ${n} files.`), "ok");
+  const plan = card.tidy;
+  if (!await loadedPackWarning(plan.names.map(x => x.pack))) return;
+  progress(t("Arreglando…", "Fixing…"));
+  const n = await RP.tidyApply(card.c, plan, {orphans: $("orphans").checked},
+    c => progress(t(`Arreglando: ${c} archivos cambiados…`, `Fixing: ${c} files changed…`))), k = plan.done;
+  const gone = t("Borrados.", "Deleted.");
+  card.tidy = null; $("orphRow").style.display = "none";
+  $("tidyState").innerHTML = `<div class="note ok">${esc(n ? t("Arreglo terminado", "Fix complete") : t("No había nada que cambiar", "There was nothing to change"))}</div>` + (n ? counts([
+    [k.names, t("Proyectos con el nombre igualado", "Project names matched"), t("El nombre del archivo está escrito dentro.", "The file name is written inside.")],
+    [k.placed, t("Archivos de ajustes puestos en su pack", "Settings files put in their pack"), t("Copiados de RP_AUTO o con el nombre cambiado.", "Copied from RP_AUTO or renamed.")],
+    [k.extra, t("Archivos de ajustes duplicados", "Duplicate settings files"), gone],
+    [k.copies, t("Copias de RP_AUTO que ya no hacían falta", "RP_AUTO copies no longer needed"), gone],
+    [k.unused, t("Archivos de RP_AUTO sin uso", "Unused RP_AUTO files"), gone]].filter(([c]) => c)) : "");
+  note("tidyDone", "");
   await drawCard();
 });
 

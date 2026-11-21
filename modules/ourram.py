@@ -51,6 +51,8 @@ if os.environ.get('RH_DSPZIP') == '1':
     SLOTS = (("dspzip", 288),) + SLOTS
 if os.environ.get("RH_STRETCH") == "1":
     SLOTS = (("stretch", 96),) + SLOTS              # stretch_arm.SLOT_LEN; 32 B steps keep the slots below aligned
+if os.environ.get("RH_FILETOOLS") == "1":
+    SLOTS = (("filetools", 64),) + SLOTS             # filetools.SLOT_LEN
 if os.environ.get("RH_AUTOPROT") == "1":
     SLOTS += (("autoprot", 4),)
 if os.environ.get("RH_AUTOBANK") == "1":

@@ -13,6 +13,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(HERE / d) for d in ("modules", "builds", "tests", "remix/tools")]
+import rhdsp, rhdsp1  # noqa: E402,F401  (ours first: they read dsppack images)
 import rpasm  # noqa: E402
 rpasm.use()
 import pvloop as PV  # noqa: E402
@@ -70,8 +71,8 @@ def main():
         img = bytearray((d / f"rhythmplus-{build.upper()}.bin").read_bytes())
         segs, _ = rhdsp1.parse(rhdsp1.sent(img, rep, "pitchmod"))
         pv, env = int(rep["pvloop"]["pv"], 16), int(rep["pvloop"]["env"], 16)
-        o = rhdsp1.where(img, PV.CALL_PV)
-        calls = [int.from_bytes(img[o + 3 * i:o + 3 * i + 3], "big") for i in (0, 1)]
+        prog = {a + i: w for sp, a, ws in segs if sp == "p" for i, w in enumerate(ws)}
+        calls = [prog[PV.CALL_PV + i] for i in (0, 1)]
         check(f"{build}: the main loop calls our player and gain (P:$123 / $124)", calls == [0x0D0000 | pv, 0x0D0000 | env], [hex(c) for c in calls])
 
         for name, st0, n in (("one-shot forward, through the region's end", start({PV.P: 4800}, False, False), 12),

@@ -20,11 +20,14 @@ import stepmut  # noqa: E402
 SRC = ROOT / "modules" / "stretch.c"
 BLK_OFF, BLK_LEN = 296, 28
 SLOT_LEN = 96                                   # a multiple of 32: the slots below keep their alignment
+LOCK_OFF = 93                                   # State.lock: the tracks the Scan lock drives, read by Granular
+LOCK_RAM = 0x3400                               # ITCM: the lock's words, above the DSP unpacker's window (0x2400-0x33FF)
 LABELS = ("c_st_out", "c_st_pad")
 SMP_VT = 0x08067D8C                             # Sample mode's subview: slot 0 its pad press
 
 
-def install(img, report, base_addr):
+def install(img, report, base_addr=None):
+    """base_addr None: into dsppack's first flash hole (after filetools), else appended there"""
     import rhbuild
     import rhrec
     import stretch_dsp
@@ -42,6 +45,10 @@ def install(img, report, base_addr):
     wipe_site = int(report["trackreset"]["labels"]["c_trreset_pages_call"], 16) if report.get("trackreset", {}).get("wipe") else None
     if wipe_site:
         prev["PREV_WIPE"] = rhbuild.bl_target(img, wipe_site)
+    hole = base_addr is None
+    if hole:
+        holes = report["dsppack"]["holes"]
+        base_addr, end = (int(x, 16) for x in holes[0][:2])
     base_addr = (base_addr + 3) & ~3
     defs = dict(prev, SLOT=rhstate.ST + rhstate.OFF["stretch"][0], SLOT_LEN=SLOT_LEN, BLK_OFF=BLK_OFF,
                 C_RRT=lab("rhrec", "c_rrt"), C_RST=int(report["rhstate"]["labels"]["c_rst"], 16),
@@ -51,19 +58,52 @@ def install(img, report, base_addr):
                 HOST_KEY=stretch_dsp.HOST_KEY, TGT_PART=stretch_dsp.TGT_PART)
     if os.environ.get("RH_PACK_FILES") == "2":
         defs["C_PLUSOK"] = int(report["storageshadow"]["labels"]["c_sh_autobank"], 16)
+    if os.environ.get("RH_SCAN_CLOCK") == "1":
+        assert os.environ.get("RH_GRANULAR_SCAN_HOME") == "1"
+        defs.update(CLOCK_LOCK=1, SCAN_DEFAULT_STEP=64, C_GRESTART=kernel["c_gr_runtime_restart"])
+    if os.environ.get("RH_SCAN_LOCK") == "1":
+        assert "CLOCK_LOCK" in defs and os.environ.get("RH_GRANULAR_SCAN_CENTRE") == "1"
+        defs.update(SCAN_LOCK=1, LOCK_OFF=LOCK_OFF, LOCK_RAM=LOCK_RAM, C_GWORD=kernel["c_gr_runtime_word"])
+    if os.environ.get("RH_GRANULAR_SCAN_EACH") == "1":
+        assert "SCAN_LOCK" in defs
+        defs.update(SCAN_EACH=1, C_GVIEW=kernel["c_gr_runtime_sample_view"], C_GSPAD=kernel["c_gr_runtime_sample_pad"])
+        if os.environ.get("RH_GRANULAR_SCAN_EACH_TAGS") == "1":
+            defs.update(EACH_TAGS=1)
+        if os.environ.get("RH_GRANULAR_SAMPLE_HIDE") == "1":
+            assert "EACH_TAGS" in defs
+            defs.update(SAMPLE_HIDE=1)
+        if os.environ.get("RH_STRETCH_OFF_MATCH") == "1":
+            assert "EACH_TAGS" in defs
+            defs.update(OFF_MATCH=1)
     if os.environ.get("RH_STRETCH_DRAIN_IDLE") == "1":
         defs["DRAIN_IDLE"] = 1
     if os.environ.get("RH_GRANULAR_STRETCH_HANDOFF") == "1":
         defs["C_GHANDOFF"] = kernel["c_gr_stretch_handoff"]
-    code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=LABELS + (("c_st_wipe",) if wipe_site else ()))
-    img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
-    while len(img) % 4:
-        img += bytes([0xFF])
+    code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=LABELS + (("c_st_wipe",) if wipe_site else ()),
+                                     **(dict(max_code=end - base_addr) if hole else {}))
+    if hole:
+        o = base_addr - rhbuild.BASE
+        assert all(b == 0xFF for b in img[o:o + len(code)])
+        img[o:o + len(code)] = code
+        after = (base_addr + len(code) + 3) & ~3
+        holes[0] = [hex(after), holes[0][1], end - after]
+    else:
+        img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
+        while len(img) % 4:
+            img += bytes([0xFF])
     rhbuild.patch_word(img, SMP_VT, prev["PREV_PAD"] | 1, labels["c_st_pad"] | 1)
     rhbuild.patch(img, T.OUT_CALL, f"bl #{prev['PREV_OUT']:#x}", bl_ins(T.OUT_CALL, labels["c_st_out"]))
     if wipe_site:
         rhbuild.patch(img, wipe_site, f"bl #{prev['PREV_WIPE']:#x}", bl_ins(wipe_site, labels["c_st_wipe"]))
-    report["stretch"].update(arm=dict(slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, code=len(code),
+    report["stretch"].update(arm=dict(slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, code=len(code), **({"at": hex(base_addr)} if hole else {}),
                                       prev={k.lower(): hex(v) for k, v in prev.items()},
                                       labels={k: hex(v) for k, v in labels.items()}))
+    if "CLOCK_LOCK" in defs:
+        report["stretch"]["arm"]["clock_lock"] = dict(position=hex(0x2003C410), restart=hex(defs["C_GRESTART"]))
+    if "SCAN_LOCK" in defs:
+        report["stretch"]["arm"]["scan_lock"] = dict(ram=hex(LOCK_RAM), lock_byte=LOCK_OFF, word=hex(defs["C_GWORD"]),
+                                                     **({"each_sample": True} if "SCAN_EACH" in defs else {}),
+                                                     **({"each_tags": True} if "EACH_TAGS" in defs else {}),
+                                                     **({"sample_hide": True} if "SAMPLE_HIDE" in defs else {}),
+                                                     **({"off_match": True} if "OFF_MATCH" in defs else {}))
     return labels, code

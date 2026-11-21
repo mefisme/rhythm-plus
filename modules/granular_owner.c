@@ -33,6 +33,32 @@
 #ifndef G_ZONE_PADS
 #define G_ZONE_PADS 0
 #endif
+#ifndef G_MODE_FADE
+#define G_MODE_FADE 0      /* a mode change stops a sounding Granular note first; the route goes back once it is quiet */
+#endif
+#ifndef G_SCAN_EACH
+#define G_SCAN_EACH 0      /* setting bit 4: a Scan length pad sweeps each note's own sample; settings pads 20-24 regrouped */
+#endif
+#ifndef G_SCAN_LOCK
+#define G_SCAN_LOCK 0      /* stretch's Scan lock sends the Scan word of the tracks in its lock byte (G_LOCK_OFF) */
+#endif
+#if G_SCAN_LOCK
+#define G_LOCKED(t) ((*(volatile uint8_t *)(G_STRETCH_ON+G_LOCK_OFF)>>(t))&1)
+#else
+#define G_LOCKED(t) 0
+#endif
+#ifndef G_SCAN_CENTRE
+#define G_SCAN_CENTRE 0    /* Scan knob 63-65 sends Scan 0: a slower sweep is minutes long */
+#endif
+#ifndef G_SCAN_CLOCK
+#define G_SCAN_CLOCK 0     /* c_gr_runtime_restart: a length pad's sweep restarts on the clock */
+#endif
+#ifndef G_SCAN_HOME
+#define G_SCAN_HOME 0      /* Scan starts centred; centred (Freeze off, no slices) holds the playhead at Position: field 13 bit 15 */
+#endif
+#ifndef G_STEADY_SWITCH
+#define G_STEADY_SWITCH 0  /* the on/off pad shows the new state steadily while the old sound stops */
+#endif
 #ifndef G_FULL_FREEZE
 #define G_FULL_FREEZE 0
 #endif
@@ -258,7 +284,7 @@ uint32_t c_gr_owner_source(const GOwner *owner,uint32_t track,
  */
 typedef struct { uint8_t knob[8][8]; } GParameters;
 void c_gr_params_init(GParameters *parameters) {
-    static const uint8_t defaults[8]={0,64,51,72,0,0,64,0};
+    static const uint8_t defaults[8]={0,64,51,G_SCAN_HOME?64:72,0,0,64,0};
     for(uint32_t t=0;t<8;t++) for(uint32_t k=0;k<8;k++) parameters->knob[t][k]=defaults[k];
 }
 uint32_t c_gr_params_get(const GParameters *parameters,uint32_t track,uint32_t knob) {
@@ -400,7 +426,7 @@ typedef struct {
     uint32_t pressed_at;
     uint8_t held,track,shown,reserved;
 } GSettingsUi;
-enum { G_UI_TAKEN=256,G_SETTING_CHANGED=16,G_HOLD_MS=333 };
+enum { G_UI_TAKEN=256,G_SETTING_CHANGED=16,G_HOLD_MS=333,G_EACH=16 };
 uint32_t c_gr_ui_size(void) { return sizeof(GSettingsUi); }
 void c_gr_ui_init(GSettingsUi *ui) { *ui=(GSettingsUi){0}; }
 void c_gr_ui_release(GSettingsUi *ui) { ui->held=ui->shown=ui->reserved=0; }
@@ -553,6 +579,16 @@ void c_gr_runtime_init(GRuntime *state) {
     state->magic=GR_MAGIC;
 }
 static void gr_invalidate(GRuntime *state,uint32_t track) {
+#if G_MODE_FADE
+    /* Route off first would let the paused plain voice play its start until the stop fades it: hold the route (GL). */
+    const GTrack *owner=&state->owner.track[track];
+    if(owner->mode!=G_OFF && owner->phase==G_QUIET) {
+        state->running&=~(1u<<track);gr_stop(track);
+        if(!GL) GL_AT=(uint16_t)*(volatile uint32_t *)0x20000820;
+        GL|=1u<<track;
+        return;
+    }
+#endif
     gr_write(GR_CONTROL+4*track,0);
     gr_write(GR_CONTROL+4*track+1,state->owner.track[track].epoch);
     state->running&=~(1u<<track);gr_stop(track);
@@ -638,6 +674,9 @@ static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
                          |(state->owner.track[track].mode==G_TEXTURE && !((state->playing>>track)&1))|(((uint32_t)state->tail>>track&1)<<3)
                          |(G_ONESHOT_SCAN?((state->one_shot>>track)&1)<<2:0)|((state->setting[track]&1u)<<4)|((uint32_t)(state->setting[track]>>1&7)<<5)
                          |((uint32_t)(G_FULL_FREEZE && (state->config[track]&64)?127:gr_lock_amount(state->shift[track][G_SHIFT_LOCK]))<<8)
+#if G_SCAN_HOME && G_ZONE_PADS
+                         |(uint32_t)(!(state->config[track]&64) && !gr_count(state->shift[track][G_SHIFT_SLICE]) && !gr_field(state,track,6) && !G_LOCKED(track))<<15
+#endif
 #if !G_ZONE_PADS
                          |(gr_count(state->shift[track][G_SHIFT_SLICE])?gr_count(state->shift[track][G_SHIFT_SLICE])-1:0)<<15
                          |gr_slice_step(state,track)<<19
@@ -648,7 +687,7 @@ static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
     if(indices[field]<8 && (G_FINE_KNOBS>>indices[field]&1)) {
         uint32_t knob=indices[field],step=state->parameters.knob[track][knob],part=state->fine[track][knob];
         uint32_t value=step*G_FINE_STEPS+part;
-        if(knob==3) return (value-64*G_FINE_STEPS)&0xffffff;
+        if(knob==3) return G_SCAN_CENTRE && !G_LOCKED(track) && step>=63 && step<=65?0:(value-64*G_FINE_STEPS)&0xffffff;
         if(knob==1) return step>=127?gr_size_samples[127]:gr_size_samples[step]+(gr_size_samples[step+1]-gr_size_samples[step])*part/G_FINE_STEPS;
         if(knob==2) {
             uint32_t low=(step*100+63)/127,high=step>=127?low:((step+1)*100+63)/127;
@@ -660,7 +699,7 @@ static uint32_t gr_field(const GRuntime *state,uint32_t track,uint32_t field) {
     if(field==3 || field==4 || field==6) {
         uint32_t knob=indices[field],value=gr_fine_value(state,track,knob);
         if(field==4) return value;
-        if(field==6) return (value-64*G_FINE_STEPS)&0xffffff;
+        if(field==6) return G_SCAN_CENTRE && !G_LOCKED(track) && value/G_FINE_STEPS-63<3?0:(value-64*G_FINE_STEPS)&0xffffff;
         uint32_t step=value/G_FINE_STEPS,part=value%G_FINE_STEPS;
         if(step>=127) return gr_size_samples[127];
         return gr_size_samples[step]+(gr_size_samples[step+1]-gr_size_samples[step])*part/G_FINE_STEPS;
@@ -754,6 +793,14 @@ uint32_t c_gr_runtime_ui_pad(GRuntime *state,uint32_t track,uint32_t pad) {
     GTrack *owner=&state->owner.track[track];
     if(owner->phase>=G_REPLACE) return G_UI_TAKEN;
     if(!state->ui.shown || state->ui.track!=track || pad<16 || pad>=24) return 0;
+#if G_SCAN_EACH
+    _Static_assert(G_NO_BURST,"pads 22-24 take Burst's place");
+    static const int8_t moved[8]={16,17,18,-2,-1,19,20,21};   /* the pad's setting: -2 Scan length, -1 the gap */
+    int32_t was=moved[pad-16];
+    if(was==-1) return G_UI_TAKEN;
+    if(was==-2) { state->setting[track]^=G_EACH;state->flags|=GR_DIRTY;return G_UI_TAKEN|G_SETTING_CHANGED; }
+    pad=(uint32_t)was;
+#endif
     uint32_t config=state->config[track];
     if(pad==16) config=(config&~3u)|((config&3)?0:((config&32)?G_TEXTURE:G_TRIGGERED));
     else if(pad==17) {
@@ -877,6 +924,12 @@ static void gr_leave_frame(GRuntime *state) {
     uint32_t late=(uint16_t)(*(volatile uint32_t *)0x20000820-GL_AT)>=G_LEAVE_FADE;
     for(uint32_t track=0;track<8;track++) if(leaving&(1u<<track)) {
         const GTrack *owner=&state->owner.track[track];
+#if G_MODE_FADE
+        if(owner->phase==G_QUIET) {
+            if(late || gr_status_quiet(c_gr_shared_read(GR_SNAPSHOT+8*track))) gr_leave_back(state,track);
+            continue;
+        }
+#endif
         /* Granular wants the track again, or stretch took it: their own paths own the route now. */
         if((state->config[track]&3) || owner->mode!=G_OFF || owner->wanted!=G_OFF) { GL&=~(1u<<track);G_DUE(state,track);continue; }
 #if G_STRETCH
@@ -940,6 +993,43 @@ static void gr_route_sweep(GRuntime *state) {
     if(c_gr_sample_read(GR_CONTROL+4*track)!=0x674e31) return;
     gr_write(GR_CONTROL+4*track,0);
     gr_write(GR_CONTROL+4*track+3,!G_ONESHOT_SCAN);
+}
+#endif
+#if G_SCAN_EACH
+_Static_assert(G_SCAN_LOCK,"each sample is the lock's");
+/* Sample mode's copies of settings pads 18-20: bit 0 Textured chosen, bit 1 Retrigger, bit 2 each sample */
+uint32_t c_gr_runtime_sample_view(const GRuntime *state,uint32_t track) {
+    if(track>=8 || state->magic!=GR_MAGIC) return 0;
+    uint32_t config=state->config[track];
+    return (config>>5&1)|(config>>2&2)|(state->setting[track]&G_EACH?4:0);
+}
+/* which: 0 Textured / Triggered, 1 Retrigger (Textured only), 2 each sample */
+uint32_t c_gr_runtime_sample_pad(GRuntime *state,uint32_t track,uint32_t which) {
+    if(track>=8 || state->magic!=GR_MAGIC || state->owner.track[track].phase>=G_REPLACE) return 0;
+    uint32_t config=state->config[track];
+    if(which==0) {
+        config^=32;
+        if(config&3) config=(config&~3u)|((config&32)?G_TEXTURE:G_TRIGGERED);
+    } else if(which==1 && (config&32)) { config^=8;state->dirty|=1u<<track; }
+    else if(which==2) state->setting[track]^=G_EACH;
+    else return 0;
+    state->config[track]=(uint8_t)config;
+    state->flags|=GR_DIRTY;
+    return 1;
+}
+#endif
+#if G_SCAN_LOCK
+_Static_assert(G_SCAN_CLOCK && G_STRETCH,"the lock is stretch's");
+uint32_t c_gr_runtime_word(GRuntime *state,uint32_t track,uint32_t field) {
+    return track<8 && field<16 && state->magic==GR_MAGIC?gr_field(state,track,field):0;
+}
+#endif
+#if G_SCAN_CLOCK
+_Static_assert(G_SCAN_HOME && G_ZONE_PADS,"the restart is field 13's Scan home bit");
+/* on: field 13 with the Scan home bit (the playhead goes to the start of the part); off: field 13 as it is */
+void c_gr_runtime_restart(GRuntime *state,uint32_t track,uint32_t on) {
+    if(track>=8 || state->magic!=GR_MAGIC || !(state->flags&GR_INITIALIZED)) return;
+    gr_write(GR_POOL+256*track+13,gr_field(state,track,13)|(on?1u<<15:0));
 }
 #endif
 void c_gr_runtime_frame(GRuntime *state,uint32_t ready,uint32_t uploading) {
@@ -1111,7 +1201,8 @@ uint32_t c_gr_runtime_message(GRuntime *state,uint32_t *packet,uint32_t caller) 
         else if(command==0x800000 && packet[1]==3 && caller==0x0804074a) { GK&=~(1u<<(packet[0]&7));return 0; }
     }
 #endif
-    if((packet[0]&0xf00000)==0x900000 && GL&(1u<<(packet[0]&7))) gr_leave_back(state,packet[0]&7);
+    if((packet[0]&0xf00000)==0x900000 && GL&(1u<<(packet[0]&7)) && (!G_MODE_FADE || state->owner.track[packet[0]&7].phase!=G_QUIET))
+        gr_leave_back(state,packet[0]&7);
     if(!(state->flags&GR_INITIALIZED)) return 1;
 #else
     if(state->magic!=GR_MAGIC || !(state->flags&GR_INITIALIZED)) return 1;
@@ -1630,11 +1721,20 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
     if(gr_settings_visible(state,track)) {
         const GTrack *owner=&state->owner.track[track];
         uint32_t config=state->config[track];
-        uint32_t blink=owner->phase==G_QUIET && (*(volatile uint32_t *)0x20000820&128);
+        uint32_t blink=!G_STEADY_SWITCH && owner->phase==G_QUIET && (*(volatile uint32_t *)0x20000820&128);
         out[16]=gr_rgb(config&3?0x35df74:0xff3040,blink?level/8:level);
         // Green/red is on/off, white/amber a two-way choice, page color dim/bright a toggle.
         out[17]=gr_rgb(config&32?0xffa020:0xffffff,level);
         out[18]=config&32?gr_rgb(G_PAGE_RGB,config&8?level:level/4):0;
+#if G_SCAN_EACH
+        static const uint32_t pitch_sets[5]={G_PAGE_RGB,0xffffff,0x59d6ff,0xffc859,0xff59c2};
+        uint32_t set=state->setting[track];
+        out[19]=gr_rgb(set&G_EACH?0xffa020:0xffffff,level);
+        out[20]=0;
+        out[21]=gr_rgb(G_PAGE_RGB,set&1?level:level/4);
+        out[22]=gr_rgb(G_PAGE_RGB,config&64?level:level/4);
+        out[23]=gr_rgb(pitch_sets[set>>1&7],set>>1&7?level:level/4);
+#else
         out[19]=gr_rgb(G_PAGE_RGB,state->setting[track]&1?level:level/4);
         out[20]=gr_rgb(G_PAGE_RGB,config&64?level:level/4);
         static const uint32_t pitch_sets[5]={G_PAGE_RGB,0xffffff,0x59d6ff,0xffc859,0xff59c2};
@@ -1646,6 +1746,7 @@ void c_gr_runtime_draw(const GRuntime *state,uint32_t track,uint32_t *out,uint32
         out[22]=gr_rgb(G_PAGE_RGB,set&G_BURST_FADE?level:level/4);
         static const uint32_t burst_pitches[3]={G_PAGE_RGB,0x59d6ff,0xff59c2};
         out[23]=gr_rgb(burst_pitches[pitch],pitch?level:level/4);
+#endif
 #endif
     } else {
         int32_t value=shifted?gr_shift_value(state,track,knob):state->parameters.knob[track][knob];
@@ -1771,7 +1872,7 @@ uint32_t c_gr_runtime_settings_load(GRuntime *state,const uint8_t *b) {
 #endif
     if(b) {
         for(uint32_t i=0;i<64;i++) ((uint8_t *)&state->parameters)[i]=b[8+i];
-        for(uint32_t t=0;t<8;t++) { state->config[t]=b[72+t];state->level[t]=b[80+t];state->setting[t]=b[144+t]&(G_NO_BURST?15:255);state->sync[t]=0;state->owner.track[t].settings=1|((state->config[t]>>2)&2); }
+        for(uint32_t t=0;t<8;t++) { state->config[t]=b[72+t];state->level[t]=b[80+t];state->setting[t]=b[144+t]&(G_NO_BURST?(G_SCAN_EACH?15|G_EACH:15):255);state->sync[t]=0;state->owner.track[t].settings=1|((state->config[t]>>2)&2); }
         for(uint32_t i=0;i<56;i++) ((uint8_t *)state->shift)[i]=b[88+i];
 #if G_FINE_CONTROLS
         if(b[2]>=5)for(uint32_t i=0;i<64;i++)((uint8_t *)state->fine)[i]=b[224+i];

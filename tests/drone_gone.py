@@ -4,11 +4,12 @@ import fshape as FS
 
 def undrone(base, base_rep, rep):
     """base: {P address: word}; the drone words removed, later code and its addresses moved down, the note hooks the stock's"""
-    if not rep.get('smswitch', {}).get('no_drone') or 'drone' not in base_rep.get('smswitch', {}):
+    now = rep.get('smswitch') or rep.get('endfade') or {}               # endfade: no switches, so no drone
+    if not (now.get('no_drone') or 'endfade' in rep) or 'drone' not in base_rep.get('smswitch', {}):
         return base
     s = int(base_rep['smswitch']['drone'], 16)
     d = int(base_rep['smswitch']['loopfade'], 16) - s
-    assert int(rep['smswitch']['loopfade'], 16) == s and d > 0
+    assert int(now['loopfade'], 16) == s and d > 0
     stock = {FS.NOTE_AT: FS.NOTE_OLD[0], FS.NOTE_AT + 1: FS.NOTE_OLD[1], FS.OFF_AT: FS.OFF_OLD[0], FS.OFF_AT + 1: FS.OFF_OLD[1]}
     top = max(base)
     out = {}
