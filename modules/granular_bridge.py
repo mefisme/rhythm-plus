@@ -3,6 +3,7 @@ from thumb import (Asm,bl,b_w,b_cond,bx_lr,mov_reg,movs_imm,movw,movt,
                    push_list,pop_list,ldr_sp,ldr_imm,ldrb_imm,cmp_imm,cmp_reg,
                    lsrs_imm,lsls_imm,add_sp_imm,adds_imm8,strb_imm,raw)
 import rhbuild
+from flash_placement import emit_code
 import rhstate
 import countin as C
 import cthresh
@@ -11,7 +12,7 @@ import os
 MESSAGE,SOURCE,PARAM=0x080406a8,0x0804b060,0x0804070e
 
 
-def install(img,report,base,current=False):
+def install(img,report,base,current=False,*,placement_end=None):
     kernel=report['granular']['arm_kernel']['labels']
     slot=rhstate.ST+rhstate.OFF['granular'][0]
     fine=current and os.environ.get('RH_GRANULAR_FINE')=='1'
@@ -94,8 +95,7 @@ def install(img,report,base,current=False):
     a.label('param_drop');E(pop_list,[0,1,2,3,4,5,6],pc=True)
     a.label('param_native');E(raw,bytes(img[PARAM-rhbuild.BASE:PARAM-rhbuild.BASE+4]));E(b_w,PARAM+4)
     code,labels=a.assemble()
-    img += b'\xff'*(base-rhbuild.BASE-len(img))+code
-    while len(img)%4:img.append(255)
+    emit_code(img,rhbuild.BASE,base,code,placement_end)
     if current:
         at=int(report['gfxmix']['labels']['c_gx_granular_busy'],16)
         rhbuild.patch(img,at,'movs r0, #0|bx lr',b_w(at,labels['c_ggranular_busy']))

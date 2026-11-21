@@ -105,6 +105,9 @@ import granular_layout as L
 import granular_bundle as B
 
 def main():
+    fill_gaps = '--fill-dsp-gaps' in sys.argv
+    if fill_gaps and (not CONNECT or '--dsp-pack' not in sys.argv or '--release' in sys.argv):
+        raise ValueError('--fill-dsp-gaps requires connected Granular, DSP packing and offline output')
     with CURRENT.allocated(),B.builders(packed='--pack-core1' in sys.argv):
         b=build(NAME.upper(),granular_stage=True)
     if '--no-easy-start' in sys.argv:
@@ -128,9 +131,30 @@ def main():
     if CONNECT:
         import granular_lanes
         granular_lanes.install(b.img,b.report,b.next_base())
-        granular_bridge.install(b.img,b.report,b.next_base(),current=True)
-        granular_ui.install(b.img,b.report,b.next_base(),persist=False,current=True,page_pad=GRANULAR_PAD,pages=PAGES,track_views=TRACK_VIEWS,reverse_cycle=REVERSE_CYCLE,editor_settings=EDITOR_SETTINGS,no_burst=NO_BURST,shift_tap=SHIFT_TAP)
-        granular_lifecycle.install(b.img,b.report,b.next_base(),persist=False,companion=STORE)
+        if fill_gaps:
+            import dsppack
+            dsppack.install(b.img,b.report)
+            holes = b.report['dsppack']['holes']
+            # Use the retired core-0 stream and leave the first gap to File Tools and Stretch.
+            gap_index = 2
+            start, end = (int(value, 16) for value in holes[gap_index][:2])
+            cursor = start
+
+        def install_adapter(name, module, **options):
+            nonlocal cursor
+            if not fill_gaps:
+                module.install(b.img,b.report,b.next_base(),**options)
+                return
+            address = (cursor + 15) & ~15
+            module.install(b.img,b.report,address,placement_end=end,**options)
+            cursor = address + b.report['granular'][name]['bytes']
+
+        install_adapter('bridge',granular_bridge,current=True)
+        install_adapter('ui',granular_ui,persist=False,current=True,page_pad=GRANULAR_PAD,pages=PAGES,track_views=TRACK_VIEWS,reverse_cycle=REVERSE_CYCLE,editor_settings=EDITOR_SETTINGS,no_burst=NO_BURST,shift_tap=SHIFT_TAP)
+        install_adapter('lifecycle',granular_lifecycle,persist=False,companion=STORE)
+        if fill_gaps:
+            holes[gap_index] = [hex(cursor), hex(end), end - cursor]
+            b.report['flash_gap_placement'] = dict(start=hex(start), end=hex(cursor), adapters=['bridge','ui','lifecycle'])
         if STRETCH and '--scan-lock' not in sys.argv:
             import stretch_arm
             stretch_arm.install(b.img,b.report,b.next_base())
@@ -179,7 +203,7 @@ def main():
     if STICKY_ASSIGN:g['ui']['sticky_assign']=True
     if ZONE_PADS:g['easy_zones'].update(slices=[0]*8+[2]*8+[n for n in (3,4,6,8,12,16,32) for _ in range(16)],slice_word=7,zone_pads=True)
     if TRIM_UNUSED:b.report['unused_code_trim']=dict(policy='preserve exposed adapters; discard unreachable helpers',reference='A0204',recovered_bytes=1328)
-    if '--dsp-pack' in sys.argv:
+    if '--dsp-pack' in sys.argv and not fill_gaps:
         import dsppack
         dsppack.install(b.img,b.report)
     if '--file-tools' in sys.argv:

@@ -2,13 +2,14 @@
 from thumb import (Asm,bl,b_w,b_cond,bx_lr,mov_reg,movs_imm,movw,movt,
                    push_list,pop_list,ldr_sp,ldrb_imm,cmp_imm,add_sp_imm,raw)
 import rhbuild
+from flash_placement import emit_code
 import upguard
 
 APPLY,PACK,FREE,RESET,RECORD=0x080378c6,0x08053e24,0x08064460,0x08064416,0x0806446e
 REFRESH,REFRESH_CALL=0x0803081c,0x0802a0b8
 
 
-def install(img,report,base,persist=True,companion=False):
+def install(img,report,base,persist=True,companion=False,*,placement_end=None):
     kernel=report['granular']['arm_kernel']['labels'];bridge=report['granular']['bridge']
     state=int(bridge['labels']['c_gstate'],16);ready=int(bridge['labels']['c_gready'],16)
     uploader=int(report['upguard']['labels']['c_upw'],16)
@@ -58,8 +59,7 @@ def install(img,report,base,persist=True,companion=False):
     a.label('free_native');E(raw,bytes(img[FREE-rhbuild.BASE:FREE-rhbuild.BASE+2]));imm(2,0x372fc);E(b_w,FREE+4)
     a.label('reset_native');E(raw,bytes(img[RESET-rhbuild.BASE:RESET-rhbuild.BASE+2]));imm(5,0x37300);E(b_w,RESET+4)
     a.label('record_native');E(raw,bytes(img[RECORD-rhbuild.BASE:RECORD-rhbuild.BASE+4]));E(b_w,RECORD+4)
-    code,labels=a.assemble();img+=b'\xff'*(base-rhbuild.BASE-len(img))+code
-    while len(img)%4:img.append(255)
+    code,labels=a.assemble();emit_code(img,rhbuild.BASE,base,code,placement_end)
     rhbuild.patch(img,APPLY,'push.w {r3, r4, r5, r6, r7, r8, sb, lr}',b_w(APPLY,labels['c_glapply']))
     rhbuild.patch(img,PACK,'push {r4, r5, r6, lr}|bl #0x8040e28',b_w(PACK,labels['c_glpack'])+b'\x00\xbf')
     rhbuild.patch(img,FREE,'lsls r1, r1, #0x18|ldr r2, [pc, #0x12c]',b_w(FREE,labels['c_glfree']))

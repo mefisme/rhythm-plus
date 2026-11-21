@@ -4,6 +4,7 @@ from thumb import (Asm,bl,b_w,b_cond,bx_lr,mov_reg,movs_imm,movw,movt,
                    cmp_imm,cmp_reg,add_sp_imm,adds_imm8,subs_imm8,ands_reg,
                    adds_reg,tst_reg,raw,str_imm)
 import rhbuild
+from flash_placement import emit_code
 import countin as C
 import tmenu as T
 
@@ -11,7 +12,7 @@ import tmenu as T
 SAVE_CALLS = {0x08037fd6: 0x080472e2, 0x08038734: 0x08047270}
 
 
-def install(img,report,base,persist=True,current=False,pages=False,track_views=False,reverse_cycle=False,editor_settings=False,no_burst=False,page_pad=None,shift_tap=False):
+def install(img,report,base,persist=True,current=False,pages=False,track_views=False,reverse_cycle=False,editor_settings=False,no_burst=False,page_pad=None,shift_tap=False,*,placement_end=None):
     if page_pad is None:page_pad=31 if current else 29
     labels=report['granular']['arm_kernel']['labels'];bridge=report['granular']['bridge']
     native_state=int(bridge['labels']['c_gstate'],16);state='c_gustate'
@@ -197,8 +198,7 @@ def install(img,report,base,persist=True,current=False,pages=False,track_views=F
         E(raw,C.popw([0,1,2,3,4,5,6],lr=True));E(movs_imm,0,255);E(strb_imm,0,5,0);E(b_w,0x0805cc66)
         a.label('silent_native');E(raw,C.popw([0,1,2,3,4,5,6],lr=True))
         E(raw,audition_head);E(b_w,audition_site+6)
-    code,out=a.assemble();img+=b'\xff'*(base-rhbuild.BASE-len(img))+code
-    while len(img)%4:img.append(255)
+    code,out=a.assemble();emit_code(img,rhbuild.BASE,base,code,placement_end)
     for key,address in (('pad',T.PP_ENTRY),('release',T.PR_ENTRY),('knob',T.KN_ENTRY)):
         rhbuild.patch(img,address,f'b.w #{previous[key]:#x}',b_w(address,out['c_gu'+key]))
     if pages:
