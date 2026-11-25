@@ -2671,6 +2671,9 @@ def arm_code(base, L, heads, sp=None, pages=PAGE_RGB[:1], fpage=False, defs=None
         imm32(0, SHIFT_RGB)
     E(b, "ou_kw")
     a.label("ou_kt")
+    if os.environ.get("RH_FILTER_EDITOR_PROBE") == "1":
+        # The current editor recolors the native knob LEDs at their original level.
+        E(b, "ou_kn")
     E(ldr_imm, 0, 6, 0)
     E(ldr_sp, 2, 24)
     if filt and k78white:

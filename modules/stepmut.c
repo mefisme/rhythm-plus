@@ -665,3 +665,95 @@ u32 c_sm_out(u32 c, u32 out, u32 frame, u32 a3)
     }
     return ret;
 }
+
+#ifdef QUANTIZE
+/* ---- Pattern Settings pad 25: the view's pattern quantized to its steps. A single hit on microsteps 2-3 goes to microstep 1;
+   on 4-6 to microstep 1 of the next step (the end step's to the start step). A hit that moves takes its whole step into an
+   empty next step, else it adds microstep 1 there. Rolls stay. */
+#define PS0 0x2004C4B8u
+#define PS_SZ 0x60u
+#define Q_PAD 24
+#define Q_MAGIC 0x5154u
+#define Q_MS 384
+#define CLR_GREEN 0x1E
+struct qflash { u16 magic; u8 ok, pad; u32 t0; };
+#define QF ((volatile struct qflash *)Q_RAM)
+
+static int single(const u8 *st) { return st[2] && !(st[2] & (st[2] - 1)); }
+static int late(const u8 *st) { return single(st) && st[2] >= 8; }
+
+static u32 quantize(u32 t)
+{
+    u32 obj = obj_of(t);
+    if (!obj || !CIOK())
+        return 0;
+    u32 pn = *PARAM_GET(R32(obj + 0x28), 0) & 7;
+    u8 *pat = (u8 *)(R32(obj + 4) + PAT_SZ * pn), was[32 * 8], fx[32], fxn[32];
+    u32 start = pat[P_START] & 31, len = ((pat[P_END] - start) & 31) + 1;
+    for (u32 i = 0; i < 32 * 8; i++)
+        was[i] = pat[i];
+    __asm volatile("cpsid i" ::: "memory");
+    u32 hasfx = c_sm_fxread(t, pn, fx);
+    for (u32 i = 0; i < 32; i++)
+        fxn[i] = fx[i];
+    for (u32 k = 0; k < len; k++) {
+        u32 i = (start + k) & 31;
+        u8 *st = pat + 8 * i;
+        if (late(was + 8 * i)) {
+            static const u8 empty[8] = {0, 6, 0, 0, 7, 0xFF, 0, 0};
+            for (u32 b = 0; b < 8; b++)
+                st[b] = empty[b];
+            fxn[i] = 0;
+        } else if (single(was + 8 * i)) {
+            st[2] = 1;
+        }
+    }
+    for (u32 k = 0; k < len; k++) {
+        u32 i = (start + k) & 31, j = (start + (k + 1) % len) & 31;
+        const u8 *from = was + 8 * i, *to = was + 8 * j;
+        if (!late(from))
+            continue;
+        if (!to[2] || late(to)) {
+            for (u32 b = 0; b < 8; b++)
+                pat[8 * j + b] = from[b];
+            pat[8 * j + 2] = 1;
+            fxn[j] = fx[i];
+        } else {
+            pat[8 * j + 2] |= 1;
+        }
+    }
+    if (hasfx)
+        c_sm_fxwrite(t, pn, fxn);
+    __asm volatile("cpsie i" ::: "memory");
+    RELOAD(obj);
+    return 1;
+}
+
+u32 c_sm_qpad(u32 view, u32 pad, u32 vel)
+{
+    u32 t = (view - PS0) / PS_SZ;
+    if (pad != Q_PAD || view < PS0 || t >= 8)
+        return ((hook_fn)FN(PREV_QPAD))(view, pad, vel, 0);
+    if (vel) {
+        QF->ok = (u8)quantize(t);
+        QF->t0 = now();
+        QF->magic = Q_MAGIC;
+    }
+    return view;
+}
+
+u32 c_sm_qled(u32 view)
+{
+    u32 r = ((u32 (*)(u32))FN(PREV_QLED))(view);
+    volatile u16 *buf = (volatile u16 *)R32(R32(view + 4));
+    u32 e = now() - QF->t0, c = Q_IDLE;
+    if (QF->magic == Q_MAGIC && e < Q_MS)
+#ifdef Q_FLASH
+        c = (e >> 6) & 1 ? 0 : QF->ok ? Q_IDLE : CLR_RED;    /* done: the ready colour flashes */
+#else
+        c = QF->ok ? CLR_GREEN : ((e >> 6) & 1 ? 0 : CLR_RED);
+#endif
+    buf[Q_PAD] = (u16)c;
+    return r;
+}
+#endif

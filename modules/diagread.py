@@ -21,6 +21,14 @@ VERSION = RD.VERSION + 0x10 + 0x02                      # the host tool's dsp=2 
 WAIT_FRAMES = 200                                       # dspr waits this many LED frames after core 1's READY
 
 
+def ready_wait_address():
+    if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1':
+        from granular_bridge import ready_wait_address as bridge_wait_address
+        return bridge_wait_address(current=True)
+    offset = rhstate.OFF['spwait'][0] if 'spwait' in rhstate.OFF else rhstate.OFF['smswitch'][0]+2
+    return rhstate.ST+offset
+
+
 PX_HOLD = h(0xE7FE) + h(0xE7FE)                       # rc_ext until storageshadow points it at c_sh_pxmidi
 
 
@@ -166,8 +174,8 @@ def arm_code(base, router_ptr, itcm=False, plus=False):
     E(cmp_imm, 5, 17); bc("ds_bad", "lo")                                      # the request through byte 15 and F7
     imm32(0, rhstate.ST); E(ldr_imm, 0, 0, 0); imm32(1, rhstate.MAGIC); E(cmp_reg, 0, 1); bc("ds_bad", "ne")
     imm32(0, rhstate.ST + rhstate.OFF["cthresh"][0] + 1); E(ldrb_imm, 0, 0, 0); E(cmp_imm, 0, TH.READY); bc("ds_bad", "ne")
-    wait = rhstate.OFF["spwait"][0] if "spwait" in rhstate.OFF else rhstate.OFF["smswitch"][0] + 2
-    imm32(0, rhstate.ST + wait); E(ldrb_imm, 0, 0, 0); E(cmp_imm, 0, WAIT_FRAMES); bc("ds_bad", "lo")
+    wait = ready_wait_address()
+    imm32(0, wait); E(ldrb_imm, 0, 0, 0); E(cmp_imm, 0, WAIT_FRAMES); bc("ds_bad", "lo")
     E(ldrb_imm, 0, 4, 6); E(str_imm, 0, 7, 28); E(cmp_imm, 0, 1); bc("ds_bad", "hi")   # [28] = core
     E(mov_reg, 0, 4); E(adds_imm8, 0, 7); E(bl, "c_g32"); E(str_imm, 0, 7, 16); E(mov_reg, 2, 0)   # [16] = addr
     E(ldrb_imm, 1, 4, 15); E(cmp_imm, 1, 0); bc("ds_bad", "eq")
@@ -245,6 +253,6 @@ def install(img, report, base_addr):
     img[RD.HOOK - B:RD.HOOK - B + 4] = b_w(RD.HOOK, labels["c_rdin"])
     report["rdiag"] = dict(hook=hex(RD.HOOK), router_ptr=hex(router_ptr), version=hex(VERSION), dsp=2, readonly=True, mapped_ram_only=True,
                            itcm_read=itcm,**({'plus_usb':True} if plus else {}),
-                           writes_disabled=[6, 9], max_dsp_words=RD.NR, guard=hex(labels["rc_dspr"]),
+                           writes_disabled=[6, 9], max_dsp_words=RD.NR, guard=hex(labels["rc_dspr"]), dsp_wait=hex(ready_wait_address()),
                            labels={k: hex(v) for k, v in labels.items() if k.startswith("c_") or k.startswith("rc_") or k == "ds_bad"})
     return labels, code

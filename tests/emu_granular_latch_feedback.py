@@ -1,5 +1,6 @@
 """Latched granular navigation, 16-control group feedback and recording LEDs."""
 import struct
+import sys
 import emu_fx_native_edges as F
 G,E,SM=F.G,F.E,F.SM
 
@@ -16,13 +17,35 @@ def main():
     u.mem_write(slot+104,b'\x60'*64);u.mem_write(slot+212,b'\x10'*8);u.mem_write(slot+236,b'\x10'*56)
     color=E.u32(u,0x20003974+4*E.T.TRK_SLOTS[0]);buf=0x20001000;groups=[]
     dests=16 if g.get('burst',True) else 14
+    if '--turn-select' in sys.argv:
+        rec=SM.obj(u,0);points=E.u32(u,rec+4)+0x128
+        before=bytes(u.mem_read(points,12*192))
+        values=bytes(u.mem_read(slot+104,64))+bytes(u.mem_read(slot+212,8))+bytes(u.mem_read(slot+236,56))
+        G.knob(u,3,127)
+        assert u.mem_read(slot+380,1)[0]==0x83
+        for _ in range(5):G.pad(u,24);G.unpad(u,24)
+        assert u.mem_read(slot+380,1)[0]==0x88
+        G.knob(u,3,-127)
+        assert u.mem_read(slot+380,1)[0]==0x8b
+        G.knob(u,7,127)
+        assert u.mem_read(slot+380,1)[0]==(0x8b if dests==14 else 0x8f)
+        for _ in range(dests):
+            if u.mem_read(slot+380,1)[0]==0x80:break
+            G.pad(u,24);G.unpad(u,24)
+        assert u.mem_read(slot+380,1)[0]==0x80
+        assert bytes(u.mem_read(points,12*192))==before
+        assert bytes(u.mem_read(slot+104,64))+bytes(u.mem_read(slot+212,8))+bytes(u.mem_read(slot+236,56))==values
+        print('PASS turning selects within either assignment group without changing values or automation')
     for index in range(2*dests):
         selected=u.mem_read(slot+380,1)[0]&15;assert selected==index%dests
         u.mem_write(buf,struct.pack('<69I',*([0xffffff]*69)))
         E.call(u,K['c_gr_runtime_draw'],slot,0,buf,0)
         out=struct.unpack('<69I',u.mem_read(buf,69*4))
-        assert out[60+(selected&7)]==0x9eff59,'selected assignment knob lost bright green'
-        active,inactive=(51,52) if selected>=8 else (52,51)
+        selected_color = 0xffffff if ((E.MAN['marker'][:1]=='A' and len(E.MAN['marker'])==4) and 'A283' <= E.MAN['marker']) else 0x9eff59
+        assert out[60+(selected&7)]==selected_color,'selected assignment knob color is incorrect'
+        marker = E.MAN['marker']
+        down_lit = marker == 'A285' or (not ((marker[:1]=='A' and len(marker)==4) and 'A286' <= marker) and selected >= 8)
+        active,inactive=(51,52) if down_lit else (52,51)
         assert max(out[active]>>s&255 for s in (0,8,16))>16*max(out[inactive]>>s&255 for s in (0,8,16)),'arrow contrast unclear'
         if selected in (0,8):groups.append(out[61:68])
         G.pad(u,24);G.unpad(u,24)
@@ -53,7 +76,7 @@ def main():
         out=E.out(u,int(g['ui']['labels']['c_guout'],16));rgb=out[60+k]
         assert (rgb>>16&255)>(rgb>>8&255)*4 and (rgb>>16&255)>(rgb&255)*4,('held lock red',d,hex(rgb))
         G.unpad(u,3)
-    print('PASS hold latches settings/assignments; tap returns value mode; complete control cycles show green selection and arrow groups')
+    print('PASS hold latches settings/assignments; tap returns value mode; complete control cycles show the selection and arrow groups')
     print(f'PASS all {dests} controls show live-recording feedback and held automation red on their actual page')
     print('ALL PASS')
 if __name__=='__main__':main()

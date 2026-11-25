@@ -1,7 +1,8 @@
 /* The Circuit Rhythm's SD card, read and written from the browser (File System Access API). No DOM: tests/app_core_test.mjs runs it on a fake card.
    File system helpers, backups and the name rules adapted from Circuit Remix (remix/tools/rm_app.html), Copyright (c) 2026 Ghillermo, MIT License.
 
-   The card: Rhythm/NN_Pack (NN 00..30 = packs 1..31) with Sessions, PCM, meta; RP_AUTO/ at the top.
+   The card: Rhythm/NN_Pack (NN 00..30 = packs 1..31) with Sessions, PCM, meta; RP_AUTO/ and RP_INTERNAL/ (the internal pack's
+   Plus files) at the top.
    A project: Sessions/NN_Name.ncs, 169 092 B. Its Rhythm Plus metadata at 0x29224: "SO", version, a flag (0 = no Plus file),
    the key (the Plus file's CRC-32) and the Plus file's size.
    Its Plus file: Sessions/RP_NN_[Name_]KEY.rps next to it, or RP_AUTO/KEY.RPS. The unit finds it by the key: the exact name, then
@@ -16,7 +17,7 @@ const SAMPLE_FILE = 26, SAMPLE_MAX = 0x2F0000;              // NN_Name before .w
 const PAGES = 2695, PAGE_WORDS = 4096;                      // a pack's sample memory on the unit: 2,695 pages of 4,096 16-bit words (~230 s mono at 48 kHz)
 const samplePages = size => Math.ceil(Math.min(Math.max(0, size - 44), SAMPLE_MAX) / 2 / PAGE_WORDS);   // size = the WAV file's bytes
 const SLOT_AT = 0x28CEC, PAT0 = 0x2E4, PAT = 0xA28, NSTEPS = 32, STEP = 8;    // a project's sample per track; each step's sample flip at +5
-const AUTO = "RP_AUTO", BACKUP_FILE = "rhythm-plus-backup.json", TMP = "~rp-rename.tmp";
+const AUTO = "RP_AUTO", INTERNAL = "RP_INTERNAL", BACKUP_FILE = "rhythm-plus-backup.json", TMP = "~rp-rename.tmp";
 const pad2 = n => String(n).padStart(2, "0");
 const hex8 = k => (k >>> 0).toString(16).toUpperCase().padStart(8, "0");
 const lower = s => s.toLowerCase();
@@ -136,10 +137,10 @@ class Pack {
 // root: the card's top folder, or null when only the Rhythm folder was given (the browser may not offer a drive's top folder).
 // Then RP_AUTO is the folder given with useAuto.
 class Card {
-  constructor(root, rhythm) { this.root = root; this.rhythm = rhythm; this.device = !!rhythm.device; this.autoDir = null; this.packs = []; this._auto = null; }
+  constructor(root, rhythm) { this.root = root; this.rhythm = rhythm; this.device = !!rhythm.device; this.autoDir = null; this.intDir = null; this.packs = []; this._auto = null; }
   static async open(dir) {
     const rhythm = await subdir(dir, "Rhythm");
-    if (rhythm) { const c = new Card(dir, rhythm); c.autoDir = await subdir(dir, AUTO); await c.scan(); return c; }
+    if (rhythm) { const c = new Card(dir, rhythm); c.autoDir = await subdir(dir, AUTO); c.intDir = await subdir(dir, INTERNAL); await c.scan(); return c; }
     const packLike = (await entries(dir)).some(([n, h]) => h.kind === "directory" && /^\d\d_/.test(n));
     if (!packLike) throw new Error("no-rhythm");
     const c = new Card(null, dir);
@@ -638,11 +639,12 @@ async function loadPack(card, slot, name, pk, tick) {
   return card.pack(slot);
 }
 
-// ---------------------------------------------------------------- backup and restore: the Rhythm folder and RP_AUTO, in a folder outside the card's packs
+// ---------------------------------------------------------------- backup and restore: the Rhythm folder, RP_AUTO and RP_INTERNAL, in a folder outside the card's packs
 async function backup(card, dest, tick) {
   const name = "Rhythm Plus backup " + stamp(), top = await dest.getDirectoryHandle(name, {create: true});
   const parts = [["Rhythm", card.rhythm]];
   if (card.autoDir) parts.push([AUTO, card.autoDir]);
+  if (card.intDir) parts.push([INTERNAL, card.intDir]);
   let files = 0, bytes = 0;
   for (const [n, src] of parts) {
     const dst = await top.getDirectoryHandle(n, {create: true});
@@ -654,8 +656,12 @@ async function backup(card, dest, tick) {
 }
 // -> {write: [{parts, name, handle, old}], same, conflict: [{folder, card}]}. A pack whose number has another name on the card is a conflict:
 // both folders would start with the same NN_.
-async function placeOf(card, parts, create) {             // a backup path (Rhythm/... or RP_AUTO/...) on the card
+async function placeOf(card, parts, create) {             // a backup path (Rhythm/..., RP_AUTO/... or RP_INTERNAL/...) on the card
   if (parts[0] === "Rhythm") return dirPath(card.rhythm, parts.slice(1), create);
+  if (parts[0] === INTERNAL) {
+    if (!card.intDir && card.root && create) card.intDir = await subdir(card.root, INTERNAL, true);
+    return card.intDir && dirPath(card.intDir, parts.slice(1), create);
+  }
   if (!card.autoDir && card.root && create) card.autoDir = await subdir(card.root, AUTO, true);
   return card.autoDir && dirPath(card.autoDir, parts.slice(1), create);
 }
@@ -683,6 +689,9 @@ async function restorePlan(card, top) {
   const auto = await subdir(top, AUTO);
   if (auto && !card.autoDir && !card.root) plan.noAuto = true;      // the backup's RP_AUTO cannot be put back until that folder is given
   else if (auto) await walk(auto, [AUTO]);
+  const internal = await subdir(top, INTERNAL);
+  if (internal && !card.root) plan.noInternal = true;              // only the card's top folder can take it
+  else if (internal) await walk(internal, [INTERNAL]);
   return plan;
 }
 async function restoreApply(card, plan, tick) {

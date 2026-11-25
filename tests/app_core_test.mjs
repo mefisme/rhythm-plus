@@ -185,6 +185,15 @@ threw = null; try { await RP.restoreApply(card, rp); } catch (e) { threw = e.mes
 check("restore with a conflict: refused", threw === "backup-conflict", threw);
 threw = null; try { await RP.restorePlan(card, root); } catch (e) { threw = e.message; }
 check("restore from a folder that is not a backup: refused", threw === "backup-bad", threw);
+put(root, `RP_INTERNAL/RP_03_Int_${hex(A)}.rps`, A);
+const ci = await RP.Card.open(root), dest2 = new Dir("Backups2"), made2 = await RP.backup(ci, dest2), bk2 = at(dest2, made2.name);
+check("backup: RP_INTERNAL (the internal pack's Plus files) is copied", !!at(bk2, `RP_INTERNAL/RP_03_Int_${hex(A)}.rps`));
+await at(root, "RP_INTERNAL").removeEntry(`RP_03_Int_${hex(A)}.rps`);
+rp = await RP.restorePlan(ci, bk2);
+await RP.restoreApply(ci, rp);
+check("restore: the RP_INTERNAL file is back", !!at(root, `RP_INTERNAL/RP_03_Int_${hex(A)}.rps`) && !rp.noInternal);
+rp = await RP.restorePlan(await RP.Card.open(at(root, "Rhythm")), bk2);
+check("restore with only the Rhythm folder: RP_INTERNAL is left out and said", rp.noInternal === true && !rp.write.some(x => x.parts[0] === "RP_INTERNAL"));
 
 // ================================================================ slots: a second card
 {

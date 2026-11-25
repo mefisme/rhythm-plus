@@ -16,6 +16,16 @@ def main():
     context=lambda:E.call(u,int(g['ui']['labels']['c_gucontext'],16))
     def shift(on):u.mem_write(E.ptr(u,E.u32(u,E.C.CTRL+0xc),0),bytes([on]));context()
     def settings(on):
+        if g['ui'].get('shift_opens_settings',True) is False:
+            # Settings open by holding the page pad; a tap closes them.
+            if (u.mem_read(s+102,1)[0]==1)!=bool(on):
+                G.pad(u,E.GP)
+                if on:
+                    u.mem_write(0x20000820,struct.pack('<I',E.u32(u,0x20000820)+400))
+                    E.call(u,K['c_gr_runtime_ui_frame'],s,t,1)
+                G.unpad(u,E.GP)
+            assert (u.mem_read(s+102,1)[0]==1)==bool(on),'fixture: Settings did not follow the page pad'
+            return
         if not g['ui'].get('shift_tap'):shift(on);return
         if (u.mem_read(s+102,1)[0]==1)!=bool(on):G.held(u,27,True);shift(1);G.held(u,27,False);shift(0)
     knob=lambda k:u.mem_read(s+104+8*t+k,1)[0]
@@ -117,21 +127,22 @@ def main():
     u.mem_write(s+404+8*t,bytes([3,4,0,5])+bytes(4));E.call(u,K['c_gr_runtime_track_reset'],s,t)
     assert bytes(u.mem_read(s+404+8*t,8))==bytes(8),'Clear Track kept fine parts'
     print('PASS Clear + turn, value tap, Clear + Granular pad and Clear Track reset the fine part')
-    # GS v5 keeps all 64 fine bytes; v4 imports with fine 0; out-of-range fine fails closed.
+    gb=r['storageshadow']['granular_settings_bytes'];gv=r['storageshadow']['granular_settings_version']
+    # GS v5 and later keep all 64 fine bytes; v4 imports with fine 0; out-of-range fine fails closed.
     buf=0x20001000;pattern=bytes((7*i)%16 for i in range(64));u.mem_write(s+404,pattern)
     E.call(u,K['c_gr_runtime_settings_store'],s,buf);assert u.reg_read(UC_ARM_REG_R0)==1
-    saved=bytes(u.mem_read(buf,288));assert saved[:4]==b'GS\x05\x08' and saved[224:]==pattern
-    assert struct.unpack_from('<I',saved,4)[0]==zlib.crc32(saved[8:288])
+    saved=bytes(u.mem_read(buf,gb));assert saved[:4]==b'GS'+bytes([gv,8]) and saved[224:288]==pattern
+    assert struct.unpack_from('<I',saved,4)[0]==zlib.crc32(saved[8:gb])
     u.mem_write(s+404,bytes(64));E.call(u,K['c_gr_runtime_settings_load'],s,buf)
     assert u.reg_read(UC_ARM_REG_R0)==1 and bytes(u.mem_read(s+404,64))==pattern
     old=bytearray(saved[:224]);old[2]=4;struct.pack_into('<I',old,4,zlib.crc32(old[8:]))
     u.mem_write(buf,bytes(old)+b'\x0f'*64);E.call(u,K['c_gr_runtime_settings_load'],s,buf)
     assert u.reg_read(UC_ARM_REG_R0)==1 and bytes(u.mem_read(s+404,64))==bytes(64),'v4 import kept stale fine bytes'
     assert bytes(u.mem_read(s+104,64))==saved[8:72]
-    bad=bytearray(saved);bad[224]=16;struct.pack_into('<I',bad,4,zlib.crc32(bad[8:288]))
+    bad=bytearray(saved);bad[224]=16;struct.pack_into('<I',bad,4,zlib.crc32(bad[8:gb]))
     u.mem_write(s+404,pattern);u.mem_write(buf,bytes(bad));E.call(u,K['c_gr_runtime_settings_load'],s,buf)
     assert u.reg_read(UC_ARM_REG_R0)==0 and bytes(u.mem_read(s+404,64))==pattern,'invalid fine byte accepted'
-    print('PASS GS v5 saves all 64 fine bytes with CRC; GS v4 imports with fine 0; out-of-range fine fails closed')
+    print(f'PASS GS v{gv} saves all 64 fine bytes with CRC; GS v4 imports with fine 0; out-of-range fine fails closed')
     if g.get('burst',True) is False:
         # Secondary K7/K8 are not controls; settings pads 23/24 are dark and inert.
         def draw():
@@ -171,8 +182,8 @@ def main():
             assert u.mem_read(s+292+t,1)==setting,'Burst settings pads still toggle'
             out=draw();assert u.mem_read(s+102,1)[0]==1 and out[22]==out[23]==0 and out[21],'Burst settings pads still lit'
         settings(0)
-        E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytearray(u.mem_read(buf,288))
-        saved[144+t]|=0x50;struct.pack_into('<I',saved,4,zlib.crc32(bytes(saved[8:288])));u.mem_write(buf,bytes(saved))
+        E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytearray(u.mem_read(buf,gb))
+        saved[144+t]|=0x50;struct.pack_into('<I',saved,4,zlib.crc32(bytes(saved[8:gb])));u.mem_write(buf,bytes(saved))
         E.call(u,K['c_gr_runtime_settings_load'],s,buf)
         kept=u.mem_read(s+292+t,1)[0]
         assert u.reg_read(UC_ARM_REG_R0)==1 and kept&(0x60 if each else 0x70)==0 and bool(kept&16)==bool(each),'old Burst setting bits kept'

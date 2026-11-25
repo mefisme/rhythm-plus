@@ -12,6 +12,12 @@ import os
 MESSAGE,SOURCE,PARAM=0x080406a8,0x0804b060,0x0804070e
 
 
+def ready_wait_address(current):
+    if current:
+        return rhstate.ST+rhstate.OFF['granular'][0]+(468 if os.environ.get('RH_GRANULAR_FINE')=='1' else 404)
+    return rhstate.ST+rhstate.OFF['spwait'][0]
+
+
 def install(img,report,base,current=False,*,placement_end=None):
     kernel=report['granular']['arm_kernel']['labels']
     slot=rhstate.ST+rhstate.OFF['granular'][0]
@@ -21,7 +27,7 @@ def install(img,report,base,current=False,*,placement_end=None):
     previous=rhbuild.bl_target(img,C.LED_CALLS[0])
     assert all(rhbuild.bl_target(img,address)==previous for address in C.LED_CALLS)
     ready=rhstate.ST+rhstate.OFF['cthresh'][0]+1
-    wait=slot+(468 if fine else 404) if current else rhstate.ST+rhstate.OFF['spwait'][0]
+    wait=ready_wait_address(current)
     upload=rhstate.ST+rhstate.OFF['upguard'][0]
     a=Asm(base);E=a.emit
     def imm(register,value):E(movw,register,value&65535);E(movt,register,value>>16)

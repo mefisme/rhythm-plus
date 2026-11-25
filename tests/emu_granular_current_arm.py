@@ -54,10 +54,13 @@ def main():
         E.call(u,K['c_gr_runtime_settings_store'],slot,scratch)
         assert u.reg_read(UC_ARM_REG_R0)==1
         fine=bool(g.get('fine_controls'));n,size=(288,468) if fine else (224,404)
+        storage=E.MAN['report'].get('storageshadow',{})
+        n=storage.get('granular_settings_bytes',n)
+        version=storage.get('granular_settings_version')
         if fine:u.mem_write(slot+404,bytes(range(16))*4)
         E.call(u,K['c_gr_runtime_settings_store'],slot,scratch)
         saved=bytes(u.mem_read(scratch,n))
-        assert saved[:2]==b'GS' and saved[2] in ((5,) if fine else (2,3,4)) and saved[3]==8
+        assert saved[:2]==b'GS' and saved[2] in ((version,) if version else (5,) if fine else (2,3,4)) and saved[3]==8
         original=bytes(u.mem_read(slot,size))
         u.mem_write(scratch+15,bytes([saved[15]^1]))
         E.call(u,K['c_gr_runtime_settings_load'],slot,scratch)

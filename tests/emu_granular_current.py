@@ -41,13 +41,23 @@ def main():
         allowed|={a+i for a,ws in c0idle.STOCK.items() for i in range(len(ws))}
         idle=int(report['c0idle']['at'],16)
         assert [actual[0x1ff],actual[0x200],actual[0x201]]==[0x0af0a9,idle,0],'idle counter branch'
+    if report.get('ring_mod_dsp'):allowed|={0x225}
     assert all(actual[a]==w for a,w in old.items() if a not in allowed)
-    assert actual[0x225]==int(report['gfxsplit']['pre'],16)
+    assert actual[0x225]==int(report['ring_mod_dsp']['entry'] if report.get('ring_mod_dsp') else report['gfxsplit']['pre'],16)
     before=flat(rhdsp1.parse(rhdsp1.sent(bytearray(base),baseline['report'],'pitchmod'))[0])
     after=flat(rhdsp1.parse(rhdsp1.sent(bytearray(image),report,'pitchmod'))[0])
     from drone_gone import undrone
     before=undrone(before,baseline['report'],report)
     changed={0x122,0x23d,0x25c,0x25d,0x22f,0x230,0x231,0x232,0x233,0x2f3,0x4e6}
+    if report.get('filter_cutoff'):
+        import filter_cutoff
+        changed|={filter_cutoff.LOWPASS_CALL}
+    if report.get('pitch_envelope_dsp'):
+        import pitch_envelope_dsp,pitchmod
+        changed|={pitch_envelope_dsp.NOTE_CALL,pitchmod.P_RR_CALL}
+    if report.get('scan_dsp'):
+        import scan_dsp
+        changed|={scan_dsp.TRIGGER}
     if 'pvloop' in baseline['report'] and 'pvloop' not in report:     # the stock preview player back in its place
         import pvloop as PV
         stock=flat(rhdsp1.parse(rhdsp1.sent(bytearray((ROOT/'remix/stock/circuitrhythm-firmware-5706-STOCK.bin').read_bytes()),baseline['report'],'pitchmod'))[0])

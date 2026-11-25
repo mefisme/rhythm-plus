@@ -186,6 +186,22 @@ def regions(rep):
                 add(region['core'],region['space'],int(region['start'],16),region['words'],region['owner'])
         for region in granular['core0_segments']:
             add(0,'p',int(region['start'],16),region['words'],'granular: DSP0 program')
+    if rep.get('filter_cutoff'):
+        filt = rep['filter_cutoff']
+        # The packed pitchmod program region already includes the adapter.
+        add(1,'y',int(filt['offset'],16),filt.get('data_words',filt['tracks']),'Filter cutoff offsets and register saves')
+    if rep.get('pitch_envelope_dsp'):
+        pitch = rep['pitch_envelope_dsp']
+        add(1, 'y', int(pitch['offset'], 16), pitch['data_words'], 'Pitch offsets and register saves')
+    if rep.get('ring_mod_before'):
+        ring = rep['ring_mod_before']
+        add(1, 'y', int(ring['state'], 16), ring['data_words'], 'Before-filter Ring Mod')
+    if rep.get('scan_dsp'):
+        scan = rep['scan_dsp']
+        add(1, 'y', int(scan['amount'], 16), scan['data_words'], 'Scan amounts and register save')
+    if rep.get('ring_mod_dsp'):
+        ring = rep['ring_mod_dsp']
+        add(0, 'y', int(ring['state'], 16), ring['data_words'], 'Ring Mod state and register saves')
     return out
 
 

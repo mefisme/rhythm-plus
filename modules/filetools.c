@@ -98,16 +98,17 @@ typedef u32 (*del_fn)(u32 *item, u32, u32);
 enum { W_NONE, W_PROJ, W_SMP, W_PACK };
 enum { R_OK = 1, R_BAD = 2 };
 
+struct src { u8 ok, pack, slot; };
 struct st {
-    u8 tag, src_ok, src_pack, src_slot;                /* the project source */
-    u8 src_col, smp_ok, smp_pack, smp_slot;           /* its colour; the sample source */
-    u8 arm, arm_pack, arm_slot, res;                  /* the pad asked about (W_*); the last result (R_*) */
-    u8 res_kind, res_pack, res_slot, pad0;
+    u8 tag, arm, arm_pack, arm_slot;                  /* the pad asked about (W_*) */
+    u8 res, res_kind, res_pack, res_slot;             /* the last result (R_*) */
+    struct src src[2];                                 /* the sources: [W_PROJ - 1] a project, [W_SMP - 1] a sample */
+    u8 src_col, pad0;                                  /* the project source's colour */
     u32 res_t;
     u8 req[32];                                        /* a Plus command: request, then reply */
 };
 
-static struct st *state(void)
+__attribute__((noinline)) static struct st *state(void)
 {
     if (!RST())
         return 0;
@@ -191,7 +192,7 @@ static void result(struct st *s, u32 kind, u32 pack, u32 slot, u32 ok)
 /* ---- Projects view */
 static u32 proj_copy(struct st *s, u32 store, u32 sb, u32 pb)
 {
-    u32 sa = s->src_slot, pa = s->src_pack, copied;
+    u32 sa = s->src[0].slot, pa = s->src[0].pack, copied;
     if (size_of(KIND_SESS, sa, pa) != SESS_SIZE)
         return 1;
     if (plus(s, 0x29, pa, sa, pb, sb, 0, &copied))
@@ -210,48 +211,10 @@ static u32 proj_copy(struct st *s, u32 store, u32 sb, u32 pb)
     return 0;
 }
 
-u32 c_ft_projpad(u32 v, u32 pad, u32 vel, u32 a3)
-{
-    struct st *s;
-    if (pad >= 32 || !ctrl_ok() || !(held() >> BIT_DUP & 1) || !(s = state()))
-        return ((pad_fn)FN(PREV_PROJ))(v, pad, vel, a3);
-    if (playing())
-        return 0;
-    u32 slot = pad + 32u * R8(v + P_PAGE), pack = loaded_pack(), store = R32(v + P_STORE);
-    if (slot >= 64)
-        return 0;
-    if (!s->src_ok) {
-        if (size_of(KIND_SESS, slot, pack)) {
-            s->src_ok = 1; s->src_pack = (u8)pack; s->src_slot = (u8)slot;
-            s->src_col = ((const u8 *)PARAM_NEW(store, P_COL + (slot >> 2)))[slot & 3];
-            s->arm = W_NONE;
-        }
-        return 0;
-    }
-    if (s->src_pack == pack && s->src_slot == slot) {
-        s->src_ok = 0; s->arm = W_NONE;
-        return 0;
-    }
-    if (!pack || slot == (newest(store, P_LOADED) & 0xFF)) {
-        result(s, W_PROJ, pack, slot, 0);
-        return 0;
-    }
-    if (size_of(KIND_SESS, slot, pack) && !(s->arm == W_PROJ && s->arm_pack == pack && s->arm_slot == slot)) {
-        s->arm = W_PROJ; s->arm_pack = (u8)pack; s->arm_slot = (u8)slot;
-        return 0;
-    }
-    s->arm = W_NONE;
-    result(s, W_PROJ, pack, slot, proj_copy(s, store, slot, pack) == 0);
-#if HOLD_SOURCE
-    s->src_ok = 0;
-#endif
-    return 0;
-}
-
-/* ---- Sample Rec view */
+/* ---- the Sample Rec view's copy */
 static u32 smp_copy(struct st *s, u32 sb, u32 pb)
 {
-    u32 sa = s->smp_slot, pa = s->smp_pack, size = size_of(KIND_PCM, sa, pa), r = 0, b[3];
+    u32 sa = s->src[1].slot, pa = s->src[1].pack, size = size_of(KIND_PCM, sa, pa), r = 0, b[3];
     if (!size) { reselect(); return 1; }
     if ((DSP_READ(0, DSP_FREE) >> 8) + (size >> 1) + DSP_MARGIN >= DSP_LIMIT) { reselect(); return 1; }
     item(b, KIND_PCM, sb, pb);
@@ -268,41 +231,60 @@ static u32 smp_copy(struct st *s, u32 sb, u32 pb)
     return r;
 }
 
-u32 c_ft_smppad(u32 v, u32 pad, u32 vel, u32 a3)
+/* ---- Duplicate on Projects (w = W_PROJ) and Sample Rec (W_SMP): pick a source, then a target twice (an empty one once) */
+static u32 dup_pad(struct st *s, u32 w, u32 slot, u32 store, u32 busy)
 {
-    struct st *s;
-    if (pad >= 16 || !ctrl_ok() || !(held() >> BIT_DUP & 1) || !(s = state()))
-        return ((pad_fn)FN(PREV_SMP))(v, pad, vel, a3);
+    struct src *src = &s->src[w - 1];
+    u32 kind = w == W_PROJ ? KIND_SESS : KIND_PCM, pack = loaded_pack();
     if (playing())
         return 0;
-    u32 slot = pad + 16u * R8(v + S_PAGE), pack = loaded_pack();
-    if (slot >= 128)
-        return 0;
-    if (!s->smp_ok) {
-        if (size_of(KIND_PCM, slot, pack)) {
-            s->smp_ok = 1; s->smp_pack = (u8)pack; s->smp_slot = (u8)slot;
+    if (!src->ok) {
+        if (size_of(kind, slot, pack)) {
+            src->ok = 1; src->pack = (u8)pack; src->slot = (u8)slot;
+            if (w == W_PROJ)
+                s->src_col = ((const u8 *)PARAM_NEW(store, P_COL + (slot >> 2)))[slot & 3];
             s->arm = W_NONE;
         }
         return 0;
     }
-    if (s->smp_pack == pack && s->smp_slot == slot) {
-        s->smp_ok = 0; s->arm = W_NONE;
+    if (src->pack == pack && src->slot == slot) {
+        src->ok = 0; s->arm = W_NONE;
         return 0;
     }
-    if (!pack || (newest(R32(SM + SM_STATE), 1) & 0xFF)) {
-        result(s, W_SMP, pack, slot, 0);
+    if (!pack || busy) {
+        result(s, w, pack, slot, 0);
         return 0;
     }
-    if (size_of(KIND_PCM, slot, pack) && !(s->arm == W_SMP && s->arm_pack == pack && s->arm_slot == slot)) {
-        s->arm = W_SMP; s->arm_pack = (u8)pack; s->arm_slot = (u8)slot;
+    if (size_of(kind, slot, pack) && !(s->arm == w && s->arm_pack == pack && s->arm_slot == slot)) {
+        s->arm = (u8)w; s->arm_pack = (u8)pack; s->arm_slot = (u8)slot;
         return 0;
     }
     s->arm = W_NONE;
-    result(s, W_SMP, pack, slot, smp_copy(s, slot, pack) == 0);
+    result(s, w, pack, slot, (w == W_PROJ ? proj_copy(s, store, slot, pack) : smp_copy(s, slot, pack)) == 0);
 #if HOLD_SOURCE
-    s->smp_ok = 0;
+    src->ok = 0;
 #endif
     return 0;
+}
+
+__attribute__((noinline)) static struct st *dup_on(u32 pad, u32 n) { return pad < n && ctrl_ok() && (held() >> BIT_DUP & 1) ? state() : 0; }
+
+u32 c_ft_projpad(u32 v, u32 pad, u32 vel, u32 a3)
+{
+    struct st *s = dup_on(pad, 32);
+    if (!s)
+        return ((pad_fn)FN(PREV_PROJ))(v, pad, vel, a3);
+    u32 slot = pad + 32u * R8(v + P_PAGE), store = R32(v + P_STORE);
+    return slot < 64 ? dup_pad(s, W_PROJ, slot, store, slot == (newest(store, P_LOADED) & 0xFF)) : 0;
+}
+
+u32 c_ft_smppad(u32 v, u32 pad, u32 vel, u32 a3)
+{
+    struct st *s = dup_on(pad, 16);
+    if (!s)
+        return ((pad_fn)FN(PREV_SMP))(v, pad, vel, a3);
+    u32 slot = pad + 16u * R8(v + S_PAGE);
+    return slot < 128 ? dup_pad(s, W_SMP, slot, 0, newest(R32(SM + SM_STATE), 1) & 0xFF) : 0;
 }
 
 /* ---- Packs view */
@@ -392,28 +374,22 @@ u32 c_ft_out(u32 c, u32 out, u32 frame, u32 a3)
     if (!(h >> BIT_DUP & 1)) {
         if (s->arm == W_PROJ || s->arm == W_SMP)
             s->arm = W_NONE;
-        s->src_ok = s->smp_ok = 0;
+        s->src[0].ok = s->src[1].ok = 0;
     }
 #else
     if ((s->arm == W_PROJ || s->arm == W_SMP) && !(h >> BIT_DUP & 1))
         s->arm = W_NONE;
 #endif
-    if (on(v, PROJ_VT)) {
-        u32 page = R8(v + P_PAGE), pack = loaded_pack();
-        if (s->src_ok && s->src_pack == pack && s->src_slot >> 5 == page)
-            o[s->src_slot & 31] = SOURCE(0);
-        if (s->arm == W_PROJ && s->arm_pack == pack && s->arm_slot >> 5 == page)
-            o[s->arm_slot & 31] = scl(rgb(CLR_RED), pulse());
-        if (s->res && s->res_kind == W_PROJ && s->res_pack == pack && s->res_slot >> 5 == page)
-            o[s->res_slot & 31] = col;
-    } else if (v == SR_VIEW && on(v, SR_VT)) {
-        u32 page = R8(v + S_PAGE), pack = loaded_pack();
-        if (s->smp_ok && s->smp_pack == pack && s->smp_slot >> 4 == page)
-            o[s->smp_slot & 15] = SOURCE(0);
-        if (s->arm == W_SMP && s->arm_pack == pack && s->arm_slot >> 4 == page)
-            o[s->arm_slot & 15] = scl(rgb(CLR_RED), pulse());
-        if (s->res && s->res_kind == W_SMP && s->res_pack == pack && s->res_slot >> 4 == page)
-            o[s->res_slot & 15] = col;
+    u32 w = on(v, PROJ_VT) ? W_PROJ : v == SR_VIEW && on(v, SR_VT) ? W_SMP : W_NONE;
+    if (w) {
+        u32 sh = w == W_PROJ ? 5 : 4, page = R8(v + (w == W_PROJ ? P_PAGE : S_PAGE)), pack = loaded_pack(), m = (1u << sh) - 1;
+        struct src *src = &s->src[w - 1];
+        if (src->ok && src->pack == pack && src->slot >> sh == page)
+            o[src->slot & m] = SOURCE(0);
+        if (s->arm == w && s->arm_pack == pack && s->arm_slot >> sh == page)
+            o[s->arm_slot & m] = scl(rgb(CLR_RED), pulse());
+        if (s->res && s->res_kind == w && s->res_pack == pack && s->res_slot >> sh == page)
+            o[s->res_slot & m] = col;
     } else if (v == PACKS_VIEW && on(v, PACKS_VT)) {
         if (!clear_mode(v)) {
             if (s->arm == W_PACK)

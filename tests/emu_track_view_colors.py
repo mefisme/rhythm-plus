@@ -21,7 +21,7 @@ def main():
                 color=E.u32(u,0x20003974+4*E.T.TRK_SLOTS[t]);level=max(rgb>>s&255 for s in (0,8,16));peak=max(color>>s&255 for s in (0,8,16))
                 assert all(abs((rgb>>s&255)-(color>>s&255)*level//peak)<=1 for s in (0,8,16)),('selected track hue',t,hex(rgb),hex(color))
             elif views[t]:
-                level=max(rgb>>s&255 for s in (0,8,16));expected=sum(((0x9eff59>>s&255)*level//255)<<s for s in (0,8,16))
+                level=max(rgb>>s&255 for s in (0,8,16));expected=sum((((0xffffff if ((E.MAN['marker'][:1]=='A' and len(E.MAN['marker'])==4) and 'A283' <= E.MAN['marker']) else 0x9eff59)>>s&255)*level//255)<<s for s in (0,8,16))
                 assert rgb==expected and rgb,('granular view',selected,t,hex(rgb))
             else:assert rgb and (rgb&255)==(rgb>>8&255)==(rgb>>16&255),('stock view',selected,t,hex(rgb))
     # Real pad selections update only the selected track's remembered view.

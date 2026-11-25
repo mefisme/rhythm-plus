@@ -43,7 +43,8 @@ if os.environ.get("RH_GRANULAR") == "1" or os.environ.get('RH_GRANULAR_CURRENT_A
     # Prefix keeps all existing short offsets unchanged; the new adapter uses
     # its own absolute slot pointer. Historical builds leave this disabled.
     fine=os.environ.get('RH_GRANULAR_FINE')=='1'
-    SLOTS = ((("granstore",288 if fine else 448),) if os.environ.get('RH_GRANULAR_COMPANION')=='1' else ()) + (("granular",480 if fine else 416 if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1' else 316),) + SLOTS
+    filter_probe=os.environ.get('RH_FILTER_EDITOR_PROBE')=='1'
+    SLOTS = ((("granstore",416 if os.environ.get('RH_PITCH_DSP_PROBE')=='1' else 352 if filter_probe else 288 if fine else 448),) if os.environ.get('RH_GRANULAR_COMPANION')=='1' else ()) + (("granular",480 if fine else 416 if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1' else 316),) + SLOTS
 # Volatile automation proof has a private enable word, initialized by c_rst.
 if os.environ.get('RH_DSPZIP') == '1':
     # Prefix preserves every pre-existing absolute slot and SD DMA alignment.

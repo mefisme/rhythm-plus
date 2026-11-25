@@ -29,14 +29,14 @@ def clear(regions,tag):
     return items
 
 
-def init_code(pool_body):
+def init_code(pool_body, extra_private=()):
     # Reset clears only what core 1 can read before core 0's main loop; the stock
     # startup must not wait behind the full clear.
     items=[('label','init')]
     for k in range(8):items += [('words',[0x05f420|k,0xffffff])]
     items += ['clr a',*clear([r for r in L.REGIONS if r.core==-1],'shared'),f'move a,y:>${FLAG:x}',('jmp',0x100)]
     # First main-loop pass, after the stock wait: clear core 0's own regions once.
-    private=[r for r in L.REGIONS if r.core==0 and not FLAG<=r.start<r.end<=FLAG+2]
+    private=[r for r in (*L.REGIONS,*extra_private) if r.core==0 and not FLAG<=r.start<r.end<=FLAG+2]
     items += [('label','first'),('jsr',STOCK_WAIT),f'move r0,y:>${R0_SAVE:x}',f'move y:>${FLAG:x},a','tst a',('jcc','ne','cleared'),
               'clr a',*clear(private,'private'),'move #>$1,a',f'move a1,y:>${FLAG:x}',
               ('label','cleared'),f'move y:>${R0_SAVE:x},r0',('jmp',pool_body)]
@@ -45,7 +45,7 @@ def init_code(pool_body):
 
 
 @contextmanager
-def builders(cores=(0,1),packed=False):
+def builders(cores=(0,1),packed=False,filter_dsp_probe=False,pitch_dsp_probe=False,ring_dsp_probe=False,scan_dsp_probe=False):
     original1,original0=rhdsp1.install,core0.install
     def core1(img,report,base,code,key,**kwargs):
         if 1 not in cores:return original1(img,report,base,code,key,**kwargs)
@@ -58,10 +58,33 @@ def builders(cores=(0,1),packed=False):
         with PACK.placed(native_end) if packed else nullcontext():
             for name,module in (('route',I),('snapshot',S),('notes',N),('flow',F)):
                 segments,stages[name]=module.patched(segments)
+        end=max(address+len(words) for space,address,words in segments if space=='p')
+        if ring_dsp_probe:
+            import filter_cutoff, pitch_envelope_dsp, ring_mod_dsp
+            pitch_origin=end+len(filter_cutoff.code(end)[0])
+            ring_origin=pitch_origin+len(pitch_envelope_dsp.code(pitch_origin)[0])
+            segments=ring_mod_dsp.before_source(segments,ring_origin,stages['route']['labels']['source'],report)
+            if scan_dsp_probe:
+                import scan_dsp
+                scan_origin=ring_origin+report['ring_mod_before']['words']
+                segments,scan_words=scan_dsp.hook(segments,scan_origin,report)
         after={address+i:word for space,address,words in segments if space=='p' for i,word in enumerate(words)}
-        end=max(after)+1;combined=[after.get(address,0) for address in range(rhdsp1.START,end)]
+        combined=[after.get(address,0) for address in range(rhdsp1.START,end)]
         for address,word in before.items():
             if address<rhdsp1.START and after[address]!=word:rhdsp1.patch_p(img,address,word,after[address])
+        if filter_dsp_probe:
+            import filter_cutoff
+            assert kwargs.get('landing') is None
+            combined += filter_cutoff.install_dsp(img,report,end)
+        if pitch_dsp_probe:
+            import pitch_envelope_dsp
+            combined += pitch_envelope_dsp.install(img, report, rhdsp1.START + len(combined))
+        if ring_dsp_probe:
+            assert rhdsp1.START+len(combined)==ring_origin
+            combined += next(words for space,address,words in segments if space=='p' and address==ring_origin)
+            if scan_dsp_probe:
+                assert rhdsp1.START+len(combined)==scan_origin
+                combined += scan_words
         labels=original1(img,report,base,combined,key,**kwargs)
         start=stages['route']['labels']['source']
         report.setdefault('granular',{}).update(integration_version=1,core1_start=hex(start),core1_end=hex(end),core1_stages=stages,
@@ -86,7 +109,17 @@ def builders(cores=(0,1),packed=False):
         program={address+i:word for address,words in extras for i,word in enumerate(words)}
         wait=pool['labels']['after_wait']
         assert [program[wait],program[wait+1]]==[0x0bf080,STOCK_WAIT]
-        initial,labels=init_code(wait+2)
+        ring_regions = ()
+        if ring_dsp_probe:
+            import ring_mod_dsp
+            ring_segments = ring_mod_dsp.segment(native, report)
+            assert all(not (address < other + len(data) and other < address + len(words))
+                       for address, words in ring_segments for other, data in extras)
+            extras += ring_segments
+            ring_regions = (L.Region(0, 'y', ring_mod_dsp.STATE, 48, 'Ring Mod'),)
+            assert all(not (a < other + len(data) and other < a + len(words))
+                       for a, words in ring_segments for other, data in kwargs['segs'])
+        initial,labels=init_code(wait+2,ring_regions)
         extras += [(INIT,initial),(0,[0x0af080,labels['init']]),(0x228,[0x0bf080,labels['first']])]
         idle=[]
         if os.environ.get('RH_C0IDLE')=='1':

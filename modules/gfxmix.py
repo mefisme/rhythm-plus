@@ -37,6 +37,10 @@ BLK_OFF, BLK_LEN = 504, 26
 SLOT_LEN = 472
 PK_OFF, PK_LEN = 548, 196                       # the FX track's steps' codes
 PS_OFF, PS_LEN = 2, 145                         # their sets
+CUE_OFF, CUE_LEN = 148, 36                      # the cue scrub's 16 cues and its jump timing
+CUE_RAM = 0x38B0                                # ITCM: the cue scrub's state, 24 B (A310) or 40 B (after quantize's 0x38A8)
+CUES_A310 = ROOT / "modules" / "gfxmix_a310.c"     # A310's source, kept as built
+SRC_A322 = ROOT / "modules" / "gfxmix_a322.c"      # every build before A323, kept as built
 LABELS = ("c_gx_btn", "c_gx_rel", "c_gx_knob", "c_gx_out", "c_gx_pad", "c_gx_padrel", "c_gx_tknob", "c_gx_noteon", "c_gx_tick", "c_gx_unl",
           "c_gx_s4")
 NOTE_ON, ON_HEAD = 0x08040778, "push.w {r4, r5, r6, r7, r8, sb, fp, lr}"
@@ -44,7 +48,10 @@ UNLOCK, UNLOCK_SITES = 0x08030EB8, (0x080467A4, 0x0804681E)
 PLAYER_VT = 0x08068D24
 SLOT1 = PLAYER_VT + 0x4                          # the players' vtable, slot 1: a tick (player, pattern, step, micro, [sp] tick)
 SLOT4 = PLAYER_VT + 0x10                         # slot 4: the step's sample
+ENG_LISTEN, ENG_LISTEN4 = 0x08066B3C, 0x08066B60  # the song engine's listener entries
 
+
+SCR_OFF = 424                                   # the slot's scr byte: Shift + Play held (a scrub)
 
 def stubs(base, lab, img, prev_s1, prev_s4):
     """the entries that keep every register and the stack for the stock: the note-on, the players' slots 1 and 4"""
@@ -93,7 +100,7 @@ def install(img, report, base_addr):
     assert rhstate.OFF["gfxmix"][1] >= SLOT_LEN
     sm_reserved = ((276,20),) if report['stepmut'].get('offload') else ((SM.BLK_OFF, SM.BLK_LEN),)
     taken = ((192, 84), (384, 20), (T.PG_OFF, T.PG_LEN), (748, 112)) + sm_reserved
-    ours = ((BLK_OFF, BLK_LEN), (PK_OFF, PK_LEN), (PS_OFF, PS_LEN))
+    ours = ((BLK_OFF, BLK_LEN), (PK_OFF, PK_LEN), (PS_OFF, PS_LEN), (CUE_OFF, CUE_LEN))
     assert all(a + n <= o or o + m <= a for a, n in ours for o, m in taken) and all(a + n <= rhrec.FREE_LEN for a, n in ours)
     GS.install(img, report, sends=True, controls=True)
     base_addr = rhbuild.BASE + len(img)
@@ -124,7 +131,73 @@ def install(img, report, base_addr):
     if os.environ.get('RH_GRANULAR_CURRENT_ARM')=='1':defs['GRANULAR_INTERLOCK']=1
     if os.environ.get('RH_GFX_CPAGE')=='1':defs['CPAGE']=1
     if os.environ.get('RH_GFX_MIXSHIFT')=='1':defs['CPAGE_MIX']=1
-    code, labels = SM.compile_c(base_addr, defs, src=SRC, name="gfxmix", prefix="c_gx_", need=LABELS + ("c_gx_smread", "c_gx_smwrite", "c_gx_smsample"), max_code=0x6000)
+    if os.environ.get('RH_SCRUB_ANY')=='1':defs['SCRUB_ANY']=1
+    cues = os.environ.get('RH_CUES', '0')
+    if cues in ('1', '2'):
+        assert defs.get('SCRUB_ANY')
+        defs.update(CUES=1, CUE_OFF=CUE_OFF, CUE_LEN=CUE_LEN, CUE_RAM=CUE_RAM)
+    if os.environ.get('RH_K1_EDGE')=='1':
+        assert cues == '2'
+        defs['K1_EDGE']=1
+    if os.environ.get('RH_CUE_PLUS')=='1':
+        assert cues == '2'
+        defs['CUE_PLUS']=1
+    if os.environ.get('RH_CUE_LATCH')=='1':
+        assert defs.get('CUE_PLUS')
+        defs['CUE_LATCH']=1
+    if os.environ.get('RH_LATCH_TAP')=='1':
+        assert defs.get('CUE_LATCH')
+        defs['LATCH_TAP']=1
+    if os.environ.get('RH_CUE_TUNE')=='1':
+        assert defs.get('LATCH_TAP')
+        defs['CUE_TUNE']=1
+    if os.environ.get('RH_CUE_AUTO')=='1':
+        assert defs.get('CUE_TUNE')
+        defs['CUE_AUTO']=1
+    if os.environ.get('RH_CUE_PEEK')=='1':
+        assert defs.get('CUE_AUTO')
+        defs['CUE_PEEK']=1
+    if os.environ.get('RH_CUE_LOOP')=='1':
+        assert defs.get('CUE_PEEK')
+        defs['CUE_LOOP']=1
+    if os.environ.get('RH_CUE_SYNC')=='1':
+        assert defs.get('CUE_LOOP')
+        defs['CUE_SYNC']=1
+    if os.environ.get('RH_CUE_DOWN')=='1':
+        assert defs.get('CUE_SYNC')
+        defs['CUE_DOWN']=1
+    if os.environ.get('RH_CUE_K1')=='1':
+        assert defs.get('CUE_DOWN')
+        defs['CUE_K1']=1
+    if os.environ.get('RH_CUE_SPEED')=='1':
+        assert defs.get('CUE_K1')
+        defs['CUE_SPEED']=1
+    if os.environ.get('RH_CUE_HOME')=='1':
+        assert defs.get('CUE_SPEED')
+        defs['CUE_HOME']=1
+    if os.environ.get('RH_CUE_V3')=='1':
+        assert defs.get('CUE_HOME')
+        defs['CUE_V3']=1
+    if os.environ.get('RH_CUE_COLS')=='1':
+        assert defs.get('CUE_V3')
+        defs['CUE_COLS']=1
+    if os.environ.get('RH_CUE_ONE')=='1':
+        assert defs.get('CUE_COLS')
+        defs['CUE_ONE']=1
+    if os.environ.get('RH_CUE_PASS')=='1':
+        assert defs.get('CUE_ONE')
+        defs['CUE_PASS']=1
+    if os.environ.get('RH_CUE_TAP')=='1':
+        assert defs.get('CUE_PASS')
+        defs['CUE_TAP']=1
+    if os.environ.get('RH_CUE_HOME1')=='1':
+        assert defs.get('CUE_TAP')
+        defs['CUE_HOME1']=1
+    if os.environ.get('RH_CUE_BAR')=='1':
+        assert defs.get('CUE_HOME1')
+        defs.update(CUE_BAR=1, CUE_PUNCH=1)
+    instruction_map = []
+    code, labels = SM.compile_c(base_addr, defs, src=SRC if defs.get('CUE_COLS') else CUES_A310 if cues == '1' else SRC_A322, name="gfxmix", prefix="c_gx_", need=LABELS + ("c_gx_smread", "c_gx_smwrite", "c_gx_smsample"), max_code=0x6000, instruction_map=instruction_map)
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     if defs.get('EDITOR_GUARD'):
         at=lab('tmenu','c_tmallowed')
@@ -147,13 +220,17 @@ def install(img, report, base_addr):
     rhbuild.patch(img, NOTE_ON, ON_HEAD, bw_ins(NOTE_ON, labels["c_gx_on_e"]))
     rhbuild.patch_word(img, SLOT1, prev_s1 | 1, labels["c_gx_tick_e"] | 1)
     rhbuild.patch_word(img, SLOT4, prev_s4 | 1, labels["c_gx_s4_e"] | 1)
+    if defs.get("CUE_SYNC"):                     # the engine's pulse listener, both entries (the second one's object is the engine + 4)
+        rhbuild.patch_word(img, ENG_LISTEN, 0x0803391B, labels["c_gx_enl"] | 1)
+        rhbuild.patch_word(img, ENG_LISTEN4, 0x08033919, labels["c_gx_enl4"] | 1)
     for c in UNLOCK_SITES:
         rhbuild.patch(img, c, f"bl #{UNLOCK:#x}", bl_ins(c, labels["c_gx_unl"]))
     for name, target, head in (("c_sm_fxread", "c_gx_smread", "movs r0, #0|bx lr"),
                                ("c_sm_fxwrite", "c_gx_smwrite", "bx lr|nop"),
                                ("c_sm_fxsample", "c_gx_smsample", "bx lr|nop")):
         rhbuild.patch(img, lab("stepmut", name), head, bw_ins(lab("stepmut", name), labels[target]))
-    report["gfxmix"] = dict(control_page=bool(defs.get('CPAGE')),mixer_shift=bool(defs.get('CPAGE_MIX')),overdub=bool(defs.get('GFX_OVERDUB')),native_edges=bool(defs.get('NATIVE_EDGES')),input_trace=bool(defs.get('INPUT_TRACE')),slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, pk_off=PK_OFF, ps_off=PS_OFF, code=len(code) + len(st_code), cut=hex(GS.CUT),
+    report["gfxmix"] = dict(**({"scrub_any": True} if defs.get("SCRUB_ANY") else {}),**({"cues": dict(off=CUE_OFF, len=CUE_LEN, ram=hex(CUE_RAM), ram_len=24 if cues == "1" else 72 if defs.get("CUE_SYNC") else 64 if defs.get("CUE_PEEK") else 56 if defs.get("CUE_TUNE") else 52 if defs.get("LATCH_TAP") else 48 if defs.get("CUE_LATCH") else 44 if defs.get("CUE_PLUS") else 40, version=int(cues), n=16 if cues == "1" else 8, **({"k1_edge": True} if defs.get("K1_EDGE") else {}), **({"cue_plus": True} if defs.get("CUE_PLUS") else {}), **({"latch": True} if defs.get("CUE_LATCH") else {}), **({"latch_tap": True} if defs.get("LATCH_TAP") else {}), **({"tune": True} if defs.get("CUE_TUNE") else {}), **({"auto": True} if defs.get("CUE_AUTO") else {}), **({"peek": True} if defs.get("CUE_PEEK") else {}), **({"loop": True} if defs.get("CUE_LOOP") else {}), **({"sync": True} if defs.get("CUE_SYNC") else {}), **({"down": True} if defs.get("CUE_DOWN") else {}), **({"k1_slow": True} if defs.get("CUE_K1") else {}), **({"k1_speed": True} if defs.get("CUE_SPEED") else {}), **({"home": True} if defs.get("CUE_HOME") else {}), **({"v3": True} if defs.get("CUE_V3") else {}), **({"cols": True} if defs.get("CUE_COLS") else {}), **({"one": True} if defs.get("CUE_ONE") else {}), **({"pass": True} if defs.get("CUE_PASS") else {}), **({"tap": True} if defs.get("CUE_TAP") else {}), **({"home1": True} if defs.get("CUE_HOME1") else {}), **({"bar": True, "punch": True} if defs.get("CUE_BAR") else {}))} if defs.get("CUES") else {}),scrub_flag=hex(defs["SLOT"] + SCR_OFF),control_page=bool(defs.get('CPAGE')),mixer_shift=bool(defs.get('CPAGE_MIX')),overdub=bool(defs.get('GFX_OVERDUB')),native_edges=bool(defs.get('NATIVE_EDGES')),input_trace=bool(defs.get('INPUT_TRACE')),slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, pk_off=PK_OFF, ps_off=PS_OFF, code=len(code) + len(st_code), cut=hex(GS.CUT),
                             prev_s1=hex(prev_s1), prev_s4=hex(prev_s4), stubs=hex(st_base),
                             prev={k.lower(): hex(v) for k, v in prev.items()}, labels={k: hex(v) for k, v in labels.items()})
+    report["gfxmix"]["instruction_map"] = instruction_map[0]
     return labels, code

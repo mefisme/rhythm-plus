@@ -42,7 +42,7 @@ def main():
         E.press(u,19);E.release(u,19);assert not u.mem_read(s+380,1)[0]&128
         shift(True,True);shift(False);assert u.mem_read(s+102,1)==b'\0'
     else:
-        for physical in (True,False):
+        for physical in ((True,False) if g['ui'].get('shift_opens_settings',True) else ()):
             shift(True,physical);assert u.mem_read(s+102,1)==b'\1'
             E.press(u,19);E.release(u,19);assert not u.mem_read(s+380,1)[0]&128
             shift(False);assert u.mem_read(s+102,1)==b'\0'
@@ -83,8 +83,11 @@ def main():
     G.unpad(u,19);G.unpad(u,20)
     # Settings and assignment pads remain controls, never value taps.
     tapmode=g['ui'].get('shift_tap')
-    shift(True,tapmode)
-    if tapmode:shift(False)
+    shift_settings=g['ui'].get('shift_opens_settings',True)
+    if shift_settings:
+        shift(True,tapmode)
+        if tapmode:shift(False)
+    else:hold(E.GP)
     if g['ui'].get('sticky_assign'):
         G.held(u,19,True);E.press(u,19);u.mem_write(0x20000820,struct.pack('<I',E.u32(u,0x20000820)+400))
         E.call(u,K['c_gr_runtime_ui_frame'],s,0,1);G.held(u,19,False);E.release(u,19)
@@ -93,7 +96,8 @@ def main():
     for _ in range(8):tap(24)
     tap(16);assert u.mem_read(s+316,1)==b'\x09' and bytes(u.mem_read(s+104,64))==manual
     if tapmode:shift(True,True)
-    shift(False)
+    if shift_settings:shift(False)
+    else:tap(E.GP)
     if g['ui'].get('sticky_assign'):shift(True,True);shift(False);assert u.mem_read(s+102,1)==b'\0','Shift did not close sticky assignments'
     u.mem_write(E.ptr(u,E.C.TRANSPORT,1),b'\1');u.mem_write(E.ptr(u,E.C.TRANSPORT,0),b'\1')
     p=SM.pat(u,0);u.mem_write(p+0x128,b'\xff'*192)
@@ -125,8 +129,11 @@ def main():
     print('PASS silent selection keeps held step and suppresses only TPE audition')
     # No additional storage: settings use spare config bits, checked by CRC.
     fine=bool(g.get('fine_controls'))
-    E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytes(u.mem_read(buf,288 if fine else 224))
-    assert saved[:4]==(b'GS\x05\x08' if fine else b'GS\x04\x08') and saved[72]&0x84==0x84
+    shadow=E.MAN['report']['storageshadow']
+    version=shadow.get('granular_settings_version',5 if fine else 4)
+    size=shadow.get('granular_settings_bytes',288 if fine else 224)
+    E.call(u,K['c_gr_runtime_settings_store'],s,buf);saved=bytes(u.mem_read(buf,size))
+    assert saved[:4]==b'GS'+bytes([version,8]) and saved[72]&0x84==0x84
     E.call(u,K['c_gr_runtime_settings_load'],s,0);assert u.mem_read(s+168,1)==b'\0'
     E.call(u,K['c_gr_runtime_settings_load'],s,buf);assert u.mem_read(s+168,1)[0]&0x84==0x84
     for version in (2,3):

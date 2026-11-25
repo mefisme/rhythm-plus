@@ -24,9 +24,11 @@ def main():
  G.pad(u,4);G.knob(u,2,-7);G.unpad(u,4)
  n=u.mem_read(G.SLOT+242,1)[0];ring=struct.unpack('<32I',u.mem_read(G.SLOT+244,128))
  tail=[ring[(n-9+i)%32] for i in range(9)]
- assert tail==[0xd10400ff,100,SENT|1,0xd3020513,0xfffffff9,SENT|1,0xd2040513,0,SENT|1],list(map(hex,tail))
+ # Bit 1 is the control page: Shift on the FX track opens it only in builds without the page 2 controls.
+ page=0 if E.MAN['report']['gfxmix'].get('control_page') else 2
+ assert tail==[0xd10400fd|page,100,SENT|1,0xd3020511|page,0xfffffff9,SENT|1,0xd2040511|page,0,SENT|1],list(map(hex,tail))
  after=bytes(u.mem_read(G.blk(u),26))
- assert after[23:]==bytes([127,127,120])
+ assert after[23:]==(before[23:] if page==0 else bytes([127,127,120])),'Shift + K3 changes the blend only where Shift opens the control page'
  assert before[4:23]==after[4:23]
  print('PASS log captures pad/knob/release, exact delta, caller and held/Shift context in existing ring; only requested control changes')
  print('ALL PASS')

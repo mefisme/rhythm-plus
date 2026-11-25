@@ -34,9 +34,10 @@ def _inside(v):
     return any(lo <= v < hi for lo, hi in HOLES)
 
 
-def check(img, stock_len):
-    """Our code (after the stock's end) neither branches into the freed code nor holds an address in it."""
+def check(img, stock_len, thumb_instruction=None, placed=()):
+    """Our code (after the stock's end) neither branches into the freed code nor holds an address in it; placed: (lo, hi) of our modules there."""
     ours = bytes(img[stock_len:])
+    free_ = lambda v: _inside(v) and not any(lo <= v < hi for lo, hi in placed)   # noqa: E731
     base = rhbuild.BASE + stock_len
     for i in range(0, len(ours) - 3, 2):
         hi_, lo_ = struct.unpack_from("<HH", ours, i)
@@ -47,7 +48,9 @@ def check(img, stock_len):
             if s:
                 off -= 1 << 25
             target = base + i + 4 + off
-            assert not _inside(target), f"our code at {base + i:#x} branches into Easy Start's freed code ({target:#x})"
+            assert not free_(target), f"our code at {base + i:#x} branches into Easy Start's freed code ({target:#x})"
     for i in range(0, len(ours) - 3, 4):
         w = struct.unpack_from("<I", ours, i)[0]
-        assert not _inside(w & ~1), f"our word at {base + i:#x} holds {w:#x}, inside Easy Start's freed code"
+        if not free_(w & ~1):continue
+        if thumb_instruction and thumb_instruction(base+i,ours[i:i+4]):continue
+        raise AssertionError(f"our word at {base + i:#x} holds {w:#x}, inside Easy Start's freed code")

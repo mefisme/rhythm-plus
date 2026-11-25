@@ -13,10 +13,13 @@ import emu_tmenu as ET  # noqa: E402  (ourram's layout from the build's manifest
 from emu_tmenu import C, T, call, check, ptr, u32  # noqa: E402
 from emu_playfix import STACK  # noqa: E402
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE  # noqa: E402
-from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_SP  # noqa: E402
+from unicorn.arm_const import UC_ARM_REG_R5, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_SP  # noqa: E402
 
 R = ET.MAN["report"]["gfxmix"]
+CUES2 = R.get("cues", {}).get("version") == 2          # the held cue scrub: audition on pad 24, pads 17-32 the bar and the cues
 LB = {k: int(v, 16) for k, v in R["labels"].items()}
+K1_SLOW = R.get("cues", {}).get("k1_slow")                  # K1 one step for each 2 clicks in the scrub
+SCR_FLAG = int(R["scrub_flag"], 16)
 PREV = {k: int(v, 16) for k, v in R["prev"].items()}
 SLOT, CUT = int(R["slot"], 16), int(R["cut"], 16)
 DRUP0 = int(ET.MAN["report"]["cthresh"]["labels"]["c_drup0"], 16)
@@ -38,7 +41,26 @@ def mode_p(uc): return ptr(uc, u32(uc, MIX + 0x1CC), 0)
 def fxpage_p(uc): return ptr(uc, u32(uc, MIX + 0x154), 0)  # Grid FX's effect page - 2, 0xFF = none
 def btn(uc, i): call(uc, C.BTN_ENTRY, C.CTRL, i)
 def pad(uc, p, vel=100): call(uc, T.PP_ENTRY, C.CTRL, p, vel)
-def knob(uc, k, d): call(uc, T.KN_ENTRY, C.CTRL, k, d & 0xFFFFFFFF)
+def knob(uc, k, d):
+    """A knob turn; in the scrub with a slow K1, d is K1's steps (2 clicks each)"""
+    if k == 0 and K1_SLOW and uc.mem_read(SCR_FLAG, 1)[0]:
+        d *= 2
+    call(uc, T.KN_ENTRY, C.CTRL, k, d & 0xFFFFFFFF)
+def knob_raw(uc, k, d): call(uc, T.KN_ENTRY, C.CTRL, k, d & 0xFFFFFFFF)
+V3 = R.get("cues", {}).get("v3")
+ONE = R.get("cues", {}).get("one")                       # A324: one timing, the pads and K4 (pads 18-24) set it                         # Shift + Play held 0.5 s latches; no hold mode
+def scrub_on(uc):
+    """Play pressed with Shift on: the scrub (A322: held 0.5 s, then a frame latches it)"""
+    if V3:
+        out(uc)                                          # the unit's frames run before any press
+    btn(uc, 17)
+    if V3:
+        uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + 600)); out(uc)
+def scrub_off(uc):
+    """Play let go: the scrub ends (A322: Play's release is the latch's, a Shift tap ends it)"""
+    call(uc, C.BTN_RELEASE, C.CTRL, 17)
+    if V3:
+        btn(uc, 27); call(uc, C.BTN_RELEASE, C.CTRL, 27)
 def scl(rgb, lvl): return sum((((rgb >> s) & 0xFF) * (lvl + 1) >> 8) << s for s in (0, 8, 16))
 def sends(uc): return list(uc.mem_read(blk(uc) + 4, 8))
 
@@ -795,8 +817,8 @@ def scrub_test():
     uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)  # no listeners
     pos = ptr(uc, u32(uc, ENG + 0x90), 0)
     uc.mem_write(pos, struct.pack("<I", 60))                # step 11 of the 16-step song
-    uc.mem_write(sh, b"\x01"); btn(uc, 17)
-    check("Shift + Play pressed: held back from the stock", b8(uc, SLOT + O_SCR) == 1 and btns == [], btns)
+    uc.mem_write(sh, b"\x01"); scrub_on(uc)
+    check("Shift + Play pressed" + (", held 0.5 s" if V3 else "") + ": held back from the stock", b8(uc, SLOT + O_SCR) == 1 and btns == [], btns)
     check("  Shift up in the stock while it scrubs (no Shift pages)", b8(uc, ptr(uc, u32(uc, C.CTRL + 0xC), 0)) == 0)
     o = out(uc)
     check("  K1 green while held", o[LED_KNOB0] & 0xFFFFFF in (scl(0x00FF00, 255), scl(0x00FF00, 141)), hex(o[LED_KNOB0]))
@@ -806,18 +828,18 @@ def scrub_test():
     check("  K1 +3 from step 15 of 16: the song's last step", locs[-1] == 90, locs)
     uc.mem_write(pos, struct.pack("<I", 84 + 96 * 3)); knob(uc, 0, 1)
     check("  the position three loops on: still inside the song", locs[-1] == 90, locs)
-    rel(17); uc.mem_write(sh, b"\x00")
-    check("  let go after a turn: nothing to the stock", btns == [] and rels == [] and b8(uc, SLOT + O_SCR) == 0, (btns, rels))
+    scrub_off(uc); uc.mem_write(sh, b"\x00")
+    check("  let go after a turn" + (", then a Shift tap" if V3 else "") + ": nothing to the stock", btns == [] and rels == [] and b8(uc, SLOT + O_SCR) == 0, (btns, rels))
     uc.mem_write(pos, struct.pack("<I", 3))
-    uc.mem_write(sh, b"\x01"); btn(uc, 17); knob(uc, 0, -1)
+    uc.mem_write(sh, b"\x01"); scrub_on(uc); knob(uc, 0, -1)
     check("  back past the song's start: 0", locs[-1] == 0, locs)
-    rel(17)
+    scrub_off(uc); uc.mem_write(sh, b"\x01")
     btn(uc, 17); uc.mem_write(sh, b"\x00"); locs.clear(); rel(17)
     check("Shift + Play tapped (Shift let go first): the stock's Shift + Play and its release",
           [x for x, _ in btns] == [17] and [x for x, _ in rels] == [17] and locs == [], (btns, rels, locs))
     tr = ptr(uc, 0x200122B0, 0)
     uc.mem_write(tr, b"\x00"); uc.mem_write(pos, struct.pack("<I", 30))
-    uc.mem_write(sh, b"\x01"); btn(uc, 17); knob(uc, 0, 3); rel(17); uc.mem_write(sh, b"\x00")
+    uc.mem_write(sh, b"\x01"); scrub_on(uc); knob(uc, 0, 3); scrub_off(uc); uc.mem_write(sh, b"\x00")
     locs.clear(); btns.clear(); rels.clear()
     start = uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: u.mem_write(tr, b"\x01"), None, PREV["prev_btn"], PREV["prev_btn"] + 1)
     uc.mem_write(sh, b"\x01"); btn(uc, 17); uc.mem_write(sh, b"\x00"); rel(17); uc.hook_del(start)
@@ -826,7 +848,7 @@ def scrub_test():
     view(uc, CONT); t = b8(uc, ptr(uc, u32(uc, CONT + 0x25C), 0)) & 7
     tp = ptr(uc, u32(uc, ENG + 0x30 + 4 * t), 1); so = u32(uc, CONT + 0x74 + 4 * t); pgp = ptr(uc, u32(uc, so + 0x60), 0)
     uc.mem_write(pgp, b"\x00"); uc.mem_write(tp, bytes([20]))
-    uc.mem_write(sh, b"\x01"); btn(uc, 17); out(uc)
+    uc.mem_write(sh, b"\x01"); scrub_on(uc); out(uc)
     check("scrubbing, the track's playhead on step 21: its page 2 shown", b8(uc, ptr(uc, u32(uc, so + 0x60), 0)) & 1 == 1)
     o = out(uc)
     check("  the playhead's pad (pad 5 of page 2) white", o[4] & 0xFFFFFF in (WHITE, scl(WHITE, 141)), hex(o[4]))
@@ -836,10 +858,14 @@ def scrub_test():
         out(uc)
     uc.hook_del(hw)
     check("  five more frames on that page: the page store not written again", wr == [], [hex(x) for x in wr])
-    rel(17); uc.mem_write(sh, b"\x00")
+    scrub_off(uc); uc.mem_write(sh, b"\x00")
     btns.clear(); rels.clear(); uc.mem_write(sh, b"\x01"); btn(uc, 17)
-    uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + 300)); rel(17); uc.mem_write(sh, b"\x00")
-    check("Shift + Play held 300 ms, no K1 turn: nothing", btns == [] and rels == [] and b8(uc, SLOT + O_SCR) == 0, (btns, rels))
+    uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + 300)); o = out(uc); rel(17); uc.mem_write(sh, b"\x00")
+    if V3:
+        check("Shift + Play held 300 ms: shorter than the latch, the stock's Shift + Play; no scrub lights", [x for x, _ in btns] == [17]
+              and [x for x, _ in rels] == [17] and b8(uc, SLOT + O_SCR) == 0 and o[LED_KNOB0] == 0, (btns, rels, hex(o[LED_KNOB0])))
+    else:
+        check("Shift + Play held 300 ms, no K1 turn: nothing", btns == [] and rels == [] and b8(uc, SLOT + O_SCR) == 0, (btns, rels))
     btns.clear(); rels.clear(); btn(uc, 17); rel(17)
     check("Play alone: to the stock at once", [x for x, _ in btns] == [17] and [x for x, _ in rels] == [17], (btns, rels))
 
@@ -859,9 +885,11 @@ def scrub_boundary_test():
     uc.hook_add(UC_HOOK_CODE, lambda u,a,n,d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
     for fn, name in ((stop, "stop"), (cont, "continue")):
         uc.hook_add(UC_HOOK_CODE, lambda u,a,n,d,name=name: calls.append(name), None, fn, fn+1)
-    rel = lambda: call(uc, C.BTN_RELEASE, C.CTRL, 17)
+    rel = lambda: scrub_off(uc)
     def hold():
-        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0), b"\x01"); btn(uc, 17)
+        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0), b"\x01"); scrub_on(uc)
+    def tap():
+        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0), b"\x01"); btn(uc, 17); call(uc, C.BTN_RELEASE, C.CTRL, 17)
     uc.mem_write(tr, b"\x01"); uc.mem_write(pos, struct.pack("<I", 78))
     hold(); knob(uc, 0, 1)
     check("playing, scrub to the penultimate step: keeps playing", b8(uc,ptr(uc,C.TRANSPORT,0)) == 1 and calls == [], calls)
@@ -896,7 +924,7 @@ def scrub_boundary_test():
         u.mem_write(tap_tr,b"\x01")
         u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE,start_tap,None,PREV["prev_btn"],PREV["prev_btn"]+1)
-    hold(); rel(); uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x00")
+    tap(); uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x00")
     check("Shift + Play tap resumes from the held last step", taps == [1] and b8(uc,ptr(uc,C.TRANSPORT,0)) == 1 and u32(uc,ptr(uc,u32(uc,eng+0x90),0)) == 90, (b8(uc,ptr(uc,C.TRANSPORT,0)),u32(uc,ptr(uc,u32(uc,eng+0x90),0))))
     if os.environ["RH_BUILD"] >= "a0171":
         tap_sh = ptr(uc,u32(uc,C.CTRL+0xC),0)
@@ -904,7 +932,7 @@ def scrub_boundary_test():
         taps.clear();hold();knob(uc,0,-100);rel();uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x00")
         tap_sh = ptr(uc,u32(uc,C.CTRL+0xC),0)
         tap_tr = ptr(uc,C.TRANSPORT,0)
-        hold();rel();uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x00")
+        tap();uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x00")
         check("Shift + Play tap explicitly resumes from held first step",taps==[1] and b8(uc,ptr(uc,C.TRANSPORT,0))==1 and u32(uc,ptr(uc,u32(uc,eng+0x90),0))==0,(taps,b8(uc,ptr(uc,C.TRANSPORT,0))))
 
 
@@ -945,38 +973,55 @@ def scrub_audio_test():
             uc.mem_write(pat+8*step,bytes([note,6,1,90+t,127,0xFF,0,0]))
     uc.mem_write(ptr(uc,C.TRANSPORT,0),b"\x00")
     uc.mem_write(ptr(uc,u32(uc,eng+0x90),0),struct.pack("<I",6))
-    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01"); btn(uc,17)
+    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01"); scrub_on(uc)
     knob(uc,0,1)
     check("stopped scrub: sound on by default, all eight stock note dispatchers called", notes == [(objs[t],48+t,90+t) for t in range(8)], notes)
     check("  stock sample selector called at each track's located step", samples == [(PLAYERS+PL_SZ*t,0,2) for t in range(8)], samples)
     check("  audition leaves transport stopped", b8(uc,ptr(uc,C.TRANSPORT,0)) == 0)
     o=out(uc)
-    check("scrub: K1 and K2 green, K3-K8 dark", o[60] == o[61] and o[60] != 0 and list(o[62:68]) == [0]*6, o[60:68])
+    if V3:
+        check("scrub: K1 green, K2 K1's speed (blue), K3 the scanner (dim amber), K4 the loop length (purple), K5 sound on (green), K6-K8 dark",
+              o[60] == o[64] and o[60] and o[61] and o[62] and o[63] and len({o[60], o[61], o[62], o[63]}) == 4 and list(o[65:68]) == [0]*3, o[60:68])
+    elif CUES2:
+        K4LIT = not K1_SLOW or bool(R["cues"].get("k1_speed"))
+        check("scrub: K1 green, K2 the scanner (dim amber), K3 the timing" + (", K4 K1's " + ("speed" if K1_SLOW else "timing") if K4LIT else ", K4") + ", the rest dark",
+              o[60] and o[61] and o[61] != o[60] and o[62] and bool(o[63]) == K4LIT and list(o[64:68]) == [0]*4, o[60:68])
+    elif R.get("cues"):
+        check("scrub: K1 and K2 green, K3 and K4 lit (marker, jump timing), K5-K8 dark",
+              o[60] == o[61] and o[60] != 0 and o[62] and o[63] and list(o[64:68]) == [0]*4, o[60:68])
+    else:
+        check("scrub: K1 and K2 green, K3-K8 dark", o[60] == o[61] and o[60] != 0 and list(o[62:68]) == [0]*6, o[60:68])
     for v in (CONT,MIX):
         view(uc,v)
-        for k in range(2,8): knob(uc,k,1); knob(uc,k,-1)
-    check("K3-K8 disabled on track and mixer views", turns == [], turns)
-    knob(uc,1,-1)
-    check("K2 left: all audition notes released at once", offs == [(objs[t],48+t,0) for t in range(8)], offs)
+        for k in ((1,2,3,5,6,7) if V3 else range(2,8)): knob(uc,k,1); knob(uc,k,-1)
+    check("K2-K8 kept from the stock on track and mixer views" if V3 else "K3-K8 disabled on track and mixer views", turns == [], turns)
+    aud = (lambda on=0: knob(uc,4,1 if on else -1)) if V3 else (lambda on=0: pad(uc,23)) if CUES2 else None
+    aud() if CUES2 else knob(uc,1,-1)
+    check("audition off (" + ("K5 left" if V3 else "K2 left, or pad 24") + "): all audition notes released at once", offs == [(objs[t],48+t,0) for t in range(8)], offs)
     notes.clear(); samples.clear(); knob(uc,0,1)
-    check("K2 off: K1 still locates silently", notes == [] and samples == [])
+    check("audition off: K1 still locates silently", notes == [] and samples == [])
     o=out(uc)
-    check("K2 off: red LED, other knobs still dark", o[61] == scl(0xFF0000,255) or o[61] == scl(0xFF0000,141), o[60:68])
-    knob(uc,1,1); knob(uc,0,-1)
-    check("K2 right: audition resumes on the next K1 turn", len(notes)==8, notes)
+    led = o[64] if V3 else o[23] if CUES2 else o[61]
+    check("audition off: its light red", led == scl(0xFF0000,255) or led == scl(0xFF0000,141), hex(led))
+    aud(1) if CUES2 else knob(uc,1,1)
+    knob(uc,0,-1)
+    check("audition on again: it resumes on the next K1 turn", len(notes)==8, notes)
     offs.clear(); uc.mem_write(HAL_TICK,struct.pack("<I",u32(uc,HAL_TICK)+120)); out(uc)
     check("no turn for 120 ms: all preview notes released", len(offs)==8, offs)
-    offs.clear(); notes.clear(); knob(uc,0,1); call(uc,C.BTN_RELEASE,C.CTRL,17)
-    check("release Play: preview notes released", len(notes)==8 and len(offs)==8, (notes,offs))
+    offs.clear(); notes.clear(); knob(uc,0,1); scrub_off(uc)
+    check(("the scrub left (Shift tap)" if V3 else "release Play") + ": preview notes released", len(notes)==8 and len(offs)==8, (notes,offs))
     view(uc,CONT); knob(uc,2,1)
     check("after scrub: K3 returns to its normal handler", len(turns)==1, turns)
-    presses=[]
-    uc.hook_add(UC_HOOK_CODE,capture(presses),None,PREV["prev_btn"],PREV["prev_btn"]+1)
-    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17)
-    knob(uc,1,-1);call(uc,C.BTN_RELEASE,C.CTRL,17)
-    check("changing K2 without K1: no accidental Shift + Play tap", presses==[],presses)
-    # Running scrub uses the stock playback, with no extra audition triggers.
-    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17);knob(uc,1,1)
+    if V3:
+        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");scrub_on(uc);knob(uc,4,1)
+    else:
+        presses=[]
+        uc.hook_add(UC_HOOK_CODE,capture(presses),None,PREV["prev_btn"],PREV["prev_btn"]+1)
+        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17)
+        knob(uc,1,-1);call(uc,C.BTN_RELEASE,C.CTRL,17)
+        check("changing K2 without K1: no accidental Shift + Play tap", presses==[],presses)
+        # Running scrub uses the stock playback, with no extra audition triggers.
+        uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17);knob(uc,1,1)
     uc.mem_write(ptr(uc,C.TRANSPORT,0),b"\x01");notes.clear();samples.clear();knob(uc,0,-1)
     check("playing scrub: no duplicate preview notes",notes==[] and samples==[],(notes,samples))
 
@@ -1014,7 +1059,7 @@ def scrub_chain_bounds_test():
         uc.hook_add(UC_HOOK_CODE,h,None,fn,fn+1)
     uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.reg_write(UC_ARM_REG_PC,0x0803FC22|1),None,0x0803FC1C,0x0803FC1D)
     uc.mem_write(ptr(uc,C.TRANSPORT,0),b"\x00")
-    uc.mem_write(sh,b"\x01");btn(uc,17);knob(uc,1,-1)
+    uc.mem_write(sh,b"\x01");scrub_on(uc);knob(uc,4 if V3 else 1,-1)
     for name,scene,chain,pattern_lens,expected in (
         ("one 16-step pattern",(0,0),(0,0),[16]*8,15),
         ("one 32-step pattern (both pages)",(0,0),(0,0),[32]+[16]*7,31),
@@ -1028,7 +1073,7 @@ def scrub_chain_bounds_test():
     # Passing the first scene's end does not clamp to that intermediate edge.
     uc.mem_write(pos,struct.pack("<I",30*6));locs.clear();knob(uc,0,4)
     check("scene chain: scrub across the intermediate scene edge",locs==[34*6],locs)
-    call(uc,C.BTN_RELEASE,C.CTRL,17)
+    scrub_off(uc)
 
 
 def scrub_page_recovery_test():
@@ -1047,17 +1092,1050 @@ def scrub_page_recovery_test():
         u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
     uc.hook_add(UC_HOOK_CODE,capture_frame,None,PREV["prev_out"],PREV["prev_out"]+1)
     uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.reg_write(UC_ARM_REG_PC,0x0803FC22|1),None,0x0803FC1C,0x0803FC1D)
-    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17)
+    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");scrub_on(uc)
     bad=[]
     for st in list(range(16,32))+list(range(30,14,-1)):
         # Reproduce a native page reset between scrub steps, with real store writes.
         call(uc,0x0803FD26,pg,0);uc.mem_write(uc.reg_read(UC_ARM_REG_R0),b"\x00");call(uc,0x0803FBEC,pg)
-        uc.mem_write(step_ptr,bytes([st]));out(uc)
+        uc.mem_write(step_ptr,bytes([st]));o=out(uc)
         want=second if st>=16 else first
-        if b8(uc,ptr(uc,pg,0)) != st>>4 or drawn[-1] != want:
+        if CUES2:
+            f=141 if o[st&15]==scl(WHITE,141) else 255
+            shown=[scl(u32(uc,0x20003974+4*c),f) for c in want]; shown[st&15]=scl(WHITE,f)
+            if b8(uc,ptr(uc,pg,0)) != st>>4 or [x for x in o[:16]] != shown:
+                bad.append(st+1)
+        elif b8(uc,ptr(uc,pg,0)) != st>>4 or drawn[-1] != want:
             bad.append(st+1)
     check("all steps 17-32 forward and backward: recover native page reset and draw correct page in the same frame",bad==[],bad)
-    call(uc,C.BTN_RELEASE,C.CTRL,17)
+    scrub_off(uc)
+
+
+def scrub_any_test():
+    """Shift + Play held on another screen or over a settings page: the selected track's steps on pads 1-16, pads 17-32 dark"""
+    if not R.get("scrub_any"):
+        return
+    uc=ET.setup(open(sys.argv[2],"rb").read(),open(sys.argv[3],"rb").read())
+    t=ET.sel(uc);so=u32(uc,CONT+0x74+4*t)
+    ps=u32(uc,0x2003C380+0x30+4*t)
+    codes=u32(uc,u32(uc,so+4))
+    first=[0x30+i for i in range(16)];second=[0x60+i for i in range(16)]
+    uc.mem_write(codes,struct.pack("<32H",*(first+second)))
+    uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR)),None,PREV["prev_out"],PREV["prev_out"]+1)
+    uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.reg_write(UC_ARM_REG_PC,0x0803FC22|1),None,0x0803FC1C,0x0803FC1D)
+    def rgb(c): return u32(uc,0x20003974+4*c)
+    def steps_shown(o,want,st):
+        return all(o[i] in (scl(WHITE,f) if i==st else scl(rgb(want[i]),f) for f in (255,141)) for i in range(16)) and (CUES2 or not any(o[16:32]))
+    sm=int(ET.MAN["report"]["stepmut"]["slot"],16)
+    step_ptr=ptr(uc,ps,1)
+    uc.mem_write(step_ptr,bytes([5]))
+    view(uc,ET.MIXER);o=out(uc)
+    check("not scrubbing: the Mixer keeps its pads",not steps_shown(o,first,5))
+    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"");scrub_on(uc)
+    o=out(uc)
+    check("Shift + Play held on the Mixer: the track's steps 1-16, the playhead white on step 6, pads 17-32 dark",steps_shown(o,first,5))
+    uc.mem_write(step_ptr,bytes([20]));o=out(uc)
+    check("the playhead on step 21: steps 17-32 on pads 1-16",steps_shown(o,second,4))
+    view(uc,CONT);keep=b8(uc,sm);uc.mem_write(sm,bytes([1]))
+    o=out(uc)
+    check("over the Step Mutate settings page: the track's steps, not the settings",steps_shown(o,second,4))
+    uc.mem_write(sm,bytes([keep]))
+    scrub_off(uc)
+
+
+def cue_test():
+    """The cue scrub: a 1 s Shift + Play hold latches; pads 17-32 store and jump to cues; K3 the marker, K4 the jump timing"""
+    if not R.get("cues") or CUES2:
+        return
+    O_SCR, ENG, LOCATE = 424, 0x2003C380, 0x08034082
+    CR, COFF, CLEN = int(R["cues"]["ram"], 16), R["cues"]["off"], R["cues"]["len"]
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    tr = ptr(uc, 0x200122B0, 0)
+    uc.mem_write(tr, bytes(1))
+    btns, rels, locs = [], [], []
+    sh = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+
+    def take(log):
+        def f(u, a, n, d):
+            log.append(u.reg_read(UC_ARM_REG_R1))
+            u.reg_write(UC_ARM_REG_R0, 0); u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+        return f
+    uc.hook_add(UC_HOOK_CODE, take(btns), None, PREV["prev_btn"], PREV["prev_btn"] + 1)
+    uc.hook_add(UC_HOOK_CODE, take(rels), None, PREV["prev_rel"], PREV["prev_rel"] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (locs.append(u.reg_read(UC_ARM_REG_R1)), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                None, LOCATE, LOCATE + 1)
+    for k in ("prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+
+    def rel(i): call(uc, C.BTN_RELEASE, C.CTRL, i)
+    def later(ms): uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + ms))
+    def scr(): return b8(uc, SLOT + O_SCR)
+    def lat(): return b8(uc, CR) == 1 and scr() == 1
+    def shift(on): uc.mem_write(sh, bytes([on])); held(uc, 27, on)
+    def blkc(): return bytes(uc.mem_read(tail(uc) + COFF, CLEN))
+    def cue(i): b = blkc(); return b[4 + 2 * i] | b[5 + 2 * i] << 8
+    pos = ptr(uc, u32(uc, ENG + 0x90), 0)
+    out(uc)
+    uc.mem_write(pos, struct.pack("<I", 30))
+    shift(1); btn(uc, 17); later(1100); rel(17)
+    check("Shift + Play held 1 s, no turn: latched; nothing to the stock", lat() and btns == [] and rels == [], (lat(), btns, rels))
+    shift(0); rel(27)
+    check("  Shift let go: still latched", lat())
+    o = out(uc)
+    check("  Play pulses green", o[49] and (o[49] >> 8) & 255 >= (o[49] >> 16) & 255, hex(o[49]))
+    pad(uc, 16)
+    check("tap an empty cue pad (pad 17): it stores the playhead's step", blkc()[:2] == b"GC" and cue(0) == 5, (blkc()[:4], cue(0)))
+    knob(uc, 2, 4); pad(uc, 17)
+    check("K3 +4, then pad 18: the marker's step stored", cue(1) == 9, cue(1))
+    o = out(uc)
+    check("  stored cues lit, empty ones dark", o[16] and o[17] and not o[18], [hex(x) for x in o[16:19]])
+    locs.clear(); uc.mem_write(pos, struct.pack("<I", 70)); pad(uc, 16)
+    check("stopped, tap a stored cue: the pause point moves to it", locs == [30], locs)
+    held(uc, 23, 1); pad(uc, 17); held(uc, 23, 0)
+    check("Clear + a stored cue: deleted", cue(1) == 0xFFFF, hex(cue(1)))
+    uc.mem_write(tr, bytes([1]))
+    knob(uc, 3, -3)
+    check("K4 one click down from 1 bar (a turn of 3 in one event): 1/2", blkc()[3] == 4, blkc()[3])
+    for _ in range(3):
+        knob(uc, 3, -1)
+    check("  three more clicks: 1/16", blkc()[3] == 1, blkc()[3])
+    for _ in range(3):
+        knob(uc, 3, -1)
+    check("  past the end: at once", blkc()[3] == 0, blkc()[3])
+    knob(uc, 3, 1)
+    locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 16); out(uc)
+    check("playing, tap a cue: no jump before the next 1/16", locs == [], locs)
+    uc.mem_write(pos, struct.pack("<I", 43)); out(uc)
+    check("  at the 1/16, one pulse late: to the cue plus that pulse", locs == [31], locs)
+    held(uc, 27, 1); locs.clear(); pad(uc, 16); held(uc, 27, 0)
+    check("Shift + a cue while latched: at once", locs == [30], locs)
+    btns.clear(); rels.clear(); shift(1); btn(uc, 17); rel(17); shift(0)
+    check("Shift + Play tap while latched: the stock's Shift + Play, still latched", btns == [17] and rels == [17] and lat(), (btns, rels, lat()))
+    btns.clear(); btn(uc, 2)
+    check("a track button while latched: the stock's, still latched", btns == [2] and lat(), (btns, lat()))
+    btns.clear(); btn(uc, 13)
+    check("another button: the latch off, then the stock's", btns == [13] and not lat() and scr() == 0, (btns, lat()))
+
+
+def cue2_test():
+    """The held cue scrub: K2 a silent scanner, K3 the cue timing, K4 K1's timing; pads 17-23 the bar, 24 audition, 25-32 cues"""
+    if not CUES2 or V3:
+        return
+    O_SCR, ENG, LOCATE = 424, 0x2003C380, 0x08034082
+    CR, COFF, CLEN = int(R["cues"]["ram"], 16), R["cues"]["off"], R["cues"]["len"]
+    MARK, FREE, BAR, DEL, TSEL, SSTEP, SPAGE = 2, 5, 6, 8, 9, 10, 11
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    tr = ptr(uc, 0x200122B0, 0)
+    pos = ptr(uc, u32(uc, ENG + 0x90), 0)
+    btns, locs, tsel = [], [], []
+    sh = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+
+    def take(u, a, n, d):
+        btns.append(u.reg_read(UC_ARM_REG_R1)); tsel.append(b8(u, CR + TSEL))
+        u.reg_write(UC_ARM_REG_R0, 0); u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+    uc.hook_add(UC_HOOK_CODE, take, None, PREV["prev_btn"], PREV["prev_btn"] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (locs.append(u.reg_read(UC_ARM_REG_R1)), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                None, LOCATE, LOCATE + 1)
+    for k in ("prev_rel", "prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+
+    def at(t, st): call(uc, LB["c_gx_trackat"], t, st); return uc.reg_read(UC_ARM_REG_R0)
+    def later(ms): uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + ms))
+    def rgb(c): return u32(uc, 0x20003974 + 4 * c)
+    def blkc(): return bytes(uc.mem_read(tail(uc) + COFF, CLEN))
+    def cue(i): b = blkc(); return b[4 + 2 * i] | b[5 + 2 * i] << 8
+    def u16(a): return struct.unpack("<H", uc.mem_read(a, 2))[0]
+    def mix(a, b, w): return sum(max(0, ((a >> sh_) & 255) + ((((b >> sh_) & 255) - ((a >> sh_) & 255)) * w >> 8)) << sh_ for sh_ in (0, 8, 16))
+    out(uc)
+    L = next(n for n in range(1, 1024) if not at(0, n))      # the song's length in steps
+    p0 = u32(uc, pos) // 6 % L * 6
+    bad = []
+    for t in range(8):
+        ps = u32(uc, ENG + 0x30 + 4 * t)
+        want = (b8(uc, ptr(uc, ps, 0)) & 7, b8(uc, ptr(uc, ps, 1)) & 31)
+        a = at(t, p0 // 6)
+        if not a or ((a >> 8) & 7, a & 31) != want:
+            bad.append((t, hex(a), want))
+    check(f"each track's pattern and step at the song position (step {p0 // 6 + 1} of {L}): the stock's own", not bad, (p0, bad))
+    chp = ptr(uc, u32(uc, ENG + 0x9C), 0)                  # track 0's chain: patterns 1 and 2
+    keep = bytes(uc.mem_read(chp, 4))
+    uc.mem_write(chp, struct.pack("<I", 0 | 1 << 8))
+    pats = u32(uc, u32(uc, 0x2003D2FC + 0x84) + 4)
+    n0 = ((b8(uc, pats + 0x100) - b8(uc, pats + 0x101)) & 31) + 1
+    s1 = b8(uc, pats + 0xA28 + 0x101) & 31
+    a, a2 = at(0, n0 - 1), at(0, n0)
+    check(f"a chain of patterns 1-2: the last step of 1 at song step {n0}, then the first step of 2", a >> 8 & 7 == 0 and a2 >> 8 & 7 == 1 and a2 & 31 == s1,
+          (hex(a), hex(a2), n0, s1))
+    uc.mem_write(chp, keep)
+    t = b8(uc, ptr(uc, u32(uc, CONT + 0x25C), 0)) & 7
+    uc.mem_write(tr, bytes(1)); uc.mem_write(pos, struct.pack("<I", 30))
+    for k in range(8):
+        uc.mem_write(ptr(uc, u32(uc, ENG + 0x30 + 4 * k), 1), bytes([5]))   # the tracks on step 6 with the song
+    uc.mem_write(sh, b"\x01"); held(uc, 27, 1); btn(uc, 17)
+    o = out(uc)
+    f = 141 if o[60] == scl(0x00FF00, 141) else 255
+    amber, green = rgb(0x76), scl(rgb(0x7D), f)
+    check("held: K1 green, K2 dim amber, K5-K8 dark", o[60] == scl(0x00FF00, f) and o[61] == scl(amber, f >> 2) and not any(o[64:68]), [hex(x) for x in o[60:68]])
+    check("  the bar (pads 17-23): the 7 timings, 1 bar bright", [x for x in o[16:23]] == [scl(rgb(0x76 + c), f if i == 5 else f >> 2) for i, c in enumerate((0, 1, 2, 3, 4, 5, 7))],
+          [hex(x) for x in o[16:23]])
+    check("  pad 24 green (audition on), pads 25-32 dim amber (no cues)", o[23] == scl(0x00FF00, f) and all(x == scl(amber, f >> 2) for x in o[24:32]), [hex(x) for x in o[23:32]])
+    check("  the selected track's button bright green, the others dim", all(o[32 + i] == scl(0x00FF00, f if i == t else f >> 2) for i in range(8)), [hex(x) for x in o[32:40]])
+    pad(uc, 24); o = out(uc)
+    check("tap pad 25: the playhead's step (6) saved, pad 25 green", cue(0) == 5 and o[24] == green, (cue(0), hex(o[24])))
+    TUNE = R["cues"].get("tune")
+    knob(uc, 1, 8 if TUNE else 4); o = out(uc)
+    a = at(t, 9)
+    check("K2 +4: the scanner free at step 10, K2 bright", b8(uc, CR + FREE) == 1 and u16(CR + MARK) == 9 and o[61] == scl(amber, f), (b8(uc, CR + FREE), u16(CR + MARK)))
+    check("  the scanner amber on its step", a and o[a & 15] == scl(amber, f) and b8(uc, CR + SSTEP) == a & 31, (hex(a), [hex(x) for x in o[:16]]))
+    pad(uc, 25)
+    check("tap pad 26: the scanner's step (10) saved; the scanner follows the playhead again", cue(1) == 9 and b8(uc, CR + FREE) == 0, (cue(1), b8(uc, CR + FREE)))
+    o = out(uc)
+    w = 64 + ((255 - (rgb(0x0A) & 0xFF)) * 192 >> 8)
+    so = u32(uc, CONT + 0x74 + 4 * t)
+    codes = list(struct.unpack("<16H", uc.mem_read(u32(uc, so + 4) + 32 * (b8(uc, CR + SPAGE)), 32)))
+    if a >> 4 & 1 == b8(uc, CR + SPAGE) and (a >> 8 & 7) == (b8(uc, ptr(uc, u32(uc, ENG + 0x30 + 4 * t), 0)) & 7):
+        j = a & 15
+        check("  the saved cue on its step pulses green over the step's colour", o[j] == mix(scl(rgb(codes[j]), f), green, w), (hex(o[j]), hex(scl(rgb(codes[j]), f))))
+    st0, pg0 = b8(uc, CR + SSTEP), b8(uc, CR + SPAGE)
+    pad(uc, 2)
+    check("tap step pad 3: the scanner to that step", b8(uc, CR + FREE) == 1 and u16(CR + MARK) == 5 + pg0 * 16 + 2 - st0, (u16(CR + MARK), st0, pg0))
+    if R["cues"].get("home"):
+        m0 = u16(CR + MARK); held(uc, 23, 1); knob(uc, 1, 1); held(uc, 23, 0)
+        check("  Clear + K2: the scanner back on the playhead, K2 dim", b8(uc, CR + FREE) == 0 and out(uc)[61] == scl(amber, f >> 2), (b8(uc, CR + FREE), hex(out(uc)[61])))
+        pad(uc, 2)
+        check("  tap step pad 3 again: the scanner there", b8(uc, CR + FREE) == 1 and u16(CR + MARK) == m0, (b8(uc, CR + FREE), u16(CR + MARK), m0))
+    pad(uc, 18)
+    check("tap bar pad 19: K3's timing 1/8", blkc()[3] == 2, blkc()[3])
+    if R["cues"].get("k1_speed"):
+        o = out(uc)
+        check("K4: K1's speed, 2 clicks a step by default (K4 one step from amber)", blkc()[20] == 1 and o[63] == scl(rgb(0x77), f), (blkc()[20], hex(o[63])))
+        knob(uc, 3, 1); o = out(uc)
+        check("  K4 right: faster, 1 click a step; K4 amber", blkc()[20] == 0 and o[63] == scl(rgb(0x76), f), (blkc()[20], hex(o[63])))
+        knob(uc, 3, 1)
+        check("  K4 right again: stays at 1 click", blkc()[20] == 0, blkc()[20])
+        for _ in range(9):
+            knob(uc, 3, -1)
+        o = out(uc)
+        check("  K4 left 9 clicks: slowest, 8 clicks a step; K4 green", blkc()[20] == 7 and o[63] == scl(rgb(0x7D), f), (blkc()[20], hex(o[63])))
+        for _ in range(6):
+            knob(uc, 3, 1)
+        check("  back to 2 clicks", blkc()[20] == 1, blkc()[20])
+    elif K1_SLOW:
+        k4 = blkc()[20]; knob(uc, 3, 1); o = out(uc)
+        check("K4 does nothing; the bar shows K3's timing", blkc()[20] == k4 and o[18] == scl(rgb(0x78), f) and o[17] == scl(rgb(0x77), f >> 2),
+              (blkc()[20], [hex(x) for x in o[16:23]]))
+    else:
+        knob(uc, 3, 1); o = out(uc)
+        check("K4 one click: K1's timing 1/16, the bar shows it", blkc()[20] == 1 and o[17] == scl(rgb(0x77), f), (blkc()[20], hex(o[17])))
+        later(2100); o = out(uc)
+        check("  2 s on: the bar shows K3's again", o[18] == scl(rgb(0x78), f) and o[17] == scl(rgb(0x77), f >> 2), [hex(x) for x in o[16:23]])
+    locs.clear(); uc.mem_write(pos, struct.pack("<I", 70)); pad(uc, 24)
+    check("stopped, tap a saved cue: the pause point moves to it", locs == [30], locs)
+    unpad(uc, 24)
+    uc.mem_write(tr, bytes([1]))
+    knob(uc, 2, -1)
+    AUTO = R["cues"].get("auto")
+    SYNC = R["cues"].get("sync")
+    if SYNC:
+        uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, 0x0803391A, 0x0803391B)       # the stock's pulse: our listener's part only
+    def pulse(p_):
+        """The clock's pulse with the song at p_ (played): the engine's listener sees the pulse store change"""
+        uc.mem_write(pos, struct.pack("<I", p_)); uc.mem_write(ENG + 0xA4, bytes(1)); uc.mem_write(ENG + 0xA8, bytes(4))
+        clk = u32(uc, ENG + 0x14); call(uc, u32(uc, u32(uc, clk) + 0x14), clk); ps_ = uc.reg_read(UC_ARM_REG_R0)
+        call(uc, LB["c_gx_enl"], ENG, ps_, 0)
+    locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); out(uc)
+    check("playing, cue timing 1/16: no jump before the next 1/16", locs == [], locs)
+    if SYNC:
+        pulse(40); out(uc)
+        check("  the clock at 41 (40 played): no jump", locs == [], locs)
+        pulse(41); out(uc)
+        check("  the clock at 42 (the 1/16 next): the jump comes first, so the 1/16 plays the cue's first pulse", locs == [30], locs)
+        uc.mem_write(ENG + 0xA4, bytes([1])); pulse(41)
+        check("  no second jump", locs == [30], locs)
+    elif AUTO:
+        uc.mem_write(pos, struct.pack("<I", 41)); out(uc)
+        check("  one pulse before the 1/16: to the cue's first pulse, which plays next", locs == [30], locs)
+        unpad(uc, 24); locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); out(uc)
+    if not SYNC:
+        uc.mem_write(pos, struct.pack("<I", 43)); out(uc)
+        check("  at the 1/16, one pulse late: to the cue plus that pulse" + (", counted from the pulse that plays next" if AUTO else ""),
+              locs == [32 if AUTO else 31], locs)
+    unpad(uc, 24)
+    if K1_SLOW:
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); knob_raw(uc, 0, 1)
+        check("playing, K1 one click: no move", locs == [], locs)
+        knob_raw(uc, 0, 1)
+        check("  a second click: one step on at once", len(locs) == 1 and locs[0] // 6 == 7, locs)
+        knob_raw(uc, 0, 1); knob_raw(uc, 0, -1)
+        check("  a click, then a click back: no move", len(locs) == 1, locs)
+        knob_raw(uc, 0, -3); knob_raw(uc, 0, -1)
+        check("  four clicks back (3 + 1) from step 7: step 6 at the second click, step 6 again at the fourth", locs == [42, 30, 30], locs)
+        if R["cues"].get("k1_speed"):
+            knob(uc, 3, 1); locs.clear(); knob_raw(uc, 0, 1)
+            check("  K4 at 1 click a step: one click, one step on", len(locs) == 1 and locs[0] // 6 == 7, locs)
+            for _ in range(2):
+                knob(uc, 3, -1)
+            locs.clear(); knob_raw(uc, 0, 1); knob_raw(uc, 0, 1)
+            n2 = len(locs); knob_raw(uc, 0, 1)
+            check("  K4 at 3 clicks a step: no step after 2 clicks, one at the third", n2 == 0 and len(locs) == 1, (n2, locs))
+            knob(uc, 3, 1)
+    else:
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); knob(uc, 0, 2); knob(uc, 0, 1); out(uc)
+        check("playing, K1 timing 1/16: three clicks wait for the next 1/16", locs == [], locs)
+    if K1_SLOW:
+        pass
+    elif SYNC:
+        pulse(41)
+        check("  the clock at the 1/16: one jump, three steps on", locs == [42 + 18], locs)
+    else:
+        uc.mem_write(pos, struct.pack("<I", 43)); out(uc)
+        check("  at the 1/16: one jump, three steps on", locs == [(44 if AUTO else 43) + 18], locs)
+    if K1_SLOW:
+        pass
+    elif R["cues"].get("k1_edge"):
+        stops = []
+        goes = []
+        hs = uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: (stops.append(1), u.mem_write(tr, bytes(1)), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))), None, 0x08033EAE, 0x08033EAF)
+        hg = uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: (goes.append(1), u.mem_write(tr, bytes([1])), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))), None, 0x08033E04, 0x08033E05)
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", 13)); knob(uc, 0, -4)
+        if SYNC:
+            pulse(17)
+        uc.mem_write(pos, struct.pack("<I", 18)); out(uc)
+        check("  four steps back from step 4: playback stops on step 1, as the scrub", locs == [0] and stops == [1], (locs, stops))
+        locs.clear(); knob(uc, 0, 1)
+        check("  then K1 inward: at once one step on, playback goes on", locs == [6] and goes == [1] and b8(uc, tr) == 1, (locs, goes))
+        locs.clear(); stops.clear(); uc.mem_write(pos, struct.pack("<I", 80)); knob(uc, 0, 3)
+        if SYNC:
+            pulse(83)
+        uc.mem_write(pos, struct.pack("<I", 84)); out(uc)
+        check("  three steps on from step 15: playback stops on the last step", locs == [90] and stops == [1], (locs, stops))
+        knob(uc, 0, -1)                                       # inward again: playback goes on
+        locs.clear(); stops.clear(); uc.mem_write(pos, struct.pack("<I", 40)); knob(uc, 0, 2)
+        if SYNC:
+            pulse(41); out(uc)
+        else:
+            uc.mem_write(pos, struct.pack("<I", 42)); out(uc)
+        check("  inside the song: one jump, playback goes on", locs == [54 if SYNC else 55 if AUTO else 54] and stops == [], (locs, stops))
+        uc.hook_del(hs); uc.hook_del(hg)
+    else:
+        uc.mem_write(pos, struct.pack("<I", 7)); knob(uc, 0, -2); uc.mem_write(pos, struct.pack("<I", 12)); out(uc)
+        check("  two steps back over the song's start: from its end", locs[-1:] == [(12 - 12) % 96] and len(locs) == 2, locs)
+    if R["cues"].get("peek"):
+        uc.mem_write(tr, bytes(1)); pad(uc, 25); later(1100); o = out(uc)
+        check("a saved cue held 1 s: kept, green", cue(1) != 0xFFFF and o[25] == green, (hex(cue(1)), hex(o[25])))
+        unpad(uc, 25); held(uc, 23, 1); o = out(uc)
+        check("Clear held: the saved cues red, the empty ones dim amber", o[24] == o[25] == scl(0xFF0000, f) and o[26] == scl(amber, f >> 2),
+              [hex(x) for x in o[24:27]])
+        pad(uc, 25); unpad(uc, 25); held(uc, 23, 0); o = out(uc)
+        check("  Clear + tap cue 2: deleted, dim amber; cue 1 kept", cue(1) == 0xFFFF and cue(0) != 0xFFFF and o[25] == scl(amber, f >> 2),
+              (hex(cue(1)), hex(o[25])))
+    else:
+        uc.mem_write(tr, bytes(1)); pad(uc, 25); later(1100); o = out(uc)   # stopped: no jump waits
+        check("a saved cue held 1 s: deleted, its pad red", cue(1) == 0xFFFF and o[25] == scl(0xFF0000, f), (hex(cue(1)), hex(o[25])))
+        unpad(uc, 25); o = out(uc)
+        check("  let go: dim amber", o[25] == scl(amber, f >> 2) and b8(uc, CR + DEL) == 0, hex(o[25]))
+    btns.clear(); tsel.clear(); btn(uc, 2)
+    check("a track button while scrubbing: to the stock with the editor guard on, off after", btns == [2] and tsel == [1] and b8(uc, CR + TSEL) == 0, (btns, tsel))
+    if "c_gx_tmallowed" in LB:
+        uc.mem_write(CR + TSEL, b"\x01"); call(uc, LB["c_gx_tmallowed"], 3); g = uc.reg_read(UC_ARM_REG_R0); uc.mem_write(CR + TSEL, b"\x00")
+        call(uc, LB["c_gx_tmallowed"], 3)
+        check("  the guard: no editor for the press (8), the track after (3)", g == 8 and uc.reg_read(UC_ARM_REG_R0) == 3, g)
+    if R["cues"].get("cue_plus"):
+        PEND = 4
+        uc.mem_write(tr, bytes(1)); uc.mem_write(pos, struct.pack("<I", 30))
+        pad(uc, 5); o1 = out(uc); later(128); o2 = out(uc)
+        check("hold the step of saved cue 1 (pad 6): slot 25 flashes", {o1[24], o2[24]} == {green, 0}, (hex(o1[24]), hex(o2[24])))
+        unpad(uc, 5); o = out(uc)
+        check("  let go: slot 25 steady green", o[24] == green, hex(o[24]))
+        knob(uc, 1, 3); out(uc)
+        check("K2 +3: the scanner away from the playhead", b8(uc, CR + FREE) == 1)
+        pad(uc, 5); unpad(uc, 5)
+        check("  tap the white playhead step: the scanner follows the playhead again", b8(uc, CR + FREE) == 0)
+        uc.mem_write(tr, bytes([1])); later(2100); pad(uc, 21)
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); later(1100); o = out(uc)
+        check("cue timing 1 bar, a saved cue held 1 s while its jump waits: not deleted", cue(0) == 5 and o[24] != scl(0xFF0000, f) and b8(uc, CR + PEND) == 1,
+              (hex(cue(0)), b8(uc, CR + PEND)))
+        unpad(uc, 24); pad(uc, 24); unpad(uc, 24)
+        uc.mem_write(pos, struct.pack("<I", 2)); out(uc)
+        check("  tap it again: the waiting jump cancelled, no jump at the bar", b8(uc, CR + PEND) == 0 and locs == [], (b8(uc, CR + PEND), locs))
+        uc.mem_write(tr, bytes(1))
+        pats0 = u32(uc, u32(uc, 0x2003D2FC + 0x84) + 4)
+        mode = b8(uc, pats0 + 0x103)
+        uc.mem_write(pats0 + 0x103, bytes([1])); r1 = [at(0, n) & 31 for n in (0, 1, 15)]
+        uc.mem_write(pats0 + 0x103, bytes([2])); r2 = [at(0, n) & 31 for n in (0, 15, 16, 17, 31)]
+        uc.mem_write(pats0 + 0x103, bytes([3])); r3 = [at(0, n) & 31 for n in (0, 3)]
+        uc.mem_write(pats0 + 0x103, bytes([mode]))
+        check("a reverse pattern: steps 16, 15 .. 1", r1 == [15, 14, 0], r1)
+        check("a ping-pong pattern: 1 .. 16, then 16 .. 1", r2 == [0, 15, 15, 14, 0], r2)
+        check("a random pattern: counted as forward", r3 == [0, 3], r3)
+    call(uc, C.BTN_RELEASE, C.CTRL, 17); uc.mem_write(sh, b"\x00"); held(uc, 27, 0)
+    check("Play let go: the scrub ends, the scanner follows the playhead", b8(uc, SLOT + O_SCR) == 0 and b8(uc, CR + FREE) == 0)
+    if R["cues"].get("latch"):
+        LAT = 44
+        rels = []
+        hr = uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: rels.append(u.reg_read(UC_ARM_REG_R1)), None, PREV["prev_rel"], PREV["prev_rel"] + 1)
+        def rl(i): call(uc, C.BTN_RELEASE, C.CTRL, i)
+        def lat(): return b8(uc, CR + LAT) == 1 and b8(uc, SLOT + O_SCR) == 1
+        def shw(v):
+            st_ = u32(uc, C.CTRL + 0xC)
+            for b_ in range(2):
+                uc.mem_write(u32(uc, st_ + 0xC + 4 * b_), bytes([v]))   # both buffers: the firmware's Shift writes swap them
+        def shr(): return b8(uc, ptr(uc, u32(uc, C.CTRL + 0xC), 0))
+        def shift_play(ms):
+            shw(1); held(uc, 27, 1); btn(uc, 17); held(uc, 17, 1); later(ms)
+            o_ = out(uc); held(uc, 17, 0); rl(17); shw(0); held(uc, 27, 0); rl(27)
+            return o_
+        uc.mem_write(tr, bytes(1)); btns.clear()
+        o = shift_play(1100)
+        DOWN = R["cues"].get("down")
+        check("latch: Shift + Play held 1 s, no turn: " + ("Shift" if DOWN else "Play") + " pulses before you let go, latched after; nothing to the stock",
+              (o[59] and not o[49] if DOWN else o[49]) and lat() and btns == [], (hex(o[49]), hex(o[59]), lat(), btns))
+        o1 = out(uc); later(256); o2 = out(uc)
+        if DOWN:
+            check("  latched: Shift pulses green, Play keeps the stock's light", o1[59] and o2[59] and not o1[49] and not o2[49],
+                  (hex(o1[49]), hex(o2[49]), hex(o1[59]), hex(o2[59])))
+        elif R["cues"].get("tune"):
+            check("  latched: Play and Shift pulse green together", o1[49] and o1[59] == o1[49] and o2[59] == o2[49],
+                  (hex(o1[49]), hex(o2[49]), hex(o1[59]), hex(o2[59])))
+        else:
+            check("  latched: Play pulses green, Shift flashes green", o1[49] and {o1[59], o2[59]} == {scl(0x00FF00, f), 0}, (hex(o1[49]), hex(o1[59]), hex(o2[59])))
+        btns.clear(); rels.clear(); btn(uc, 17); rl(17)
+        check("  Play alone: the stock's, still latched", btns == [17] and rels == [17] and lat(), (btns, rels))
+        btns.clear(); rels.clear(); held(uc, 27, 1); btn(uc, 27); btn(uc, 17); rl(17); rl(27); held(uc, 27, 0)
+        check("  Shift + Play tap: the stock's Shift + Play, still latched", btns == [17] and rels == [17] and lat(), (btns, rels, lat()))
+        btns.clear(); btn(uc, 2)
+        check("  a track button: the stock's, still latched", btns == [2] and lat(), (btns, lat()))
+        if R["cues"].get("latch_tap"):
+            btn(uc, 27); later(600); rl(27)
+            check("  Shift held 0.6 s alone, then let go: still latched", lat())
+        btn(uc, 27); rl(27)
+        check("  Shift tapped alone: the latch off", not lat() and b8(uc, SLOT + O_SCR) == 0)
+        shift_play(1100); btns.clear(); btn(uc, 13)
+        check("latched, another button (Patterns): the latch off, then the stock's", btns == [13] and not lat() and b8(uc, SLOT + O_SCR) == 0, (btns, lat()))
+        if R["cues"].get("peek"):
+            hq = uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                             None, PREV["prev_rel"], PREV["prev_rel"] + 1)   # the stock never saw these presses
+            rels.clear(); later(100); rl(13)
+            check("  a tap (0.1 s): the latch stays off; its release to the stock", b8(uc, CR + LAT) == 0 and b8(uc, SLOT + O_SCR) == 0 and rels == [13], rels)
+            shift_play(1100); btns.clear(); rels.clear(); btn(uc, 13)
+            check("latched, Patterns held: its view (the scrub off), the latch kept", btns == [13] and b8(uc, SLOT + O_SCR) == 0 and b8(uc, CR + LAT) == 1)
+            later(400); rl(13); o = out(uc)
+            check("  let go after 0.4 s: the release to the stock, the scrub again", rels == [13] and lat() and o[59 if DOWN else 49], (rels, lat()))
+            btns.clear(); btn(uc, 16)
+            check("  Record: the stock's, the scrub stays", btns == [16] and lat(), (btns, lat()))
+            call(uc, C.BTN_RELEASE, C.CTRL, 16)
+            held(uc, 27, 1); btn(uc, 27); btns.clear(); btn(uc, 13)
+            check("  Shift held, then Patterns held: its Shift view (Shift on for the stock), the scrub off",
+                  btns == [13] and shr() == 1 and b8(uc, SLOT + O_SCR) == 0, (btns, shr()))
+            later(400); rl(13); o = out(uc)
+            check("  let go of Patterns: the scrub again, without Shift's pages", lat() and shr() == 0, (lat(), shr()))
+            rl(27); held(uc, 27, 0)
+            check("  then Shift let go: still latched", lat())
+            btn(uc, 27); rl(27)
+            uc.hook_del(hq)
+        shift_play(1100)
+        held(uc, 27, 1); btn(uc, 27); btn(uc, 17); later(1100); out(uc)
+        if R["cues"].get("auto"):
+            btns.clear(); rels.clear(); rl(17); rl(27); held(uc, 27, 0)
+            check("latched, Shift + Play held 1 s: still latched, nothing to the stock", lat() and btns == [] and 17 not in rels, (lat(), btns, rels))
+            btn(uc, 27); rl(27)
+            check("  then Shift tapped alone: the latch off", not lat() and b8(uc, SLOT + O_SCR) == 0)
+        else:
+            check("latched, Shift + Play held 1 s again: the normal view at once, while still held", not lat() and b8(uc, SLOT + O_SCR) == 0)
+            rels.clear(); rl(17); rl(27); held(uc, 27, 0)
+            check("  its Play release kept from the stock", 17 not in rels, rels)
+        shift_play(500)
+        check("Shift + Play held 0.5 s: a temporary scrub, no latch", not lat() and b8(uc, SLOT + O_SCR) == 0)
+        uc.hook_del(hr)
+    if R["cues"].get("tune"):
+        sh = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+        uc.mem_write(tr, bytes(1)); uc.mem_write(sh, b"\x01"); held(uc, 27, 1); btn(uc, 17); held(uc, 17, 1); out(uc)
+        knob(uc, 1, 4); m = u16(CR + MARK)
+        knob(uc, 1, 1); a1 = u16(CR + MARK)
+        knob(uc, 1, 1); a2 = u16(CR + MARK)
+        knob(uc, 1, 1); knob(uc, 1, -1); a3 = u16(CR + MARK)
+        knob(uc, 1, -2); a4 = u16(CR + MARK)
+        check("K2: one click no move, a second click one step, a click and back no move, -2 one step back", (a1, a2, a3, a4) == (m, m + 1, m + 1, m),
+              (m, a1, a2, a3, a4))
+        b = tail(uc) + COFF
+        blk_ = bytearray(uc.mem_read(b, CLEN)); blk_[18:20] = struct.pack("<H", L + 20)
+        blk_[2] = (sum(blk_[3:CLEN]) & 0xFF) ^ 0x5C; uc.mem_write(b, bytes(blk_))
+        locs.clear(); pad(uc, 31); unpad(uc, 31)
+        check(f"a cue past the song end (step {L + 21} of {L}), tapped while stopped: to the last step", locs and locs[-1] == (L - 1) * 6, (locs, L))
+        blk_[18:20] = b"\xff\xff"; blk_[2] = (sum(blk_[3:CLEN]) & 0xFF) ^ 0x5C; uc.mem_write(b, bytes(blk_))
+        held(uc, 17, 0); call(uc, C.BTN_RELEASE, C.CTRL, 17); uc.mem_write(sh, bytes(1)); held(uc, 27, 0); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+    if V3:
+        btn(uc, 27); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+    if R["cues"].get("loop"):
+        sh = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+        uc.mem_write(tr, bytes([1])); uc.mem_write(sh, b"\x01"); held(uc, 27, 1); btn(uc, 17); held(uc, 17, 1); out(uc)
+        later(2100); out(uc); pad(uc, 19); unpad(uc, 19)
+        if cue(0) == 0xFFFF:
+            pad(uc, 24); unpad(uc, 24)
+        J = cue(0) * 6
+        P0 = J + 10; B = (P0 // 24 + 1) * 24
+        SY = R["cues"].get("sync")
+        def at_(p_):
+            if SY:
+                pulse(p_)
+            else:
+                uc.mem_write(pos, struct.pack("<I", p_))
+            out(uc)
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", P0)); pad(uc, 24); out(uc)
+        at_(B - 1)
+        check(f"K3 1/4, cue 1 held while playing: it jumps at the 1/4", locs == [J], (locs, J, B))
+        at_(J); at_(J + 21) if SY else at_(J + 22)
+        n1 = list(locs)
+        at_(J + 23)
+        check("  still held: back to the cue at the end of each 1/4 (24 pulses)", n1 == [J] and locs == [J, J], (n1, locs))
+        at_(J)
+        unpad(uc, 24); out(uc); at_(J + 23); at_(J + 30)
+        check("  let go: no more loops, playback goes on", locs == [J, J] and b8(uc, CR + 4) == 0, (locs, b8(uc, CR + 4)))
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", P0)); pad(uc, 24); unpad(uc, 24); out(uc)
+        at_(B - 1); at_(J + 23)
+        check("a tap: one jump, no loop", locs == [J], locs)
+        uc.mem_write(tr, bytes(1))
+        held(uc, 17, 0); call(uc, C.BTN_RELEASE, C.CTRL, 17); uc.mem_write(sh, bytes(1)); held(uc, 27, 0); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+    if V3:
+        btn(uc, 27); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+
+
+def R16ID(uc, pl, k): return struct.unpack("<H", uc.mem_read(u32(uc, pl + 0x40) + 2 * k, 2))[0]
+
+
+def cue3_test():
+    """A322: Shift + Play held 0.5 s latches; pads 17-24 the jump timing; K2 K1's speed, K3 the scanner, K4 the loop length, K5 sound"""
+    if not V3:
+        return
+    O_SCR, ENG, LOCATE = 424, 0x2003C380, 0x08034082
+    CR, COFF, CLEN = int(R["cues"]["ram"], 16), R["cues"]["off"], R["cues"]["len"]
+    MARK, FREE, PEND, LAT, ARM, STK = 2, 5, 4, 44, 59, 63
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    tr = ptr(uc, 0x200122B0, 0)
+    pos = ptr(uc, u32(uc, ENG + 0x90), 0)
+    btns, rels, locs = [], [], []
+
+    def store(): return ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+    def shw(v):
+        st_ = u32(uc, C.CTRL + 0xC)
+        for b_ in range(2):
+            uc.mem_write(u32(uc, st_ + 0xC + 4 * b_), bytes([v]))
+
+    def shift_now(u):                                    # the stock's getter: [st + 0xC + 4 * (bit 0 of [st + 4])], element 0
+        st_ = u32(u, C.CTRL + 0xC)
+        return b8(u, u32(u, st_ + 0xC + 4 * (u32(u, st_ + 4) & 1)))
+    def take(log):
+        def f(u, a, n, d):
+            log.append((u.reg_read(UC_ARM_REG_R1), shift_now(u)))
+            u.reg_write(UC_ARM_REG_R0, 0); u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+        return f
+    ptr_cache = [store()]
+    uc.hook_add(UC_HOOK_CODE, take(btns), None, PREV["prev_btn"], PREV["prev_btn"] + 1)
+    uc.hook_add(UC_HOOK_CODE, take(rels), None, PREV["prev_rel"], PREV["prev_rel"] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (locs.append(u.reg_read(UC_ARM_REG_R1)), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                None, LOCATE, LOCATE + 1)
+    for k in ("prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a_, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                None, 0x0803391A, 0x0803391B)                 # the stock's pulse: our listener's part only
+
+    def later(ms): uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + ms))
+    def rgb(c): return u32(uc, 0x20003974 + 4 * c)
+    def blkc(): return bytes(uc.mem_read(tail(uc) + COFF, CLEN))
+    def cue(i): b = blkc(); return b[4 + 2 * i] | b[5 + 2 * i] << 8
+    def u16(a): return struct.unpack("<H", uc.mem_read(a, 2))[0]
+    def rl(i): call(uc, C.BTN_RELEASE, C.CTRL, i)
+    def lat(): return b8(uc, CR + LAT) == 1 and b8(uc, SLOT + O_SCR) == 1
+    def pulse(p_):
+        uc.mem_write(pos, struct.pack("<I", p_)); uc.mem_write(ENG + 0xA4, bytes(1)); uc.mem_write(ENG + 0xA8, bytes(4))
+        clk = u32(uc, ENG + 0x14); call(uc, u32(uc, u32(uc, clk) + 0x14), clk); ps_ = uc.reg_read(UC_ARM_REG_R0)
+        call(uc, LB["c_gx_enl"], ENG, ps_, 0)
+
+    out(uc)
+    t = b8(uc, ptr(uc, u32(uc, CONT + 0x25C), 0)) & 7
+    uc.mem_write(tr, bytes(1)); uc.mem_write(pos, struct.pack("<I", 30))
+    for k in range(8):
+        uc.mem_write(ptr(uc, u32(uc, ENG + 0x30 + 4 * k), 1), bytes([5]))
+    # the latch
+    shw(1); ptr_cache[0] = store(); held(uc, 27, 1); btn(uc, 17); held(uc, 17, 1); o = out(uc)
+    check("Shift + Play down: held back from the stock, no scrub screen yet", btns == [] and b8(uc, SLOT + O_SCR) == 0 and o[60] == 0, (btns, hex(o[60])))
+    later(400); o = out(uc)
+    check("  at 0.4 s: still no scrub screen", b8(uc, SLOT + O_SCR) == 0 and o[60] == 0)
+    later(150); o = out(uc)
+    f = 141 if o[60] == scl(0x00FF00, 141) else 255
+    amber, green = rgb(0x76), scl(rgb(0x7D), f)
+    check("  at 0.55 s: latched, the scrub screen; Shift up in the stock", lat() and o[60] == scl(0x00FF00, f) and b8(uc, store()) == 0, (lat(), hex(o[60])))
+    held(uc, 17, 0); rl(17); shw(0); held(uc, 27, 0); rl(27)
+    check("  Play and Shift let go: nothing to the stock, still latched", btns == [] and rels == [] and lat(), (btns, rels, lat()))
+    o1 = out(uc); later(256); o2 = out(uc)
+    check("  Shift pulses green; Play keeps the stock's light", o1[59] and o2[59] and o1[49] == 0, (hex(o1[59]), hex(o2[59]), hex(o1[49])))
+    o = o1
+    k4 = scl(rgb(0x7B), f) if ONE else scl(0xA000FF, f)
+    check("knobs: K1 green, K2 blue (K1's speed), K3 dim amber (the scanner), K4 " + ("the timing pad's colour (1 bar)" if ONE else "purple (the loop length)")
+          + ", K5 green (sound on), K6-K8 dark",
+          [o[60 + k] for k in range(8)] == [scl(0x00FF00, f), scl(0x0040FF, f), scl(amber, f >> 2), k4, scl(0x00FF00, f), 0, 0, 0],
+          [hex(x) for x in o[60:68]])
+    bar = [scl(WHITE if i == 0 else rgb(0x76 + (0, 1, 2, 3, 4, 5, 7)[i - 1]), f if i == 6 else f >> 2) for i in range(8)]
+    check("pads 17-24: at once (white), 1/32, 1/16, 1/8, 1/4, 1/2, 1 bar (bright), 2 bars", list(o[16:24]) == bar, [hex(x) for x in o[16:24]])
+    check("  pads 25-32 dim amber (no cues); the selected track's button bright green",
+          all(x == scl(amber, f >> 2) for x in o[24:32]) and all(o[32 + i] == scl(0x00FF00, f if i == t else f >> 2) for i in range(8)))
+    # pads
+    pad(uc, 16); o = out(uc)
+    check("tap pad 17: at once, white bright", blkc()[21] == 0 and o[16] == scl(WHITE, f), (blkc()[21], hex(o[16])))
+    pad(uc, 23); o = out(uc)
+    check("tap pad 24: 2 bars, bright", blkc()[21] == 7 and o[23] == scl(rgb(0x7D), f) and o[16] == scl(WHITE, f >> 2), (blkc()[21], hex(o[23])))
+    pad(uc, 17)
+    check("tap pad 18: 1/32", blkc()[21] == 1, blkc()[21])
+    pad(uc, 24); o = out(uc)
+    check("tap pad 25: the playhead's step (6) saved, pad 25 green", cue(0) == 5 and o[24] == green, (cue(0), hex(o[24])))
+    # K3 the scanner
+    knob(uc, 2, 8); o = out(uc)
+    check("K3 8 clicks: the scanner 4 steps on (step 10), K3 bright", b8(uc, CR + FREE) == 1 and u16(CR + MARK) == 9 and o[62] == scl(amber, f),
+          (b8(uc, CR + FREE), u16(CR + MARK), hex(o[62])))
+    pad(uc, 25)
+    check("tap pad 26: the scanner's step (10) saved; the scanner follows the playhead", cue(1) == 9 and b8(uc, CR + FREE) == 0, (cue(1), b8(uc, CR + FREE)))
+    knob(uc, 2, 2); held(uc, 23, 1); knob(uc, 2, 1); held(uc, 23, 0)
+    check("Clear + K3: the scanner back on the playhead", b8(uc, CR + FREE) == 0)
+    # K2 K1's speed
+    knob(uc, 1, 3); o = out(uc)
+    check("K2 3 clicks: no change (2 clicks a step); the bar shows it: 2 of 8 pads bright blue",
+          blkc()[20] == 1 and list(o[16:24]) == [scl(0x0040FF, f if i < 2 else f >> 2) for i in range(8)], (blkc()[20], [hex(x) for x in o[16:24]]))
+    knob(uc, 1, 1); o = out(uc)
+    check("  the 4th click right: faster, 1 click a step; 1 pad bright", blkc()[20] == 0 and o[16] == scl(0x0040FF, f) and o[17] == scl(0x0040FF, f >> 2),
+          (blkc()[20], [hex(x) for x in o[16:24]]))
+    locs.clear(); knob_raw(uc, 0, 1)
+    check("  K1 one click: one step", len(locs) == 1, locs)
+    knob(uc, 1, -8)
+    check("  K2 8 clicks left: 2 settings slower, 3 clicks a step", blkc()[20] == 2, blkc()[20])
+    locs.clear(); knob_raw(uc, 0, 2); n2 = len(locs); knob_raw(uc, 0, 1)
+    check("  K1: no step after 2 clicks, one at the 3rd", n2 == 0 and len(locs) == 1, (n2, locs))
+    knob(uc, 1, 4); later(2100); o = out(uc)
+    check("  back to 2 clicks; 2 s on: the bar shows the jump timing again", blkc()[20] == 1 and o[17] == scl(rgb(0x76), f), (blkc()[20], hex(o[17])))
+    if not ONE:
+        # K4 the loop length
+        knob(uc, 3, 4); o = out(uc)
+        check("K4 4 clicks right: the loop 2 bars; the bar shows it in purple on pads 18-24, pad 17 dark",
+              blkc()[22] == 7 and o[16] == 0 and o[23] == scl(0xA000FF, f) and o[22] == scl(0xA000FF, f >> 2), (blkc()[22], [hex(x) for x in o[16:24]]))
+        knob(uc, 3, -12)
+        check("  12 clicks left: 1/4", blkc()[22] == 4, blkc()[22])
+    else:
+        # K4 the same timing as the pads, pads 18-24 only
+        knob(uc, 3, 4); o = out(uc)
+        check("K4 4 clicks right from 1/32: 1/16, pad 19 bright on the timing bar", blkc()[21] == 2 and o[18] == scl(rgb(0x77), f) and o[17] == scl(rgb(0x76), f >> 2),
+              (blkc()[21], [hex(x) for x in o[16:24]]))
+        knob(uc, 3, 40)
+        check("  40 clicks right: stops at 2 bars", blkc()[21] == 7, blkc()[21])
+        knob(uc, 3, -40)
+        check("  40 clicks left: stops at 1/32, never at once", blkc()[21] == 1, blkc()[21])
+        pad(uc, 16); knob(uc, 3, -4)
+        check("  at once (pad 17), K4 4 clicks left: 1/32", blkc()[21] == 1, blkc()[21])
+        pad(uc, 16); knob(uc, 3, 4)
+        check("  at once, K4 4 clicks right: 1/32", blkc()[21] == 1, blkc()[21])
+    # K5 sound
+    knob(uc, 4, -1); o = out(uc)
+    check("K5 left: sound off, K5 red", o[64] == scl(0xFF0000, f), hex(o[64]))
+    knob(uc, 4, 1); o = out(uc)
+    check("  K5 right: sound on, K5 green", o[64] == scl(0x00FF00, f), hex(o[64]))
+    # jumps on the clock: 1/32
+    uc.mem_write(tr, bytes([1])); locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); unpad(uc, 24)
+    pulse(40)
+    check("playing, 1/32, tap cue 1 at pulse 40: no jump before the 1/32", locs == [], locs)
+    pulse(41)
+    check("  the clock at 42: the jump comes first, so 42 plays the cue's first pulse", locs == [30], locs)
+    if not ONE:
+        # a held cue loops at the K4 length (1/4 = 24 pulses); K4 changes it at once
+        locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); pulse(41)
+        check("hold cue 1: it jumps at the 1/32", locs == [30], locs)
+        pulse(52); n1 = list(locs); pulse(53)
+        check("  still held: back to the cue at the end of each 1/4 (24 pulses)", n1 == [30] and locs == [30, 30], (n1, locs))
+        uc.mem_write(pos, struct.pack("<I", 40)); knob(uc, 3, -4)
+        check("  K4 to 1/8 while it loops (10 pulses in): the loop shorter at once", blkc()[22] == 3, blkc()[22])
+        pulse(40); n1 = list(locs); pulse(41)
+        check("  back to the cue 12 pulses after it", n1 == [30, 30] and locs == [30, 30, 30], (n1, locs))
+        unpad(uc, 24); pulse(41)
+        check("  let go: no more loops", locs == [30, 30, 30] and b8(uc, CR + PEND) == 0, (locs, b8(uc, CR + PEND)))
+        pad(uc, 16); locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24)
+        check("at once, hold cue 1: it jumps at once", locs == [30], locs)
+        pulse(40); n1 = list(locs); pulse(41)
+        check("  and still loops at the K4 length (1/8)", n1 == [30] and locs == [30, 30], (n1, locs))
+        unpad(uc, 24); pad(uc, 17); uc.mem_write(tr, bytes(1))
+    else:
+        # a held cue loops at the same timing; K4 changes it while it loops
+        pad(uc, 20); locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24); pulse(46); n1 = list(locs); pulse(47)
+        check("1/4 (pad 21), hold cue 1 at pulse 40: it jumps at the 1/4 (48)", n1 == [] and locs == [30], (n1, locs))
+        pulse(52); n1 = list(locs); pulse(53)
+        check("  still held: back to the cue each 1/4 (24 pulses)", n1 == [30] and locs == [30, 30], (n1, locs))
+        uc.mem_write(pos, struct.pack("<I", 40)); knob(uc, 3, -4)
+        check("  K4 to 1/8 while it loops (10 pulses in): the timing 1/8, the loop shorter at once", blkc()[21] == 3, blkc()[21])
+        pulse(40); n1 = list(locs); pulse(41)
+        check("  back to the cue 12 pulses after it", n1 == [30, 30] and locs == [30, 30, 30], (n1, locs))
+        pad(uc, 21)
+        check("  pad 22 while it loops: 1/2, the same setting", blkc()[21] == 5, blkc()[21])
+        unpad(uc, 24); uc.mem_write(pos, struct.pack("<I", 40)); pulse(41); pulse(53)
+        check("  let go: no more loops", locs == [30, 30, 30] and b8(uc, CR + PEND) == 0, (locs, b8(uc, CR + PEND)))
+        pad(uc, 16); locs.clear(); uc.mem_write(pos, struct.pack("<I", 40)); pad(uc, 24)
+        check("at once, hold cue 1: it jumps at once", locs == [30], locs)
+        for p_ in (40, 41, 52, 53, 76, 77):
+            pulse(p_)
+        check("  and does not loop (K4 or a pad 18-24 gives it a loop)", locs == [30] and b8(uc, CR + PEND) == 0, (locs, b8(uc, CR + PEND)))
+        unpad(uc, 24); pad(uc, 17); uc.mem_write(tr, bytes(1))
+    # leave: a Shift tap
+    btn(uc, 27); rl(27)
+    check("a Shift tap: the latch off", not lat())
+    # a short Shift + Play: the stock's, with no scrub screen
+    btns.clear(); rels.clear(); shw(1); ptr_cache[0] = store(); held(uc, 27, 1); btn(uc, 17); later(200); o = out(uc); rl(17); held(uc, 27, 0); shw(0)
+    check("Shift + Play tapped: the stock's Shift + Play (Shift on), no scrub screen", [x for x, _ in btns] == [17] and btns[0][1] == 1 and [x for x, _ in rels] == [17]
+          and o[60] == 0 and not lat(), (btns, rels, hex(o[60])))
+    # sticky Shift: on in the stock with no Shift button held
+    btns.clear(); rels.clear(); shw(1); ptr_cache[0] = store(); btn(uc, 17); held(uc, 17, 1); later(600); out(uc); held(uc, 17, 0); rl(17)
+    check("sticky Shift on, Play held 0.5 s: latched, nothing to the stock", lat() and btns == [] and b8(uc, CR + STK) == 1, (lat(), btns, b8(uc, CR + STK)))
+    ptr_cache[0] = store(); btn(uc, 17); rl(17)
+    check("  Play alone: the stock's Shift + Play (continue), as sticky Shift does", [x for x, _ in btns] == [17] and btns[0][1] == 1 and lat(), (btns, lat()))
+    btns.clear(); btn(uc, 13); later(100); rl(13)
+    check("  a tap on Patterns: the latch off, sticky Shift on again in the stock", not lat() and b8(uc, store()) == 1 and b8(uc, CR + STK) == 0,
+          (lat(), b8(uc, store()), b8(uc, CR + STK)))
+    shw(0)
+
+
+def cols_test():
+    """A323: the scanner's page in a pattern the stock does not show: the stock step view's codes for notes, flips, empty steps
+    and steps outside the pattern"""
+    if not R.get("cues", {}).get("cols"):
+        return
+    ENG, PAT = 0x2003C380, 0xA28
+    CR = int(R["cues"]["ram"], 16)
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    for k in ("prev_btn", "prev_rel", "prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    t = b8(uc, ptr(uc, u32(uc, CONT + 0x25C), 0)) & 7
+    check("cols: track 1 selected", t == 0, t)
+    rec = u32(uc, 0x2003D2FC + 0x84)
+    pats = u32(uc, rec + 4)
+    def rgb(c): return u32(uc, 0x20003974 + 4 * c)
+    def at(st): call(uc, LB["c_gx_trackat"], 0, st); return uc.reg_read(UC_ARM_REG_R0)
+    uc.mem_write(ptr(uc, u32(uc, ENG + 0x9C), 0), struct.pack("<I", 0 | 1 << 8))   # track 1's chain: patterns 1-2
+    note, flip = bytes.fromhex("4806016007ff0000"), bytes.fromhex("4806016007040000")
+    for st_, b_ in ((2, note), (5, flip), (13, note)):
+        uc.mem_write(pats + PAT + 8 * st_, b_)
+    uc.mem_write(pats + PAT + 0x100, bytes([11, 0]))     # pattern 2: steps 1-12
+    uc.mem_write(ptr(uc, 0x200122B0, 0), bytes(1))
+    uc.mem_write(ptr(uc, u32(uc, C.CTRL + 0xC), 0), b"")
+    scrub_on(uc)
+    o = out(uc)
+    f = 141 if o[60] == scl(0x00FF00, 141) else 255
+    want = {i: 0 if i > 11 and i != 13 else scl(rgb(0x56 if i > 11 else 0x67 if i == 5 else 0x18 if i == 2 else 0x19), f) for i in range(16)}
+    for _ in range(64):
+        a = at(struct.unpack("<H", uc.mem_read(CR + 2, 2))[0])
+        if b8(uc, CR + 5) and a >> 8 & 7 == 1 and a & 31 == 9:
+            break
+        knob_raw(uc, 2, 2)
+    o = out(uc)
+    vp = b8(uc, ptr(uc, u32(uc, rec + 0x28), 0)) & 7
+    bad = [(i, hex(o[i]), hex(want[i])) for i in range(16) if i != 9 and o[i] != want[i]]
+    check("scanner on pattern 2 step 10, the stock shows pattern 1: notes blue, the flip pink, empty steps dim, outside steps 13-16 dark, a note there red",
+          vp == 0 and a >> 8 & 7 == 1 and not bad, (vp, hex(a), bad))
+    for _ in range(64):
+        ps = u32(uc, ENG + 0x30)
+        if b8(uc, ptr(uc, ps, 0)) & 7 == 1 and b8(uc, ptr(uc, ps, 1)) & 31 == 3:
+            break
+        knob(uc, 0, 1)
+    o = out(uc)
+    vp = b8(uc, ptr(uc, u32(uc, rec + 0x28), 0)) & 7
+    bad = [(i, hex(o[i]), hex(want[i])) for i in range(16) if i not in (3, 9) and o[i] != want[i]]
+    check("  then K1 to pattern 2 step 4 (the stock still shows pattern 1): the same colours, the playhead white",
+          vp == 0 and o[3] == scl(0xFFFFFF, f) and not bad, (vp, hex(o[3]), bad))
+    scrub_off(uc)
+
+
+def pass_test():
+    """A325: a saved cue pulses only on the pattern pass that holds its song step"""
+    if not R.get("cues", {}).get("pass"):
+        return
+    ENG = 0x2003C380
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    for k in ("prev_btn", "prev_rel", "prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR)), None, 0x08034082, 0x08034083)
+    pos = ptr(uc, u32(uc, ENG + 0x90), 0)
+    uc.mem_write(ptr(uc, u32(uc, ENG + 0x9C), 1), struct.pack("<I", 0 | 1 << 8))   # track 2: patterns 1-2, so the scene is 32 steps
+    uc.mem_write(ptr(uc, 0x200122B0, 0), bytes(1))
+    def at(n):                                           # the song and every track on song step n + 1
+        uc.mem_write(pos, struct.pack("<I", 6 * n))
+        for k in range(8):
+            ps = u32(uc, ENG + 0x30 + 4 * k)
+            uc.mem_write(ptr(uc, ps, 0), bytes([n // 16 & 1 if k == 1 else 0])); uc.mem_write(ptr(uc, ps, 1), bytes([n & 15]))
+    def pulsing(i):
+        for _ in range(8):
+            uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + 64)); o = out(uc)
+            if o[i] != o[(i + 2) % 16]:
+                return True
+        return False
+    at(2)
+    uc.mem_write(ptr(uc, u32(uc, C.CTRL + 0xC), 0), b"")
+    scrub_on(uc)
+    pad(uc, 24); unpad(uc, 24)
+    at(5)
+    p1 = pulsing(2)
+    at(21)
+    p2 = pulsing(2)
+    check("a cue on song step 3: it pulses on track 1's first pass (playhead on step 6), not on its second (step 22, the same pattern step)",
+          p1 and not p2, (p1, p2))
+    scrub_off(uc)
+
+
+def tap_test():
+    """A326: a step tap moves the scanner to that step at any pattern speed"""
+    if not R.get("cues", {}).get("tap"):
+        return
+    ENG = 0x2003C380
+    CR = int(R["cues"]["ram"], 16)
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    for k in ("prev_btn", "prev_rel", "prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR)), None, 0x08034082, 0x08034083)
+    model = u32(uc, u32(uc, ENG + 0x20))                  # [+ 0x5140 t + 0xA28 p + 0x3E6]: the pattern's speed, 0-7 (2-24 pulses a step)
+    def at(st): call(uc, LB["c_gx_trackat"], 0, st); return uc.reg_read(UC_ARM_REG_R0)
+    uc.mem_write(ptr(uc, 0x200122B0, 0), bytes(1))
+    uc.mem_write(ptr(uc, u32(uc, ENG + 0x90), 0), struct.pack("<I", 0))
+    for k in range(8):
+        ps = u32(uc, ENG + 0x30 + 4 * k)
+        uc.mem_write(ptr(uc, ps, 0), bytes(1)); uc.mem_write(ptr(uc, ps, 1), bytes(1))
+    for speed, name in ((5, "half speed (12 pulses a step)"), (1, "fast (3 pulses a step)"), (3, "normal")):
+        uc.mem_write(model + 0x3E6, bytes([speed]))
+        uc.mem_write(ptr(uc, u32(uc, C.CTRL + 0xC), 0), b"\x01")
+        scrub_on(uc)
+        res = []
+        for want in (5, 12):
+            pad(uc, want); unpad(uc, want); o = out(uc)
+            m = struct.unpack("<H", uc.mem_read(CR + 2, 2))[0]
+            a = at(m)
+            res.append((want, m, hex(a)))
+            pad(uc, 0); unpad(uc, 0); out(uc)       # the playhead's step: the scanner follows again
+        ok = all(int(a_, 16) & 31 in ((w,) if speed != 1 else (w, w - 1, w + 1)) and int(a_, 16) >> 8 & 7 == 0 for w, _, a_ in res)
+        check(f"track 1 at {name}: a tap on step 6, then 13, moves the scanner to that step", ok, res)
+        if R["cues"].get("home1") and speed == 3:
+            pad(uc, 9); unpad(uc, 9); f1 = b8(uc, CR + 5); knob_raw(uc, 0, 1); f2 = b8(uc, CR + 5); knob_raw(uc, 0, 0); f3 = b8(uc, CR + 5)
+            check("  a tap on step 10, then one K1 click: the scanner follows the playhead again (a zero turn: no change)", f1 == 1 and f2 == 0 and f3 == 0, (f1, f2, f3))
+            pad(uc, 9); unpad(uc, 9); knob_raw(uc, 0, 0)
+            check("  a K1 event with no turn leaves the scanner where it is", b8(uc, CR + 5) == 1)
+        scrub_off(uc)
+
+
+def bar_punch_test():
+    """A328: 1 and 2 bars are passes of the selected track's pattern; a tap on the scanner's own step punches in"""
+    if not R.get("cues", {}).get("bar"):
+        return
+    ENG, LOCATE = 0x2003C380, 0x08034082
+    CR = int(R["cues"]["ram"], 16)
+    FREE, PEND = 5, 4
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    btns, locs = [], []
+    def stub(log=None):
+        def f(u, a, n, d):
+            if log is not None:
+                log.append(u.reg_read(UC_ARM_REG_R1))
+            u.reg_write(UC_ARM_REG_R0, 0); u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+        return f
+    uc.hook_add(UC_HOOK_CODE, stub(btns), None, PREV["prev_btn"], PREV["prev_btn"] + 1)
+    for k in ("prev_rel", "prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, stub(), None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (locs.append(u.reg_read(UC_ARM_REG_R1)), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                None, LOCATE, LOCATE + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    tr = ptr(uc, 0x200122B0, 0)
+    def setpos(p_): uc.mem_write(ptr(uc, u32(uc, ENG + 0x90), 0), struct.pack("<I", p_))   # the store's current buffer each time
+    def later(ms): uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + ms))
+    def at(n):
+        setpos(6 * n)
+        for k in range(8):
+            ps = u32(uc, ENG + 0x30 + 4 * k)
+            uc.mem_write(ptr(uc, ps, 0), bytes(1)); uc.mem_write(ptr(uc, ps, 1), bytes([n % 12]))
+    def pulse(p_):
+        setpos(p_); uc.mem_write(ENG + 0xA4, bytes(1)); uc.mem_write(ENG + 0xA8, bytes(4))
+        clk = u32(uc, ENG + 0x14); call(uc, u32(uc, u32(uc, clk) + 0x14), clk); ps_ = uc.reg_read(UC_ARM_REG_R0)
+        call(uc, LB["c_gx_enl"], ENG, ps_, 0)
+    for k in range(8):                                   # every track: a 12-step pattern, so the song is 12 steps (72 pulses)
+        uc.mem_write(u32(uc, u32(uc, 0x2003D2FC + 0x84 + 4 * k) + 4) + 0x100, bytes([11, 0]))
+    uc.mem_write(tr, bytes(1)); at(2)
+    uc.mem_write(ptr(uc, u32(uc, C.CTRL + 0xC), 0), b"\x01")
+    scrub_on(uc)
+    pad(uc, 24); unpad(uc, 24)                           # cue 1 on song step 3 (pulse 12); the timing 1 bar
+    uc.mem_write(tr, bytes([1])); locs.clear()
+    setpos(40); pad(uc, 24)
+    pulse(70); n1 = list(locs); pulse(71)
+    check("12-step patterns, 1 bar, hold cue 1 at pulse 40: it jumps at the pattern's end (72), not at 96", n1 == [] and locs == [12], (n1, locs))
+    pulse(10); n1 = list(locs); pulse(11)
+    check("  still held: it loops one pattern pass (12 steps, 72 pulses)", n1 == [12] and locs == [12, 12], (n1, locs))
+    unpad(uc, 24); pulse(11)
+    pad(uc, 23); locs.clear(); setpos(40); pad(uc, 24); unpad(uc, 24)
+    first = None
+    for i_, p_ in enumerate(list(range(40, 72)) + list(range(0, 72))):
+        pulse(p_)
+        if locs and first is None:
+            first = i_
+    check("  2 bars (pad 24) at pulse 40: the jump at the end of the next pass (104 pulses on), not at the first", first == 103 and locs == [12], (first, locs))
+    pad(uc, 20); setpos(40); locs.clear(); pad(uc, 24); unpad(uc, 24)
+    pulse(46); n1 = list(locs); pulse(47)
+    check("  1/4 (pad 21) at pulse 40: the grid from the pattern's start, the jump at 48", n1 == [] and locs == [12], (n1, locs))
+    pad(uc, 22)
+    # punch-in, stopped
+    uc.mem_write(tr, bytes(1)); at(1); out(uc)
+    pad(uc, 8); unpad(uc, 8); o = out(uc)
+    check("punch-in: a tap on step 9: the scanner there", b8(uc, CR + FREE) == 1)
+    btns.clear(); locs.clear(); pad(uc, 8); later(500); unpad(uc, 8)
+    check("  a hold on the scanner's step (0.5 s): no punch-in", locs == [] and btns == [] and b8(uc, CR + FREE) == 1, (locs, btns))
+    pad(uc, 8); later(100); unpad(uc, 8)
+    check("  stopped, a tap on the scanner's step: playback starts there (Shift + Play to the stock), the scanner follows",
+          locs and locs[0] == 48 and 17 in btns and b8(uc, CR + FREE) == 0, (locs, btns, b8(uc, CR + FREE)))
+    # punch-in, playing, 1 bar
+    uc.mem_write(tr, bytes([1])); at(1); out(uc)
+    pad(uc, 8); unpad(uc, 8); out(uc); locs.clear()
+    setpos(40); pad(uc, 8); later(100); unpad(uc, 8)
+    blink = set()
+    for _ in range(4):
+        later(64); blink.add(out(uc)[8])
+    check("  playing, a tap on the scanner's step: waits for the pattern's end; the scanner blinks", locs == [] and b8(uc, CR + PEND) == 1 and 0 in blink and len(blink) == 2,
+          (locs, b8(uc, CR + PEND), [hex(x) for x in blink]))
+    pulse(70); pulse(71)
+    check("  at the end: the jump to step 9, the scanner follows the playhead", locs == [48] and b8(uc, CR + FREE) == 0, (locs, b8(uc, CR + FREE)))
+    uc.mem_write(tr, bytes(1))
+    scrub_off(uc)
+
+
+def chase_test():
+    """After a jump each track's automation lanes take their last value at or before the new place (the real stock locate)"""
+    if not (CUES2 and R["cues"].get("auto")):
+        return
+    ENG, PL, t, k = 0x2003C380, 0x200470D4, 0, 3
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    pl = PL + 0x190 * t
+    ps = u32(uc, pl + 8)
+    pat = b8(uc, ptr(uc, ps, 0)) & 7
+    pt = u32(uc, u32(uc, ENGINE + 0x84 + 4 * t) + 4) + PAT_SZ * pat
+    uc.mem_write(pt + 0x101, bytes([0])); uc.mem_write(pt + 0x100, bytes([15])); uc.mem_write(pt + 0x103, bytes([0]))
+    lane = bytearray([0xFF] * 192); lane[2 * 6] = 0x11; lane[6 * 6] = 0x55
+    uc.mem_write(pt + 0x128 + 192 * k, bytes(lane))
+    for o, v in ((0x30, 1 << k), (0x34, 0), (0x38, 0)):
+        st = u32(uc, pl + o)
+        for b in range(2):
+            uc.mem_write(u32(uc, st + 0xC + 4 * b), struct.pack("<I", v) if o != 0x38 else bytes([v]))
+    tr = ptr(uc, 0x200122B0, 0); uc.mem_write(tr, bytes(1))
+    sh = ptr(uc, u32(uc, C.CTRL + 0xC), 0)
+    out(uc)
+    uc.mem_write(sh, b"\x01"); held(uc, 27, 1); btn(uc, 17); held(uc, 17, 1); out(uc)
+    if V3:
+        uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + 600)); out(uc)
+    def go(step):
+        here = b8(uc, ptr(uc, u32(uc, pl + 8), 1)) & 31
+        knob(uc, 0, step - here); out(uc)
+        return b8(uc, ptr(uc, u32(uc, pl + 8), 1)) & 31, knob_k(uc, t, k)
+    def now(): return b8(uc, ptr(uc, u32(uc, pl + 8), 1)) & 31, knob_k(uc, t, k)
+    r9 = go(9); r4 = go(4); r1 = go(1)
+    check("stopped, K1 to step 10: K4 takes step 7's automation (85)", r9 == (9, 0x55), r9)
+    check("  K1 to step 5: step 3's (17)", r4 == (4, 0x11), r4)
+    check("  K1 to step 2, before both: the pattern's last value, as it loops (85)", r1 == (1, 0x55), r1)
+    uc.mem_write(pt + 0x103, bytes([1])); knob(uc, 0, -1); knob(uc, 0, 11); out(uc); r = now()
+    check("a reverse pattern, song step 12 = its step 5: step 7 is earlier in time (85)", r == (4, 0x55), r)
+    uc.mem_write(pt + 0x103, bytes([0]))
+    st = u32(uc, pl + 0x34)
+    for b in range(2):
+        uc.mem_write(u32(uc, st + 0xC + 4 * b), struct.pack("<I", 1 << k))
+    knob(uc, 0, -7); out(uc); r = now()
+    check("K4 turned by hand: the jump gives its lane back to automation, as the stock's locate does (17)", r == (4, 0x11), r)
+    last = u32(uc, pl + 0x4C)
+    uc.mem_write(last + 2 * k, struct.pack("<H", 0x11))
+    sink = u32(uc, pl + 0x2C); call(uc, u32(uc, u32(uc, sink)), sink, R16ID(uc, pl, k), 0x30)
+    knob(uc, 0, 1); knob(uc, 0, -1); out(uc); r = now()
+    check("  K4 set by hand to 48 while the stock's last applied value is 17, a jump back: 17 again", r == (4, 0x11), r)
+    held(uc, 17, 0); call(uc, C.BTN_RELEASE, C.CTRL, 17); uc.mem_write(sh, bytes(1)); held(uc, 27, 0); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+    if V3:
+        btn(uc, 27); call(uc, C.BTN_RELEASE, C.CTRL, 27)
+
+
+def down_test():
+    """The stock's own press and release keep each button's down bit; a press or release the scrub keeps must leave it right"""
+    if not (CUES2 and R["cues"].get("latch")):
+        return
+    CR = int(R["cues"]["ram"], 16)
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    def store(v):
+        st = u32(uc, C.CTRL + 0xC)
+        for k in range(2):
+            uc.mem_write(u32(uc, st + 0xC + 4 * k), bytes([v]))
+    def press(i):
+        if i == 27: store(1)
+        btn(uc, i)
+    def rel(i):
+        if i == 27: store(0)
+        call(uc, C.BTN_RELEASE, C.CTRL, i)
+    def later(ms): uc.mem_write(HAL_TICK, struct.pack("<I", u32(uc, HAL_TICK) + ms))
+    def down(): return u32(uc, C.CTRL + 0xA0) & (1 << 27 | 1 << 17)
+    def bits_only(at, on):                               # the stock's press (test-and-set, then its job) and release (clear), jobs not run
+        def f(u, adr, n, d):
+            i = u.reg_read(UC_ARM_REG_R1); v = u32(u, C.CTRL + 0xA0)
+            u.mem_write(C.CTRL + 0xA0, struct.pack("<I", v | 1 << i if on else v & ~(1 << i)))
+            u.reg_write(UC_ARM_REG_R0, 0); u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
+        uc.hook_add(UC_HOOK_CODE, f, None, at, at + 1)
+    bits_only(PREV["prev_btn"], 1)
+    bits_only(PREV["prev_rel"], 0)
+    for k in ("prev_knob", "prev_out", "prev_pad", "prev_padrel"):
+        uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: (u.reg_write(UC_ARM_REG_R0, 0), u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))),
+                    None, PREV[k], PREV[k] + 1)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR)), None, 0x08034082, 0x08034083)
+    uc.hook_add(UC_HOOK_CODE, lambda u, a, n, d: u.reg_write(UC_ARM_REG_PC, 0x0803FC22 | 1), None, 0x0803FC1C, 0x0803FC1D)
+    for k in range(2):
+        uc.mem_write(u32(uc, 0x200122B0 + 0xC + 4 * k), bytes(1))
+    out(uc)
+    press(27); press(17); later(100); rel(17)
+    check("Shift + Play tap, not latched: Play not left down", down() == 1 << 27, hex(down()))
+    rel(27)
+    press(27); press(17); out(uc); later(1100); out(uc); rel(17); out(uc); rel(27); out(uc)
+    check("Shift + Play held 1 s, both let go: latched, no button left down for the stock", b8(uc, CR + 44) == 1 and down() == 0, (b8(uc, CR + 44), hex(down())))
+    press(17)
+    check("  latched, Play alone: not taken as Shift + Play", b8(uc, CR + 45) == 0, b8(uc, CR + 45))
+    rel(17); out(uc)
+    press(27); later(100); rel(27); out(uc)
+    check("  a Shift tap: the latch off, no button left down", b8(uc, CR + 44) == 0 and down() == 0, (b8(uc, CR + 44), hex(down())))
+    press(27)
+    check("  the next Shift press reaches the stock", down() == 1 << 27, hex(down()))
+    rel(27)
+    check("  and its release", down() == 0, hex(down()))
+
+
+def sync_test():
+    """A waiting cue jump made in the clock's pulse listener, with the stock's own pulse and locate code"""
+    if not (CUES2 and R["cues"].get("sync")):
+        return
+    ENG = 0x2003C380
+    CR = int(R["cues"]["ram"], 16)
+    uc = ET.setup(open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read())
+    def pg(st, i): call(uc, 0x0803FC58, st, i); return uc.reg_read(UC_ARM_REG_R0)
+    def pos(): return u32(uc, pg(u32(uc, ENG + 0x90), 0))
+    def tpos(t): ps = u32(uc, ENG + 0x30 + 4 * t); return [b8(uc, pg(ps, i)) for i in range(3)]
+    uc.mem_write(ptr(uc, 0x200122B0, 0), bytes([1])); out(uc)
+    clk = u32(uc, ENG + 0x14); call(uc, u32(uc, u32(uc, clk) + 0x14), clk); ps = uc.reg_read(UC_ARM_REG_R0)
+    uc.mem_write(ENG + 0xA8, bytes(4))
+    call(uc, 0x08034082, ENG, 41); call(uc, LB["c_gx_enl"], ENG, ps, 0)
+    check("the clock plays pulse 41 through the listener, as the stock's", pos() == 41 and tpos(0) == [0, 6, 5], (pos(), tpos(0)))
+    uc.mem_write(CR + 16, struct.pack("<I", 30)); uc.mem_write(CR + 20, struct.pack("<I", 1))
+    uc.mem_write(CR + 56, struct.pack("<IH", 42, 0)); uc.mem_write(CR + 4, bytes([1]))
+    call(uc, LB["c_gx_enl"], ENG, ps, 0)
+    check("a cue jump to step 6 waits for pulse 42: that pulse plays step 6's first pulse on every track", pos() == 30
+          and all(tpos(t) == [0, 5, 0] for t in range(8)) and b8(uc, CR + 4) == 0, (pos(), tpos(0), tpos(7)))
+    call(uc, LB["c_gx_enl"], ENG, ps, 0)
+    check("  the next pulse goes on from there", pos() == 31 and tpos(0) == [0, 5, 1], (pos(), tpos(0)))
 
 
 def scrub_native_preview_test():
@@ -1092,7 +2170,7 @@ def scrub_native_preview_test():
         ch=ptr(uc,u32(uc,eng+0x9C),t);uc.mem_write(ch,b"\x00\x00\x00\x00")
     uc.mem_write(ptr(uc,u32(uc,eng+0xA0),0),b"\x00\x00")
     uc.mem_write(ptr(uc,C.TRANSPORT,0),b"\x00")
-    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");btn(uc,17)
+    uc.mem_write(ptr(uc,u32(uc,C.CTRL+0xC),0),b"\x01");scrub_on(uc)
     def ons():return [p for p in packets if p[0]>>20&15==9]
     for name,delta in (("first step",-100),("first step repeated",-1),("last step",100),("last step retrigger right",1),("last step retrigger right again",1)):
         packets.clear();owners.clear();knob(uc,0,delta)
@@ -1111,7 +2189,7 @@ def scrub_native_preview_test():
     packets.clear();owners.clear();uc.mem_write(ptr(uc,C.TRANSPORT,0),b"\x01")
     uc.mem_write(ptr(uc,u32(uc,eng+0x90),0),struct.pack("<I",84));knob(uc,0,1)
     check("running to last step: stop then eight real preview note-on packets",b8(uc,ptr(uc,C.TRANSPORT,0))==0 and len(ons())==8 and owners==[0]*8,(ons(),owners))
-    packets.clear();call(uc,C.BTN_RELEASE,C.CTRL,17)
+    packets.clear();scrub_off(uc)
     check("native preview release: real DSP note-off packets",len([p for p in packets if p[0]>>20&15==8])>=8,packets)
 
 
@@ -1568,7 +2646,18 @@ def main():
     o = out(uc, up=0x111111)
     check("sends page, nothing held: Up keeps the stock's light", o[LED_UP] == 0x111111, hex(o[LED_UP]))
     btn(uc, ID_UP); uc.mem_write(mode_p(uc), was[0]); uc.mem_write(fxpage_p(uc), was[1]); view(uc, CONT)
-    check("no read below the flash (a store followed one time too many)", not low, [hex(a) for a in low[:4]])
+    filter_layout=ET.MAN['report'].get('filter_cutoff',{})
+    start=filter_layout.get('itcm_start',0)
+    ranges = [(start, start + filter_layout.get('itcm_bytes', 0))]
+    for feature in ('pitch_envelope_dsp', 'ring_mod_dsp'):
+        layout = ET.MAN['report'].get(feature, {})
+        if 'settings_itcm_start' in layout:
+            start = layout['settings_itcm_start']
+            ranges.append((start, start + layout['settings_itcm_bytes']))
+    if R.get("cues"):
+        ranges.append((int(R["cues"]["ram"], 16), int(R["cues"]["ram"], 16) + R["cues"].get("ram_len", 24)))
+    unexpected = [a for a in low if not any(lo <= a < hi for lo, hi in ranges)]
+    check("no unowned read below flash (a store followed one time too many)", not unexpected, [hex(a) for a in unexpected[:4]])
 
     wr.clear()
     for _ in range(300):
@@ -1607,6 +2696,17 @@ def main():
     scrub_audio_test()
     scrub_chain_bounds_test()
     scrub_page_recovery_test()
+    scrub_any_test()
+    cue_test()
+    cue2_test()
+    cue3_test()
+    cols_test()
+    pass_test()
+    tap_test()
+    bar_punch_test()
+    chase_test()
+    sync_test()
+    down_test()
     scrub_native_preview_test()
     print("ALL PASS" if not ET.FAILS else f"{len(ET.FAILS)} FAILED")
     sys.exit(1 if ET.FAILS else 0)

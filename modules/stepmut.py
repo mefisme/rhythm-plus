@@ -29,6 +29,10 @@ SRC = ROOT / "modules" / "stepmut.c"
 MUT_CALL, MUTATE = 0x0803656C, 0x08047E88
 BLK_OFF, BLK_LEN = 404, 100
 SLOT_LEN = 32
+PS_VT = 0x08067EA4                              # the Pattern Settings views' vtable: slot 0 its pads, slot 7 its LEDs
+Q_RAM = 0x38A8                                  # ITCM, 8 B: quantize's flash (after the GS settings buffer, 0x3700 + 423)
+Q_IDLE = 0x01                                   # palette: pad 25's light when ready
+Q_GREEN = 0x76 + 7                              # palette: the probability gradient's last code, Mutate's Duplicate light
 LABELS = ("c_sm_mut", "c_sm_btn", "c_sm_rel", "c_sm_pad", "c_sm_padrel", "c_sm_out", "c_sm_fxread", "c_sm_fxwrite", "c_sm_fxsample")
 
 
@@ -57,7 +61,7 @@ def _elf(data, origin, limit, prefix="c_sm_"):
     return bytes(code), labels
 
 
-def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS, max_code=0x4000):
+def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS, max_code=0x4000, instruction_map=None):
     work = ROOT / "buildtmp" / name
     work.mkdir(parents=True, exist_ok=True)
     flags = [f"-D{k}={v:#x}" for k, v in sorted(defs.items())]
@@ -66,7 +70,10 @@ def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS
     cache_policy=json.dumps(['trim-v1',prefix,roots]).encode() if trim else b''
     key = hashlib.sha256(src.read_bytes() + json.dumps([origin] + flags).encode() + b"zig0.13-m7-Oz"+cache_policy).hexdigest()
     meta, binf = work / f"{key[:16]}.json", work / f"{key[:16]}.bin"
-    if meta.exists() and binf.exists():
+    map_file = work / f"{key[:16]}.elf"
+    if instruction_map is not None:
+        instruction_map.append(map_file.relative_to(ROOT).as_posix())
+    if meta.exists() and binf.exists() and (instruction_map is None or map_file.exists()):
         return binf.read_bytes(), {k: int(v, 16) for k, v in json.loads(meta.read_text()).items()}
     ld = work / f"{name}.ld"
     sections=(' '.join('KEEP(*(.text.'+name+'))' for name in roots)+' *(.text*) *(.rodata*)') if trim else 'KEEP(*(.text*)) *(.rodata*)'
@@ -84,6 +91,8 @@ def compile_c(origin, defs, src=SRC, name="stepmut", prefix="c_sm_", need=LABELS
         raise SystemExit(f"{src.name}: " + res.stdout + res.stderr)
     code, labels = _elf(elf.read_bytes(), origin, origin + max_code, prefix)
     assert set(need) <= set(labels), labels
+    if instruction_map is not None:
+        map_file.write_bytes(elf.read_bytes())
     binf.write_bytes(code)
     meta.write_text(json.dumps({k: hex(v) for k, v in labels.items()}))
     return code, labels
@@ -107,7 +116,14 @@ def install(img, report, base_addr):
                 TM_PTRK=T.O_PTRK, TM_SHOP=T.O_SHOP, TM_BACK=T.O_BACK, TM_ARM=T.O_ARM, TM_ARM_OFF=T.ARM_OFF, BLK_OFF=BLK_OFF,
                 C_RRT=lab("rhrec", "c_rrt"), C_CIOK=lab("countin", "c_ciok"))
     if os.environ.get("RH_STEPMUT_OFFLOAD") == "1": defs['OFFLOAD']=1
-    code, labels = compile_c(base_addr, defs)
+    quant = os.environ.get("RH_QUANTIZE") == "1"
+    if quant:
+        qslots = [int.from_bytes(img[PS_VT + 4 * k - rhbuild.BASE:PS_VT + 4 * k - rhbuild.BASE + 4], "little") for k in (0, 7)]
+        assert all(rhbuild.BASE <= w < 0x08080000 for w in qslots), "Pattern Settings' slots taken"
+        defs.update(QUANTIZE=1, PREV_QPAD=qslots[0] & ~1, PREV_QLED=qslots[1] & ~1, Q_RAM=Q_RAM, Q_IDLE=Q_IDLE)
+        if os.environ.get("RH_QUANTIZE_FLASH") == "1":
+            defs.update(Q_FLASH=1, Q_IDLE=Q_GREEN)
+    code, labels = compile_c(base_addr, defs, need=LABELS + (("c_sm_qpad", "c_sm_qled") if quant else ()))
     img += bytes([0xFF]) * (base_addr - rhbuild.BASE - len(img)) + code
     while len(img) % 4:
         img += bytes([0xFF])
@@ -117,7 +133,11 @@ def install(img, report, base_addr):
     rhbuild.patch(img, T.PR_ENTRY, f"b.w #{prev['PREV_PADREL']:#x}", bw_ins(T.PR_ENTRY, labels["c_sm_padrel"]))
     rhbuild.patch(img, T.OUT_CALL, f"bl #{prev['PREV_OUT']:#x}", bl_ins(T.OUT_CALL, labels["c_sm_out"]))
     rhbuild.patch(img, MUT_CALL, f"bl #{MUTATE:#x}", bl_ins(MUT_CALL, labels["c_sm_mut"]))
+    if quant:
+        rhbuild.patch_word(img, PS_VT, qslots[0], labels["c_sm_qpad"] | 1)
+        rhbuild.patch_word(img, PS_VT + 0x1C, qslots[1], labels["c_sm_qled"] | 1)
     report["stepmut"] = dict(slot=hex(defs["SLOT"]), blk_off=BLK_OFF, blk_len=BLK_LEN, code=len(code),
                              offload=bool(defs.get('OFFLOAD')),
+                             **(dict(quantize=dict(pad=25, ram=hex(Q_RAM), idle=hex(defs['Q_IDLE']), flash='Q_FLASH' in defs, view_slots=[hex(PS_VT), hex(PS_VT + 0x1C)], prev=[hex(defs['PREV_QPAD']), hex(defs['PREV_QLED'])])) if quant else {}),
                              prev={k.lower(): hex(v) for k, v in prev.items()}, labels={k: hex(v) for k, v in labels.items()})
     return labels, code

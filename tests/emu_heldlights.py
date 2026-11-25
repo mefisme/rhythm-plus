@@ -14,7 +14,11 @@ def main():
     r=E.MAN['report']['heldlights'];fn=int(r['labels']['c_hp_out'],16);previous=int(r['previous'],16)
     root=E.rhbuild.bl_target(bytearray(fw),E.T.OUT_CALL)
     st=E.MAN['report'].get('stretch',{}).get('arm')
-    if st and root==int(st['labels']['c_st_out'],16):root=int(st['prev']['prev_out'],16)   # stretch's head calls the chain first
+    ft=E.MAN['report'].get('filetools')
+    heads={}                                                                                # stretch and file tools call the chain first, in either order
+    if st:heads[int(st['labels']['c_st_out'],16)]=int(st['prev']['prev_out'],16)
+    if ft:heads[int(ft['labels']['c_ft_out'],16)]=int(ft['prev_out'],16)
+    while root in heads:root=heads.pop(root)
     if root!=fn:
         gui=E.MAN['report']['granular']['ui']
         shadow=E.MAN['report']['storageshadow']

@@ -218,6 +218,12 @@ def main():
         print("PASS a project copy's Plus file: to the other pack under the new slot, then the slot's older files deleted")
         st, r = send(0x29, 8, b"", bytes((4, 27, 5, 0))); ok(st, "stock project"); assert un32(r, 14) == 0
         st, r = send(0x29, 0, b"", bytes((4, 27, 5, 0))); ok(st, "internal pack"); assert un32(r, 14) == 0
+        if rep.get("internal_pack"):                               # the internal pack's file is on the card, one a slot
+            I = "1:/RP_INTERNAL/"; dirs.add(I[:-1]); disk[I + "RP_05_Int_0A0B0C0D.rps"] = bytearray(b"int")
+            st, r = send(0x29, 0, b"", bytes((5, 27, 7, 0))); ok(st, "from the internal pack")
+            assert un32(r, 14) == 1 and disk[B + "RP_07_0A0B0C0D.rps"] == b"int" and I + "RP_05_Int_0A0B0C0D.rps" in disk
+            del disk[B + "RP_07_0A0B0C0D.rps"]
+            print("PASS an internal project's copy to a card pack takes its Plus file from RP_INTERNAL")
         project(A + "09_Lost.ncs", 0x01234567)
         st, _ = send(0x29, 8, b"", bytes((9, 27, 6, 0))); assert st == 4 and not any("RP_06_" in k for k in disk if k.startswith(B))
         send(0x23, 0, b"01234567.RPS", nib32(0) + b"\x02\x07\x07\x08\x08"); disk["1:/RP_AUTO/01234567.RPS"] = bytearray(b"auto")

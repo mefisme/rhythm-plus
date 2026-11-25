@@ -11,6 +11,8 @@ def main():
     context=lambda:E.call(u,UI['c_gucontext'])
     G.pad(u,E.GP);G.unpad(u,E.GP)
     u.mem_write(shift(),b'\0');context();assert u.mem_read(slot+102,1)==b'\0'
+    if g['ui'].get('shift_opens_settings',True) is False:
+        hold_mode(u,K,slot,shift,context);return
     if g['ui'].get('shift_tap'):
         tap_mode(u,g,slot,shift,context);return
     if g['ui'].get('sticky_assign'):
@@ -56,6 +58,20 @@ def main():
     G.pad(u,E.GP);G.unpad(u,E.GP);assert u.mem_read(slot+102,1)==b'\0'
     print('PASS physical/sticky Shift: settings, Down assignments, Up settings, release values; knob page preserved')
     print('PASS stock page never opens granular settings; retained pad-hold latch remains independent')
+    print('ALL PASS')
+def hold_mode(u,K,slot,shift,context):
+    """Settings open only by holding the page pad; Shift opens nothing and leaves an open page as it is."""
+    G.held(u,27,True);u.mem_write(shift(),b'\1');context()
+    assert u.mem_read(slot+102,1)==b'\0','Shift opened Settings'
+    E.press(u,19);E.release(u,19);assert not u.mem_read(slot+380,1)[0]&128,'Shift + Down opened Assignments'
+    G.held(u,27,False);u.mem_write(shift(),b'\0');context()
+    G.pad(u,E.GP);u.mem_write(0x20000820,struct.pack('<I',E.u32(u,0x20000820)+400))
+    E.call(u,K['c_gr_runtime_ui_frame'],slot,0,1);G.unpad(u,E.GP)
+    assert u.mem_read(slot+102,1)==b'\1','holding the page pad did not open Settings'
+    u.mem_write(shift(),b'\1');context();u.mem_write(shift(),b'\0');context()
+    assert u.mem_read(slot+102,1)==b'\1','Shift release closed Settings'
+    G.pad(u,E.GP);G.unpad(u,E.GP);assert u.mem_read(slot+102,1)==b'\0','a tap did not close Settings'
+    print('PASS Shift opens no Settings or Assignments; holding the page pad opens Settings, Shift leaves them open, a tap closes them')
     print('ALL PASS')
 def sticky_mode(u,g,K,slot,shift,context):
     shown=lambda:u.mem_read(slot+102,1)==b'\1'

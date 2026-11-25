@@ -182,8 +182,20 @@ def install(img, report):
     raw0 = dspzip.raw_stream(img)
     n1 = int.from_bytes(img[BLK1 - BASE + 1:BLK1 - BASE + 3], 'big')
     raw1 = bytes(img[BLK1 - BASE:BLK1 - BASE + 3 * (n1 + 2)])
-    lo, hi = BLK1, dspzip.BLK0 + 3 * (core0.N0 + 2)                # both stock blocks, one after the other
     assert BLK1 + len(raw1) <= dspzip.BLK0
+    if 'filter_cutoff' in report:
+        import filter_cutoff
+        raw1 = filter_cutoff.initialize_offsets(raw1)
+        if 'pitch_envelope_dsp' in report:
+            pitch = report['pitch_envelope_dsp']
+            raw1 = filter_cutoff.initialize_offsets(raw1, int(pitch['offset'], 16), pitch['data_words'])
+    if 'ring_mod_before' in report:
+        ring=report['ring_mod_before']
+        raw1=filter_cutoff.initialize_offsets(raw1,int(ring['state'],16),ring['data_words'])
+    if 'scan_dsp' in report:
+        scan=report['scan_dsp']
+        raw1=filter_cutoff.initialize_offsets(raw1,int(scan['amount'],16),scan['data_words'])
+    lo, hi = BLK1, dspzip.BLK0 + 3 * (core0.N0 + 2)                # both stock blocks, one after the other
     rc = os.environ.get('RH_DSP_RC') == '1'
     if rc:
         import dsprc

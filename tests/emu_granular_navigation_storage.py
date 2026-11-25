@@ -30,7 +30,10 @@ def main():
     out=E.out(u,int(g['ui']['labels']['c_guout'],16))
     for t in range(1,8):
         rgb=out[32+t];r,gc,b=rgb>>16&255,rgb>>8&255,rgb&255
-        assert (gc>r>b) if t&1 else (r==gc==b),('restored track indicator',t,hex(rgb))
+        if E.MAN['marker'][:1]=='A' and len(E.MAN['marker'])==4 and 'A283'<=E.MAN['marker']:
+            assert rgb==0xffffff,('the other track buttons are white',t,hex(rgb))
+        else:
+            assert (gc>r>b) if t&1 else (r==gc==b),('restored track indicator',t,hex(rgb))
     # Navigation-only edits must create distinct immutable content addresses.
     for t in range(8):
         for bit in (1,2):

@@ -1,8 +1,10 @@
 """Unicorn: with Easy Start removed, the USB set-up (0x08035814) takes no mass storage class even when the setting's bit 17 is on;
 the stock image takes it.  The freed code is 0xFF, the button and LED sites are changed.
 Usage: emu_noeasystart.py STOCK.bin IMAGE.bin [RAM.bin]"""
+import json
 import struct
 import sys
+from pathlib import Path
 
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_SP
@@ -43,11 +45,17 @@ def main():
     print("PASS stock: the setting's bit 17 adds the mass storage class (0x101), off = USB MIDI only (0x001)")
     assert usb_class(img, True) == 0x001 and usb_class(img, False) == 0x001
     print("PASS Easy Start removed: USB MIDI only, whatever the setting")
+    rep = json.loads((Path(sys.argv[2]).parent / "manifest.json").read_text())["report"]
+    used = rep["noeasystart"].get("used", {})               # modules placed in the freed code (A328: heldlocks, heldlights)
+    placed = [(int(rep[t.split("#")[0]]["base"], 16), int(rep[t.split("#")[0]]["base"], 16) + n) for t, n in used.items()]
+    assert all(any(lo <= a and b <= hi for lo, hi in HOLES) for a, b in placed), placed
     for lo, hi in HOLES:
-        assert img[lo - BASE:hi - BASE] == bytes([0xFF]) * (hi - lo), f"{lo:#x}"
+        for a in range(lo, hi):
+            if not any(p <= a < q for p, q in placed):
+                assert img[a - BASE] == 0xFF, f"{a:#x}"
     assert img[0x0805144A - BASE:0x0805144C - BASE] == b"\x00\xbf" and img[0x0805176C - BASE:0x0805176E - BASE] == b"\x00\x20"
     assert img[0x0802764A - BASE:0x0802764E - BASE] == b"\xaf\xf3\x00\x80" and img[0x0802766E - BASE:0x08027672 - BASE] == b"\x70\x47\x00\xbf"
-    print("PASS the freed code is empty (1,992 B); button 9 does nothing, its LED is dark, the transport is never called")
+    print(f"PASS the freed code is empty (1,992 B{', less ' + str(sum(used.values())) + ' B of our modules' if used else ''}); button 9 does nothing, its LED is dark, the transport is never called")
     print("ALL PASS")
 
 

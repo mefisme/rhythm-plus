@@ -983,6 +983,7 @@ $("btnPickBackup").onclick = async () => {
       `${n} files are written (${plan.write.filter(w => w.old).length} replace others); ${plan.same} are already the same.`));
     if (plan.twins.length) lines.push(t(`${plan.twins.length} archivos con el mismo número se borran.`, `${plan.twins.length} files with the same number are deleted.`));
     if (plan.noAuto) lines.push(t("La copia tiene RP_AUTO: elige la carpeta RP_AUTO de la tarjeta en la página Packs para restaurarla también.", "The backup has RP_AUTO: choose the card's RP_AUTO folder on the Packs page to restore it too."));
+    if (plan.noInternal) lines.push(t("La copia tiene RP_INTERNAL (los ajustes del pack interno): abre la carpeta superior de la tarjeta para restaurarla también.", "The backup has RP_INTERNAL (the internal pack's settings): open the card's top folder to restore it too."));
     note("restoreState", lines.join(" "), plan.conflict.length ? "bad" : n || plan.twins.length ? "warn" : "ok");
   });
 };

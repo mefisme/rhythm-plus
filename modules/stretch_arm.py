@@ -79,8 +79,11 @@ def install(img, report, base_addr=None):
         defs["DRAIN_IDLE"] = 1
     if os.environ.get("RH_GRANULAR_STRETCH_HANDOFF") == "1":
         defs["C_GHANDOFF"] = kernel["c_gr_stretch_handoff"]
-    code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=LABELS + (("c_st_wipe",) if wipe_site else ()),
-                                     **(dict(max_code=end - base_addr) if hole else {}))
+    need = LABELS + (("c_st_wipe",) if wipe_site else ())
+    code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=need)
+    if hole and len(code) > end - base_addr:                  # the hole is too small: at the image's end instead
+        hole, base_addr = False, (rhbuild.BASE + len(img) + 15) & ~15
+        code, labels = stepmut.compile_c(base_addr, defs, src=SRC, name="stretch", prefix="c_st_", need=need)
     if hole:
         o = base_addr - rhbuild.BASE
         assert all(b == 0xFF for b in img[o:o + len(code)])

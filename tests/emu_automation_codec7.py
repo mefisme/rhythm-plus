@@ -88,6 +88,17 @@ def main():
     result=dict(prototype_only=True,installed=False,code_bytes=len(code),directory_bytes=56,
         raw_active_plus_snapshot=9344,modes=modes,rows=rows,
         instruction_counts_are_not_hardware_timings=True)
+    # One full-resolution extra lane in every pattern of an eight-track project.
+    project = []
+    for name, lanes in banks.items():
+        payloads = [encode(lanes[index % len(lanes)])[0] for index in range(64)]
+        directory = 2 * (len(payloads) + 1)  # byte offsets, including the end
+        packed_bytes = directory + sum(map(len, payloads))
+        project.append(dict(scenario=name, packed_bytes=packed_bytes,
+                            playing_cache_bytes=8 * 192,
+                            playing_and_edit_cache_bytes=9 * 192))
+        print(f"extra lane across 64 patterns, {name}: {packed_bytes} B")
+    result["extra_lane_projects"] = project
     (ROOT/'buildtmp/automation-codec7-results.json').write_text(json.dumps(result,indent=2)+'\n')
     print('ALL PASS')
 

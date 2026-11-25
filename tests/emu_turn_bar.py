@@ -13,6 +13,10 @@ def main():
     def tap(p):G.pad(u,p);G.unpad(u,p)
     def shift(on):u.mem_write(E.ptr(u,E.u32(u,E.C.CTRL+0xc),0),bytes([on]));context()
     def settings(on):
+        if g['ui'].get('shift_opens_settings') is False:
+            if on:hold(E.GP)
+            else:tap(E.GP)
+            return
         if not g['ui'].get('shift_tap'):shift(on);return
         if (u.mem_read(s+102,1)[0]==1)!=bool(on):G.held(u,27,True);shift(1);G.held(u,27,False);shift(0)
     def hold(p):
@@ -57,6 +61,14 @@ def main():
         E.led(u,int(r['tmenu']['labels']['c_tmled'],16));assert all(E.out(u,int(g['ui']['labels']['c_guout'],16))[60:68]),'first set: a knob dark'
         print('PASS assignments: second set lights K1-K6 only; first set lights all eight')
     settings(0)
+    if 'filter_cutoff' in r:
+        filter_pad=r['filter_cutoff']['editor_pad']-1
+        for name,knob in (('Filter LFO depth',3),('Filter Stock cutoff alias',6)):
+            tap(filter_pad)
+            G.knob(u,knob,1);G.knob(u,knob,-1);later(1000);values=bar()
+            hold(filter_pad);check(name,lambda d:G.knob(u,knob,d))
+            tap(filter_pad)
+        print('PASS Filter LFO depth and cutoff alias share the 500 ms value-bar preview')
     print('PASS '+('turns show the value bar over Stock and Granular settings for 500 ms; assignments keep their pads' if turn_bar
                    else 'without the option, turns keep the settings pads'))
     print('ALL PASS')

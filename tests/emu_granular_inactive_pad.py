@@ -1,4 +1,4 @@
-"""Granular and Stock parameter pads share the same inactive brightness."""
+"""Granular and Stock parameter pads share the same inactive brightness; from A283 the Stock pad is in the track colour."""
 import struct
 import emu_fx_native_edges as F
 G,E=F.G,F.E
@@ -17,7 +17,14 @@ def main():
             E.call(u,K['c_gr_runtime_draw'],slot,t,buf,0)
             stock=E.u32(u,buf+25*4);active=E.u32(u,buf+E.GP*4)
             peak=lambda c:max(c>>s&255 for s in (0,8,16))
-            assert peak(inactive)==peak(stock)==actual_level//16,(t,level,hex(inactive),hex(stock))
+            dim=actual_level//16
+            if E.MAN['marker'][:1]=='A' and len(E.MAN['marker'])==4 and 'A283'<=E.MAN['marker']:
+                # The Stock pad takes the track colour at the same dim level.
+                hue=E.u32(u,E.T.COLOURS+4*E.T.TRK_SLOTS[t])
+                tinted=sum((((hue>>s)&255)*dim//255)<<s for s in (0,8,16))
+                assert peak(inactive)==dim and stock==tinted,(t,level,hex(inactive),hex(stock),hex(tinted))
+            else:
+                assert peak(inactive)==peak(stock)==dim,(t,level,hex(inactive),hex(stock))
             assert peak(active)==actual_level,'active granular pad dimmed'
     print('PASS inactive Granular matches inactive Stock brightness for all tracks/dim levels; active brightness unchanged')
     print('ALL PASS')

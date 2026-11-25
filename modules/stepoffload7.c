@@ -8,7 +8,8 @@ typedef uint64_t u64;
 typedef u32 (*fn4)(u32,u32,u32,u32);
 typedef u32 (*fn7)(u32,u32,u32,u32,u32,u32,u32);
 enum {MAGIC,ACTIVE,PENDING,MODE,STAGE,NSAVE,NLOAD,WRITES,READS,VERIFIED,MISSING,
-      FAILS,SKIPPED,RAW,ELAPSED,START,ITCM,VTOR,MPU,CCR,GUARD,PROJECT,PACK,OPER,QBUSY};
+      FAILS,SKIPPED,RAW,ELAPSED,START,ITCM,VTOR,MPU,CCR,GUARD,PROJECT,PACK,OPER,QBUSY,
+      NOCARD};                                                 /* NOCARD: Step Mutate's block is the defaults of a no-card load */
 #define TAG 0x31464f53u
 #define FIL 0x400u
 #define FIL_END (FIL+4136u)
@@ -296,7 +297,11 @@ static void sweep(u32 n,u32 slot,const char *skip){
 #define F_UNLINK 0x080226edu
 #define F_MKDIR 0x08022789u
 #define F_RENAME 0x080228c3u
-#define SHIFT_HELD() ((*(volatile u32 *)(0x200487c8u+0xa0u)>>27)&1u)
+#ifdef CLEAR_SAVE
+#define DEFAULTS_HELD() ((*(volatile u32 *)(0x200487c8u+0xa0u)>>23)&1u)  /* Clear: Shift + Save opens the stock's Setup view */
+#else
+#define DEFAULTS_HELD() ((*(volatile u32 *)(0x200487c8u+0xa0u)>>27)&1u)
+#endif
 static const char hexd[]="0123456789ABCDEF";
 static int in_sram(u32 p){return p>=0x20000000 && p<0x20050000;}
 static int digit(char c){return c>='0' && c<='9';}
@@ -324,6 +329,15 @@ static u32 store_sessions(u32 store){
     if(n<4 || n>=72)return 0;
     S->path[n++]='/';return n;
 }
+#ifdef INTERNAL_PLUS
+/* The internal pack's Plus files live on the card: nothing of ours is written to the internal memory. */
+static u32 internal_folder(void){const char p[]="1:/RP_INTERNAL/";for(u32 i=0;i<sizeof p;i++)S->path[i]=p[i];return sizeof p-1;}
+static u32 plus_folder(u32 pack){return pack?pack_sessions(pack):internal_folder();}
+/* 1 when the card holds the internal pack's folder (made now or already there); 0 with no card. */
+static u32 internal_card(void){u32 r=((u32 (*)(const char *))F_MKDIR)("1:/RP_INTERNAL");return !r || r==8;}
+#else
+#define plus_folder pack_sessions
+#endif
 /* The project file's name without "NN_" and ".ncs", from the loaded pack (its store's byte 0 = the pack). */
 static const char *project_name(u32 pack,u32 slot,u32 *len){
     u32 cs=*(volatile u32 *)0x20006e24;
@@ -349,7 +363,7 @@ static u32 put_name(u32 n,u32 slot,u32 key,const char *name,u32 len){
 }
 /* Builds the Plus file path; *folder = the length of <folder>/. 0 if the pack folder is unknown. */
 static u32 plus_path(u32 pack,u32 slot,u32 key,u32 *folder){
-    u32 n=slot<ANY_SLOT?pack_sessions(pack):0,len;
+    u32 n=slot<ANY_SLOT?plus_folder(pack):0,len;
     *folder=n;
     if(!n)return 0;
     const char *name=project_name(pack,slot,&len);
@@ -487,8 +501,18 @@ static u32 load_file(u32 version,u32 size,u32 key){
 #else
             /* Older saves hold 224 settings bytes; the GS version inside says which. */
             u32 settings_size=size-total;
-            if(settings_size!=224 && settings_size!=GR_SETTINGS_BYTES)result=0x103;
+            if(settings_size!=224 && settings_size!=GR_SETTINGS_BYTES
+#if GR_SETTINGS_BYTES>=336
+               && settings_size!=288 && settings_size!=312 && settings_size!=336 && settings_size!=385 && settings_size!=402 && settings_size!=406
+#endif
+#ifdef GR_READ_V11
+               && settings_size!=470
+#endif
+            )result=0x103;
             else result=read_part(GR_LIVE,settings_size,&checksum);
+#if GR_SETTINGS_BYTES>=336
+            if(!result && settings_size!=(GR_LIVE[2]==12?423u:GR_LIVE[2]==11?470u:GR_LIVE[2]==10?406u:GR_LIVE[2]==9?402u:GR_LIVE[2]==8?385u:GR_LIVE[2]==7?336u:GR_LIVE[2]==6?312u:GR_LIVE[2]==5?288u:224u))result=0x103;
+#endif
             if(!result && !((u32 (*)(const void *))(GR_SETTINGS_VALID|1))(GR_LIVE))result=0x103;
             total+=settings_size;
 #endif
@@ -514,7 +538,7 @@ static u32 restore(u32 record){
     if(plus_path(S->m[PACK],S->m[PROJECT],key,&folder))result=load_file(meta[2],size,key);
     if(result==4 || result==5){path(key);result=load_file(meta[2],size,key);}
     if(result==4 || result==5){
-        u32 n=pack_sessions(S->m[PACK]);
+        u32 n=plus_folder(S->m[PACK]);
         if(n && find_plus(n,ANY_SLOT,key,0,0))result=load_file(meta[2],size,key);
     }
 #elif PACK_FILES
@@ -527,6 +551,12 @@ static u32 restore(u32 record){
     }
 #else
     path(key);result=load_file(meta[2],size,key);
+#endif
+#ifdef INTERNAL_KEEP
+    S->m[NOCARD]=0;
+    if(result && !S->m[PACK] && !internal_card()){
+        S->m[NOCARD]=!valid(old);S->path[0]=0;default_block(S->readback);publish(record,key,valid(old)?old:S->readback);return 0;
+    }
 #endif
     if(result){if(result==4 || result==5)S->m[MISSING]++;error(result);return result;}
     S->m[READS]++;
@@ -709,7 +739,15 @@ static u32 px_slotcopy(u32 pa,u32 sa,u32 pb,u32 sb,u32 phase,u32 *copied){
         drop(n,sb,dst,0);
         return 0;
     }
+#ifdef INTERNAL_PLUS
+    if(!pa){                                                   /* the internal pack's one file a slot, on the card */
+        u32 s;
+        if(!find_plus(n=internal_folder(),sa,0,1,0) || !plus_parse(S->path+n,&s,&key))return 0;
+    }else{
+#else
     if(!pa)return 0;                                           /* the internal pack keeps its settings in the project */
+    {
+#endif
     r=px_meta(pa,sa,&size,m);
     if(r)return r;
     if(!(key=px_claimed(m)))return 0;
@@ -718,6 +756,7 @@ static u32 px_slotcopy(u32 pa,u32 sa,u32 pb,u32 sb,u32 phase,u32 *copied){
         path(key);
         if(px_open(1)){if(!(n=px_folder(pa)) || !find_plus(n,ANY_SLOT,key,0,0))return 4;}
         else file_ops.close((void *)FIL);
+    }
     }
     for(u32 i=0;i<PATH_MAX;i++)src[i]=S->path[i];
     if(!(n=px_folder(pb)))return PX_NOPACK;
@@ -906,31 +945,55 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
 #ifdef GR_SINGLE_BUFFER
     if(S->m[ACTIVE]){if(actual)*(u32 *)actual=0;return 5;}
 #endif
+#ifdef INTERNAL_KEEP
+    u32 from=S->m[PACK];                                       /* the pack the project was loaded from or last saved to */
+#endif
     S->m[NSAVE]++;S->m[START]=now();S->m[ACTIVE]=1;S->m[MODE]=1;S->m[PROJECT]=((u32 *)item)[1];S->m[PACK]=((u32 *)item)[2]&255;
 #if PACK_FILES>=2
-    /* Shift + Save on a project whose Plus file is missing: save it with the default settings. */
-    if(R->state==BROKEN && (((u32 *)item)[2]&255) && SHIFT_HELD()){
+    /* Clear + Save on a project whose Plus file is missing: save it with the default settings. */
+#ifdef INTERNAL_PLUS
+    if(R->state==BROKEN && DEFAULTS_HELD()){
+#else
+    if(R->state==BROKEN && (((u32 *)item)[2]&255) && DEFAULTS_HELD()){
+#endif
         auto_reset();default_block(S->readback);publish(buffer,0,S->readback);
     }
 #endif
     if(R->state!=READY || R->record!=buffer || !valid(R->block)){
         error(0x111);S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;
     }
+#ifdef INTERNAL_KEEP
+    {
+        u8 *meta=(u8 *)(buffer+TAIL+META),*old=(u8 *)(buffer+TAIL+OLD_SM);
+        if(!from && !(((u32 *)item)[2]&255) && meta_valid(meta) && meta[3] && !internal_card()){
+            for(u32 i=0;i<100;i++){S->readback[i]=old[i];if(!S->m[NOCARD])old[i]=R->block[i];}  /* a load reads this block before the file's */
+            u32 r=((fn7)(TR_WRITEBACKEND|1))(item,offset,buffer,length,actual,a,b);
+            if(r || !actual || *(u32 *)actual!=length){
+                for(u32 i=0;i<100;i++)old[i]=S->readback[i];
+                S->m[FAILS]++;S->m[RAW]=r?r:0x104;if(!r)r=3;
+            }
+            S->m[ACTIVE]=0;S->m[ELAPSED]=now()-S->m[START];return r;
+        }
+    }
+#endif
     u32 result=bundle();
     if(result){S->m[FAILS]++;S->m[RAW]=0x114;S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;}
     u32 size=frozen_size(),sum=0xffffffffu;
     for(u32 off=0;off<size;){u32 n=size-off;if(n>512)n=512;
         if(frozen_chunk(off,n)){result=0x114;break;}sum=crc_more(sum,SNAP,n);off+=n;}
-    u32 key=~sum,def=is_default(S->data) && empty_bank(),card=((u32 *)item)[2]&255;
+    u32 key=~sum,def=is_default(S->data) && empty_bank(),card=((u32 *)item)[2]&255,files=card;
+#ifdef INTERNAL_PLUS
+    if(!card)files=internal_card();                            /* an internal project without a card keeps the old block only */
+#endif
     /* Internal projects cannot acquire independent automation or drop it silently. */
-    if(!card && BANKFILESIZE()!=176){release();S->m[FAILS]++;S->m[RAW]=0x113;S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;}
-    if(!card || def)S->path[0]=0;
+    if(!files && BANKFILESIZE()!=176){release();S->m[FAILS]++;S->m[RAW]=0x113;S->m[ACTIVE]=0;if(actual)*(u32 *)actual=0;return 5;}
+    if(!files || def)S->path[0]=0;
 #if PACK_FILES>=2
     u32 slot=((u32 *)item)[1],plus=0,folder=0;char keep[PATH_MAX];
 #elif PACK_FILES
     u32 slot=((u32 *)item)[1],plus=0;char keep[PLUS_NAME+1];
 #endif
-    if(!result && card && !def){
+    if(!result && files && !def){
 #if PACK_FILES>=2
         plus=plus_path(card,slot,key,&folder);
         if(plus){
@@ -964,13 +1027,13 @@ u32 c_sh_writebackend(u32 item,u32 offset,u32 buffer,u32 length,u32 actual,u32 a
     u8 *meta=(u8 *)(buffer+TAIL+META),*old=(u8 *)(buffer+TAIL+OLD_SM);
     /* Clear only a recognized legacy SM block. Other bytes may already belong
      * to a future feature, including before its first converted save. */
-    u32 clear_old=card && valid(old);
+    u32 clear_old=files && valid(old);
     for(u32 i=0;i<20;i++){S->pad[i]=meta[i];meta[i]=0;}
     for(u32 i=0;i<100;i++){
         S->readback[i]=old[i];
-        if(!card)old[i]=S->data[i];else if(clear_old)old[i]=0;
+        if(!files)old[i]=S->data[i];else if(clear_old)old[i]=0;
     }
-    if(card){
+    if(files){
         meta[0]='S';meta[1]='O';meta[2]=
 #ifdef GR_STORE
         4

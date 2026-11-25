@@ -1,0 +1,4 @@
+"""A328: A327 + 1 and 2 bars follow the selected track's pattern pass; a tap on the scanner's own step punches in; heldlocks and heldlights in Easy Start's freed code."""
+from build_a276 import build
+if __name__ == "__main__":
+    build("a328", ["--fill-dsp-gaps", "--filter-dsp-probe", "--pitch-dsp-probe", "--ring-dsp-probe", "--read-v11", "--scan-dsp-probe", "--midi-merge", "--clear-save", "--internal-plus", "--internal-keep", "--quantize", "--quantize-flash", "--scrub-any", "--scrub-knobs", "--scrub-lights", "--cues2", "--mm-gap", "--stretch-gap", "--k1-edge", "--cue-plus", "--cue-latch", "--latch-tap", "--cue-tune", "--cue-auto", "--cue-peek", "--cue-loop", "--cue-sync", "--cue-down", "--cue-k1", "--cue-speed", "--cue-home", "--cue-v3", "--cue-cols", "--cue-one", "--cue-pass", "--cue-tap", "--cue-home1", "--cue-bar", "--easy-gaps", "--release"])

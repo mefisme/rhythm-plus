@@ -18,7 +18,7 @@ PACK_COPY=0x0802af64                                 # the storage task's copy r
 DELETE_CALLS=((0x080413c2,'packdelete',0x0802e938),(0x08041428,'itemdelete',0x0802e8e4))
 
 
-def install(img,report,base_addr,offload=False,automation=False):
+def install(img,report,base_addr,offload=False,automation=False,*,placement_end=None):
     slot=rhstate.ST+rhstate.OFF['storageshadow'][0]
     assert slot%32==0 and rhstate.OFF['storageshadow'][1]==1024
     defs=dict(SLOT=slot,C_RST=int(report['rhstate']['labels']['c_rst'],16),
@@ -35,6 +35,16 @@ def install(img,report,base_addr,offload=False,automation=False):
         defs['GR_STORE']=rhstate.ST+rhstate.OFF['granstore'][0]
         defs['GR_STATE']=rhstate.ST+rhstate.OFF['granular'][0]
         if os.environ.get('RH_GRANULAR_FINE')=='1':defs.update(GR_SETTINGS_BYTES=288,GR_SINGLE_BUFFER=1)
+        if os.environ.get('RH_FILTER_EDITOR_PROBE')=='1':defs.update(GR_SETTINGS_BYTES=336,GR_SINGLE_BUFFER=1)
+        if os.environ.get('RH_PITCH_DSP_PROBE')=='1':defs.update(GR_SETTINGS_BYTES=385)
+        if os.environ.get('RH_RING_DSP_PROBE')=='1':defs.update(GR_SETTINGS_BYTES=406)
+        if os.environ.get('RH_SCAN_DSP_PROBE')=='1':defs.update(GR_SETTINGS_BYTES=423)
+        if os.environ.get('RH_READ_V11')=='1':
+            # GS v11 saves (A297-A299) are 470 bytes: more than granstore holds.
+            defs.update(GR_STORE=0x3700,GR_READ_V11=1)
+            assert defs['GR_SETTINGS_BYTES'] in (406,423) and defs['GR_STORE']+470<=0x3ae0
+        else:
+            assert defs.get('GR_SETTINGS_BYTES',224)<=rhstate.OFF['granstore'][1]
         for name in ('settings_store','settings_valid'):
             defs['GR_'+name.upper()]=report['granular']['arm_kernel']['labels']['c_gr_runtime_'+name]
     cow=automation and (no_a3 or report['automation3'].get('cow',False))
@@ -56,6 +66,13 @@ def install(img,report,base_addr,offload=False,automation=False):
     if os.environ.get('RH_PX_NAME')=='1':
         assert defs.get('PX_COLOUR')
         defs['PX_PROJHEAD']=1
+    if os.environ.get('RH_CLEAR_SAVE')=='1':
+        assert pack_files>=2
+        defs['CLEAR_SAVE']=1
+    if os.environ.get('RH_INTERNAL_PLUS')=='1':
+        assert pack_files>=2
+        defs['INTERNAL_PLUS']=1
+        if os.environ.get('RH_INTERNAL_KEEP')=='1':defs['INTERNAL_KEEP']=1
     if cow and not no_a3:
         for name in ('bankfilesize','bankfile','banksnapshot','bankrelease','bankimport','bankmaintain'):
             defs['A3_'+name.upper()]=int(report['automation3']['labels']['c_a3_'+name],16)
@@ -77,9 +94,9 @@ def install(img,report,base_addr,offload=False,automation=False):
     if file_tools:need+=('c_sh_packcopy',)
     if plus_usb:need+=('c_sh_pxmidi',)
     code,labels=compile_c(base_addr+len(prefix),defs,src=source,name='storageshadow',
-                          prefix='c_sh_',need=need,max_code=0x3000)
-    img+=bytes([255])*(base_addr-rhbuild.BASE-len(img))+prefix+code
-    while len(img)%4:img.append(255)
+                          prefix='c_sh_',need=need,max_code=0x3400)   # placement_end is the real limit
+    from flash_placement import emit_code
+    emit_code(img,rhbuild.BASE,base_addr,prefix+code,placement_end)
     for addr,name,expected in hooks:rhbuild.patch(img,addr,expected,b_w(addr,labels['c_sh_'+name]))
     if offload:
         accessor=int(report['stepmut']['labels']['c_sm_store'],16)
@@ -96,7 +113,7 @@ def install(img,report,base_addr,offload=False,automation=False):
     if pack_files:
         for addr,name,target in DELETE_CALLS:rhbuild.patch(img,addr,f'bl #{target:#x}',bl(addr,labels['c_sh_'+name]))
     if file_tools:rhbuild.patch(img,PACK_COPY,'bl #0x804143e',bl(PACK_COPY,labels['c_sh_packcopy']))
-    report['storageshadow']=dict(slot=hex(slot),bytes=1024,fil=hex(0x400),fil_bytes=4136,
+    report['storageshadow']=dict(code_bytes=len(prefix)+len(code),slot=hex(slot),bytes=1024,fil=hex(0x400),fil_bytes=4136,
         prev_out=hex(defs['PREV_OUT']),
         bounce=hex(slot+512),offload=offload,native_settings_authoritative=not offload,
         directory='1:/RP_AUTO',format='100-byte SM v2 mirror, CRC32 content filename',
@@ -112,6 +129,9 @@ def install(img,report,base_addr,offload=False,automation=False):
     if plus_usb:report['storageshadow'].update(plus_usb=dict(commands='0x20 info, 0x21 list, 0x22 read, 0x23 write, 0x24 delete, 0x25 crc, 0x26 rename, 0x27 copy',
         version=1,max_chunk=64,item_kind='0x58555052',content_read='0x8046054',lseek='0x80223d8'))
     if pack_files==2:report['storageshadow'].update(pack_files=2,directory='<pack>/Sessions/RP_<slot>_<name>_<key>.rps; deletes move to 1:/RP_AUTO; Shift + Save accepts defaults')
+    if defs.get('CLEAR_SAVE'):report['storageshadow']['directory']=report['storageshadow']['directory'].replace('Shift + Save','Clear + Save')
+    if defs.get('INTERNAL_PLUS'):report['storageshadow']['internal_pack']='1:/RP_INTERNAL/RP_<slot>_<name>_<key>.rps with a card; with no card the project keeps its 100-byte block only'
+    if defs.get('INTERNAL_KEEP'):report['storageshadow']['internal_keep']='with no card a linked internal project saves; the link stays, the editor settings load as defaults until the card is back'
     if file_tools:
         report['storageshadow']['plus_usb']['commands']+=', 0x28 project meta, 0x29 project copy'
         report['storageshadow']['pack_copy']=hex(PACK_COPY)

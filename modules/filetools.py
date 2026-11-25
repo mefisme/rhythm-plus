@@ -29,7 +29,12 @@ def install(img, report):
     prev = {k: u(a) & ~1 for k, a in VT.items()}
     assert prev == STOCK, prev
     holes = report["dsppack"]["holes"]
+    in_gap = os.environ.get("RH_FT_GAP") == "1"      # the merged source, after stretch in the first gap
+    at_end = os.environ.get("RH_FT_END") == "1" and not in_gap
     start, end = (int(x, 16) for x in holes[0][:2])
+    if at_end:
+        start = (rhbuild.BASE + len(img) + 15) & ~15
+        end = start + 0x2000
     base = (start + 3) & ~3
     defs = dict(prev, PREV_OUT=rhbuild.bl_target(img, tmenu.OUT_CALL), SLOT=rhstate.ST + rhstate.OFF["filetools"][0],
                 C_RST=int(report["rhstate"]["labels"]["c_rst"], 16), C_PX=int(report["storageshadow"]["labels"]["c_sh_pxmidi"], 16))
@@ -40,9 +45,13 @@ def install(img, report):
     if buttons:
         assert {k: u(a + 0x20) & ~1 for k, a in USES_VT.items()} == USES
         defs.update(USES, BUTTONS=1)
-    code, labels = compile_c(base, defs, src=ROOT / "modules/filetools.c", name="filetools", prefix="c_ft_",
+    code, labels = compile_c(base, defs, src=ROOT / ("modules/filetools.c" if in_gap else "modules/filetools_a328.c"), name="filetools", prefix="c_ft_",
                              need=("c_ft_out", "c_ft_projpad", "c_ft_smppad", "c_ft_packpad") + (tuple(USES_HOOK.values()) if buttons else ()), max_code=end - base)
     o = base - rhbuild.BASE
+    if at_end:
+        img += bytes([0xFF]) * (o + len(code) - len(img))
+        while len(img) % 4:
+            img += bytes([0xFF])
     assert all(b == 0xFF for b in img[o:o + len(code)])
     img[o:o + len(code)] = code
     for k, a in VT.items():
@@ -52,8 +61,9 @@ def install(img, report):
             rhbuild.patch_word(img, a + 0x20, USES[k] | 1, labels[USES_HOOK[k]] | 1)
     rhbuild.patch(img, tmenu.OUT_CALL, f"bl #{defs['PREV_OUT']:#x}", bl(tmenu.OUT_CALL, labels["c_ft_out"]))
     after = (base + len(code) + 3) & ~3
-    holes[0] = [hex(after), holes[0][1], end - after]
+    if not at_end:
+        holes[0] = [hex(after), holes[0][1], end - after]
     report["filetools"] = dict(at=hex(base), code=len(code), slot=hex(defs["SLOT"]), prev={k.lower(): hex(v) for k, v in prev.items()},
-                               prev_out=hex(defs["PREV_OUT"]), labels={k: hex(v) for k, v in labels.items()}, internal_pack="read only", **({"hold_source": True} if hold else {}),
+                               prev_out=hex(defs["PREV_OUT"]), labels={k: hex(v) for k, v in labels.items()}, internal_pack="read only", **({"gap": True} if in_gap else {}), **({"hold_source": True} if hold else {}),
                                **({"buttons": "Duplicate lit on Projects and Sample Rec, Clear on Packs"} if buttons else {}))
     return labels, code

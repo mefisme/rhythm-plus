@@ -21,7 +21,11 @@ def main():
     u=E.setup(fw,ram);reads=[];replies=[];locks=[];forbidden=[]
     L={k:int(v,16) for k,v in E.MAN['report']['rdiag']['labels'].items()}
     ready=int(E.MAN['report']['cthresh']['slot'],16)+1
-    wait=E.rhstate.ST+(E.rhstate.OFF['spwait'][0] if 'spwait' in E.rhstate.OFF else E.rhstate.OFF['smswitch'][0]+2)
+    diag=E.MAN['report']['rdiag']
+    state_address=int(E.MAN['report']['rhstate']['block'],16)
+    wait=int(diag['dsp_wait'],16) if 'dsp_wait' in diag else E.rhstate.ST+(E.rhstate.OFF['spwait'][0] if 'spwait' in E.rhstate.OFF else E.rhstate.OFF['smswitch'][0]+2)
+    if 'dsp_wait' in diag and 'granular' in E.MAN['report']:
+        assert wait==int(E.MAN['report']['granular']['bridge']['wait'],16)
     def ret(u,value=0):u.reg_write(UC_ARM_REG_R0,value);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
     def rd(u,a,n,d):
         c=u.reg_read(UC_ARM_REG_R0);addr=u.reg_read(UC_ARM_REG_R1)
@@ -68,9 +72,9 @@ def main():
         E.check('no DSP access before ready / in alternate DSP mode',st==1 and not reads)
     u.mem_write(ready,bytes([E.TH.READY]));u.mem_write(wait,bytes([199]));st,_=request()
     E.check('startup settling guard',st==1 and not reads)
-    u.mem_write(wait,bytes([200]));u.mem_write(E.rhstate.ST,b'\0'*4);st,_=request()
+    u.mem_write(wait,bytes([200]));u.mem_write(state_address,b'\0'*4);st,_=request()
     E.check('invalid private RAM magic blocks DSP reads',st==1 and not reads)
-    u.mem_write(E.rhstate.ST,struct.pack('<I',E.rhstate.MAGIC))
+    u.mem_write(state_address,struct.pack('<I',E.rhstate.MAGIC))
     for cmd in (6,9,253,254):
         st,_=request(cmd=cmd)
         E.check(f'write command {cmd} disabled',st==0xffffffff and not reads and not forbidden)

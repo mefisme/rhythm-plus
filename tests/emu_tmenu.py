@@ -298,6 +298,9 @@ def knob_lights(uc, shown):
     o = out(uc)[T.LED_KNOB0:T.LED_KNOB0 + 8]
     kc = scl(PAGES[b8(uc, T.O_PAGE)], T.KNOB_LVL)
     want = [so[k] if k == shown or u32(uc, T.COLOURS + 4 * f[k]) == T.RED else tint(so[k], kc) for k in range(8)]
+    marker = MAN["marker"]
+    if marker[:1] == "A" and len(marker) == 4 and "A283" <= marker:
+        want = list(so)                      # from A283 the Stock page keeps the stock's knob lights, in the track's colour
     return fo == f and list(o) == want, ([f"{x:06x}" for x in o], [f"{x:06x}" for x in want])
 
 

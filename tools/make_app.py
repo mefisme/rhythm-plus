@@ -17,13 +17,15 @@ APP = HERE / "tools" / "app"
 OUT = HERE / "tools" / "rhythm_plus_app.html"
 # (name, kind, folder, Spanish, English); the first one is picked when the page opens.
 # Keep descriptions short: included features and key fixes; controls belong in the manual.
+# Keep the stable entry. When an in-development build passes hardware testing,
+# replace the previous in-development entry with the new baseline.
 BUILDS = (
-    ("A0256", "stable", HERE / "firmware" / "a0256",
-     "A0213 con time stretch (modo Sample, pads 9-17), Clear + pista, ajustes Plus junto a cada proyecto y archivos Plus por USB. Cambios de proyecto rápidos y sin chasquidos con Granular y stretch.",
-     "A0213 with time stretch (Sample mode pads 9-17), Clear + track, Plus settings next to each project and Plus files over USB. Fast project changes with no clicks from Granular or stretch."),
-    ("A276", "test", HERE / "firmware" / "a276",
-     "Copia proyectos y muestras, y borra packs, en la unidad. Sin Easy Start. Granular: sin blip al cambiar de modo, Scan centrado en 63-65, los pads de largo de Scan a tiempo con el reloj, también por muestra.",
-     "Copy projects and samples, and delete packs, on the unit. No Easy Start. Granular: no blip on mode changes, Scan centred at 63-65, and the Scan length pads in time with the clock, per sample too."),
+    ("A276", "stable", HERE / "firmware" / "a276",
+     "Copia proyectos y muestras en la unidad y sincroniza Granular Scan al reloj.",
+     "Copy projects and samples on-device. Sync Granular Scan to the clock."),
+    ("A329", "test", HERE / "firmware" / "a329",
+     "Páginas Filter, Pitch y Extras (Ring Mod y Scan) en el editor de parámetros de pista. MIDI Merge, Filter y USB merge. Clear + Save guarda con los ajustes por defecto. Los proyectos del pack interno guardan sus ajustes en la tarjeta SD y se guardan también sin tarjeta. Pattern Settings, pad 25: cuantiza el patrón. Shift + Play muestra los pasos de la pista en cualquier pantalla. Mantén Shift + Play 0,5 s: 8 cues en los pads 25-32, los pads 17-24 y K4 fijan el tiempo del cue (salto y bucle), K2 la velocidad de K1, K3 explora la canción en silencio.",
+     "Filter, Pitch and Extras (Ring Mod and Scan) pages in the Track Parameter Editor. MIDI Merge, Filter and USB merge. Clear + Save saves with the default settings. Internal pack projects keep their settings on the SD card and save without a card too. Pattern Settings pad 25 quantizes the pattern. Shift + Play shows the track's steps on every screen. Hold Shift + Play for 0.5 s: 8 cues on pads 25-32, pads 17-24 and K4 set the cue timing (jump and loop), K2 sets K1's speed, K3 scans the song silently."),
 )
 
 INSTALLER = APP / "installer.js"

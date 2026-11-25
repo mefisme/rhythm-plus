@@ -2,12 +2,7 @@
    track into Grid FX; one track can be the FX track, whose steps turn Grid FX pads on and off (after Circuit Remix's fxseq, by its
    author, MIT). Built by gfxmix.py, which passes the addresses below with -D. */
 #include <stdint.h>
-#if TASK_GUARD
 #include "rp_task_guard.h"
-#endif
-#ifndef GFX_OVERDUB
-#define GFX_OVERDUB 0
-#endif
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -54,8 +49,7 @@ typedef void (*sync_fn)(u32 t, u32 index, u32 value);
 #define MODE_GATE 3
 #define MODE_VEL 2
 #define MODE_NOTE2 7                        /* Note pressed twice */
-#define KNOBS (CONT + 0x1C4)                /* [+ 4 t]: track t's knob object; its vtable + KO_TURN = (obj, knob, delta), recording */
-#define KO_TURN 0x10
+#define KNOBS (CONT + 0x1C4)                /* [+ 4 t]: track t's knob object; its vtable + 0x10 = (obj, knob, delta), recording */
 #define GFX_MODE (MIX_VIEW + 0x1CC)         /* [ ]: the store, p0 = 2 the Mixer, 7 Grid FX */
 #define MODE_GFX 7
 #define MODE_SET ((u32 (*)(u32, u32))FN(0x0804D6B6))       /* (CONT, mode): the view to show, -1 = none */
@@ -118,6 +112,10 @@ typedef void (*sync_fn)(u32 t, u32 index, u32 value);
 #define O_PATS 0x50
 #define O_SAMPLE 0x60                       /* [ ]: the store, p0 = the track's sample */
 #define PAT_SZ 0xA28
+#define STEP_EMPTY 0x19                     /* the stock step view's palette codes (its tables at 0x08062C80, 0x08062AB0) */
+#define STEP_NOTE 0x18
+#define STEP_FLIP 0x67                      /* a note with a sample flip: step byte 5 is not 0xFF */
+#define STEP_OUT_NOTE 0x56                  /* a note outside the pattern's start-end; an empty step there is dark */
 #define STEPOBJ (CONT + 0x74)               /* [+ 4 t]: the step object: [+ 0xC] its step store, p0 of [+ 0x60] the page, p1 of [+ 0x64] the held step */
 #define O_ST1 0xC
 #define O_SVPAGE 0x60
@@ -197,7 +195,6 @@ static const u8 NPAR[NTYPES] = { 3, 2, 2, 7, 3, 5, 5 };
 #define O_SAVED 13
 #define O_TSMP 21                           /* the FX track's own sample, while it is the FX track */
 #define O_FXSMP 22                          /* its pad selected last, while it is not */
-#if CPAGE
 #define PAD_LANE0 16                        /* page 2: pads 17-24 the FX track's K1-K8 lanes */
 #define PAD_CYCLE 24                        /* pad 25: the next control to assign */
 #define PAD_AUDITION 31                     /* pad 32: audition on / off */
@@ -207,9 +204,6 @@ static int control_page(void);
 static void page2_pad(u32 pad);
 static u32 p2_down(void);
 static void p2_put(u32 m);
-#else
-#define VAL(x) (x)
-#endif
 
 #define SHOWN 1                             /* page: the sends shown */
 #define JUMP 2                              /* page: Up from the sends went to the held effect's settings; Down comes back */
@@ -243,8 +237,7 @@ struct slot {                               /* SLOT, 108 B */
     u8 sstep[NSLOTS];                       /* scount as its step started */
     u16 tkstep;                             /* the FX track's ticks a step */
     u8 scount, pad3_;                       /* the FX track's steps counted */
-    u8 scr, smoved, spass, shup;            /* Shift + Play held (scrub); K1 turned meanwhile; our own Shift + Play sent;
-                                               Shift let go during it */
+    u8 scr, smoved, spass, shup;            /* the scrub on; K1 turned meanwhile; our own Shift + Play sent; Shift let go during it */
     u32 sdown;                              /* HAL_TICK ms at its press */
     u32 spos;                               /* a stopped scrub's place in pulses, for the next Shift + Play */
     u8 spend, spg, sedge, sresume;                /* spos waiting; shown page + 1; held boundary; resume when moved inward */
@@ -256,8 +249,17 @@ struct slot {                               /* SLOT, 108 B */
 };
 #define S ((volatile struct slot *)SLOT)
 _Static_assert(sizeof(struct slot) == 344 + 4 * NLOG, "the slot's size");
+_Static_assert(__builtin_offsetof(struct slot, scr) == 424, "gfxmix.py SCR_OFF: Granular's knob hook reads it");
 
 static u32 held(void) { return R32(CTRL + O_HELD); }
+/* The stock's button press sets the button's bit in [ctrl + O_HELD] and ignores a press while it is set; its release clears it.
+   A press or release kept from the stock sets or clears the bit here instead. */
+static void down(u32 id, u32 on)
+{
+    volatile u32 *h = (volatile u32 *)(CTRL + O_HELD);
+    *h = on ? *h | 1u << id : *h & ~(1u << id);
+}
+#define DOWN(id, on) down(id, on)
 static int on_mixer(void) { return R32(CTRL + O_VIEW) == MIX_VIEW; }
 static u32 stock_page(void) { return PAGE_GET(PAGES); }
 
@@ -290,11 +292,7 @@ static void blk_put(u32 i, u32 v)           /* byte i of the block, the block ma
     if (!tail)
         return;
     volatile u8 *b = (volatile u8 *)(tail + BLK_OFF);
-#if TASK_GUARD
     u32 guard = rp_task_lock();
-#else
-    __asm volatile("cpsid i" ::: "memory");
-#endif
     if (!blk_ok(b)) {
         for (u32 k = 0; k < 8; k++)
             b[O_SENDS + k] = FULL;
@@ -313,13 +311,8 @@ static void blk_put(u32 i, u32 v)           /* byte i of the block, the block ma
     }
     b[i] = (u8)v;
     b[2] = blk_sum(b);
-#if TASK_GUARD
     rp_task_unlock(guard);
-#else
-    __asm volatile("cpsie i" ::: "memory");
-#endif
 }
-#if CPAGE
 /* control c's lane + 1 in bit 7 of four bytes: c 0-1 the sends, c 2 the saved knobs; 0 = no lane */
 static u32 lane_at(u32 c, u32 i) { return c < 2 ? O_SENDS + 4 * c + i : O_SAVED + i; }
 __attribute__((noinline)) static u32 lane_of(u32 c)
@@ -349,38 +342,25 @@ __attribute__((noinline)) static u32 owner(u32 k)
 __attribute__((noinline)) static void blk_val(u32 i, u32 v) { const volatile u8 *b = blk(); blk_put(i, (b ? b[i] & 128u : 0) | v); }
 static u32 knob_get(u32 t, u32 k);
 static u32 knob_send(u32 k, u32 v);
-#else
-#define blk_val blk_put
-#endif
 
 static u32 control_base(u32 k)
 {
     const volatile u8 *b = blk();
     return b && b[3] == VERSION ? k == 3 ? b[O_CONTROLS] >> 7 : b[O_CONTROLS + k] & 127 : k == 3 ? 0 : FULL;
 }
-#if AUTOMATION3
 __attribute__((naked,noinline)) u32 c_gx_autovalue(u32 k,u32 base)
 { __asm__ volatile("mov r0,r1\n bx lr"); }
-#if REC_FEEDBACK
 __attribute__((naked,noinline)) u32 c_gx_autodisplay(u32 k,u32 base)
 { __asm__ volatile("mov r0,r1\n bx lr"); }
-#endif
-#endif
 static u32 control_get(u32 k) {
-#if CPAGE
     u32 fx = fx_track(), l = k < 3 ? lane_of(k) : NONE;
     if (fx != NONE && l < 8)
         return knob_send(l, knob_get(fx, l));
-#endif
-#if AUTOMATION3
     if(k<3)return c_gx_autovalue(k,control_base(k));
-#endif
     return control_base(k);
 }
 static u32 control_edit(u32 k) {
-#if REC_FEEDBACK
     if(k<3)return c_gx_autodisplay(k,control_get(k));
-#endif
     return control_get(k);
 }
 static void control_store(u32 k, u32 v)
@@ -388,25 +368,15 @@ static void control_store(u32 k, u32 v)
     u32 first = control_base(0) | control_base(3) << 7;
     blk_put(O_CONTROLS + (k == 3 ? 0 : k), k == 3 ? (first & 127) | v << 7 : k == 0 ? (first & 128) | v : v);
 }
-#if AUTOMATION3
 /* Replaced by the independent RAM engine after both modules are linked. */
 __attribute__((naked,noinline)) void c_gx_autotouch(u32 k,u32 value,u32 clear)
 { __asm__ volatile("movs r0,#0\n bx lr"); }
 u32 c_gx_autofx(void) { return fx_track(); }
-#if AUTO_BULK
 __attribute__((naked,noinline)) void c_gx_autotrackclear(u32 t)
 { __asm__ volatile("movs r0,#0\n bx lr"); }
-#if CPAGE
 void c_gx_autodefaults(void){for(u32 k=0;k<3;k++){lane_set(k,NONE);control_store(k,FULL);}}
-#else
-void c_gx_autodefaults(void){for(u32 k=0;k<3;k++)control_store(k,FULL);}
-#endif
-#endif
-#if REC_FEEDBACK
 __attribute__((naked,noinline)) u32 c_gx_autored(u32 k)
 { __asm__ volatile("movs r0,#0\n bx lr"); }
-#endif
-#endif
 /* the FX track's knob k = track k's send */
 static u32 knob_get(u32 t, u32 k) { return GETTER(GRP_TRK + t, K_IDX + k) & 0x7F; }
 static void knob_put(u32 t, u32 k, u32 v)
@@ -426,9 +396,7 @@ static u32 send_of(u32 t)
 {
     u32 fx = fx_track();
     if (fx != NONE)
-#if CPAGE
         if (owner(t) == NONE)               /* a lane that a control owns: the send stays in the block */
-#endif
         return knob_send(t, knob_get(fx, t));
     const volatile u8 *b = blk();
     return b ? VAL(b[O_SENDS + t]) : FULL;
@@ -596,12 +564,10 @@ static void pk_clear(u32 t)
 
 /* ---- the Grid FX slots */
 static volatile u8 *slot_row(u32 s) { return (volatile u8 *)(GFX_TBL + 7 * s); }
-static u32 slot_type(u32 s) { return slot_row(s)[0]; }
+__attribute__((noinline)) static u32 slot_type(u32 s) { return slot_row(s)[0]; }
 static void gfx_set(u32 id, u32 v)
 {
-#ifdef DSP_RETRIGGER
     if(id==0xa9 && !v)WR16(0,0,DSP_RETRIGGER);
-#endif
     SETTER(SET_OBJ, 0x20, id - 0x9F, v);
     GSET(GSET_OBJ, id, v);
 }
@@ -697,7 +663,6 @@ static void types_to(u32 retrig)            /* retrig: the types a step starts a
             if (cur)
                 gfx_set(BASEID[ty], 0);
             slot_onoff(newest - 1, 1);
-#ifdef DSP_RETRIGGER
             if(ty==0) {
                 const volatile u8 *r=slot_row(newest-1);
                 if(r[1]<12) {
@@ -705,7 +670,6 @@ static void types_to(u32 retrig)            /* retrig: the types a step starts a
                     WR16(0,command<<8,DSP_RETRIGGER);
                 }
             }
-#endif
         } else if (newest != cur) {
             if (cur)
                 slot_macros(newest - 1);    /* a takeover: the engine keeps running */
@@ -1022,8 +986,7 @@ void c_gx_smsample(u32 t, u32 pat, u32 st, u32 range)
 
 static u32 rec_of(u32 t) { return R32(ENGINE + O_RECS + 4 * t); }
 static u32 shown_idx(u32 t) { u32 r = rec_of(t); return in_ram(r) && built(R32(r + 0x28)) ? *PARAM_GET(R32(r + 0x28), 0) & 7 : NPATS; }
-#if REC_FEEDBACK
-static u32 send_own(u32 t,u32 k) {
+__attribute__((noinline)) static u32 send_own(u32 t,u32 k) {
     u32 r=rec_of(t),so=R32(STEPOBJ+4*t);
     if(k>=8 || !in_ram(r) || !in_ram(so) || !built(R32(so+O_SVHELD)))return 255;
     u32 st=((u32 (*)(u32))FN(TM_HELD))(t),p=shown_idx(t);
@@ -1032,7 +995,6 @@ static u32 send_own(u32 t,u32 k) {
     for(u32 m=0;m<6;m++)if(v[m]!=255)return v[m];
     return 255;
 }
-#endif
 static u32 step_obj(u32 t) { return R32(STEPOBJ + 4 * t); }
 static u32 step_page(u32 t) { u32 o = step_obj(t); return in_ram(o) && built(R32(o + O_SVPAGE)) ? *PARAM_GET(R32(o + O_SVPAGE), 0) & 1 : 0; }
 static void all_off(void)
@@ -1054,16 +1016,17 @@ static void editor_close(void)              /* as the editor's own close on anot
     R8(TM_SLOT + TM_PTRK) = 0;
     R8(TM_SLOT + TM_SHOP) = 0;
 }
-#if EDITOR_GUARD
+static int cue_tsel(void);
 u32 c_gx_tmallowed(u32 t)
 {
+    if (cue_tsel())
+        return 8;                           /* a track press during the scrub: no editor opens or closes */
     if (t < 8 && CIOK() && t == fx_track()) {
         editor_close();
         return 8;                           /* unavailable to every editor entry/render path */
     }
     return t;
 }
-#endif
 
 /* ---- a track's 8 patterns */
 #define REC_TAIL 0x29110                    /* the session record: its tail, track 0's pattern 0, a track's 8 patterns */
@@ -1086,36 +1049,26 @@ static void track_clear(u32 t)              /* its steps, automation and effects
             p[P_LANES + i] = 0xFF;
     }
     pk_clear(t);
-#if AUTO_BULK
     c_gx_autotrackclear(t);
-#endif
     rec_end();
     RELOAD(rec_of(t));
 }
 
 /* the FX track: the sends on its K1-K8 and its pad selected last as its sample; off, its own knobs and sample back */
-#if GRANULAR_INTERLOCK
 __attribute__((naked,noinline)) u32 c_gx_granular_busy(u32 t)
 { __asm__ volatile("movs r0,#0\n bx lr"); }
-#endif
 static void fx_toggle(u32 t)
 {
-#if GRANULAR_INTERLOCK
     if(fx_track()!=t && c_gx_granular_busy(t))return;
-#endif
     if (fx_track() == t) {
         all_off();
         u8 saved[8];
-#if CPAGE
         for (u32 c = 0; c < 3; c++)
             if (lane_of(c) < 8)
                 control_store(c, knob_send(lane_of(c), knob_get(t, lane_of(c))));
-#endif
         for (u32 k = 0; k < 8; k++) {
             saved[k] = VAL(blk()[O_SAVED + k]);
-#if CPAGE
             if (owner(k) == NONE)
-#endif
             blk_put(O_SENDS + k, knob_send(k, knob_get(t, k)));
         }
         u32 own = blk()[O_TSMP];
@@ -1131,11 +1084,7 @@ static void fx_toggle(u32 t)
     blk_put(O_TSMP, sample_raw(t));
     const volatile u8 *b = blk();
     for (u32 k = 0; k < 8 && b; k++)
-#if CPAGE
         knob_put(t, k, send_knob(k, owner(k) == NONE ? VAL(b[O_SENDS + k]) : control_base(owner(k))));
-#else
-        knob_put(t, k, send_knob(k, b[O_SENDS + k]));
-#endif
     if (!pk_codes(t))
         blk_put(O_FXSMP, 0);
     pk_make(t);
@@ -1161,12 +1110,12 @@ static void pad8(u32 t)
 
 /* ---- a step through the stock's step store (items: q velocity = on, 8 + q probability, 16 + q microsteps, 24 + q flip; byte
    st & 3); its effects in the tail. The stock's handling sets the flip to the Grid FX pad held: the track's own is put back */
-static u32 step_on(u32 t, u32 st) { return PARAM_GET(R32(step_obj(t) + O_ST1), st >> 2)[st & 3]; }
-static u32 step_flip(u32 t, u32 st)         /* NO_HIT: no step */
+__attribute__((noinline)) static u32 step_on(u32 t, u32 st) { return PARAM_GET(R32(step_obj(t) + O_ST1), st >> 2)[st & 3]; }
+__attribute__((noinline)) static u32 step_flip(u32 t, u32 st)         /* NO_HIT: no step */
 {
     return step_on(t, st) ? PARAM_GET(R32(step_obj(t) + O_ST1), 24 + (st >> 2))[st & 3] : NO_HIT;
 }
-static u32 step_get(u32 t, u32 st)          /* F_HIT, the slots, the flags */
+__attribute__((noinline)) static u32 step_get(u32 t, u32 st)          /* F_HIT, the slots, the flags */
 {
     return step_on(t, st) ? pk_get(t, shown_idx(t), st) | F_HIT : 0;
 }
@@ -1228,16 +1177,7 @@ static void edited(u32 t, u32 st, u32 fx)
 /* ---- the pads (ctrl, pad, velocity). The FX track's sample view: pads 1-16 the stock's steps, 17-32 the Grid FX pads, played as on
    the Grid FX view and handed to the stock as its samples (it selects, records, places); then the step's effects: a step held + a
    pad = that pad on or off the step; pads held + a step = the step has them all, or none when it had them all */
-#if !INPUT_TRACE
-static void pad_log(u32 pad, u32 vel, u32 down)
-{
-    S->lg[S->lgn % NLOG] = R32(HAL_TICK) << 16 | (vel & 0xFF) << 8 | down << 6 | (pad & 63);
-    S->lgn = (u8)((S->lgn + 1) % NLOG);
-}
-#endif
-#if INPUT_TRACE
 static u32 shift_held(void);
-static int control_page(void);
 /* Reuse the existing diagnostic ring, not project data or more RAM.
    Three words: event/type/index/held-target/Shift, full delta/velocity, caller. */
 static void input_trace(u32 kind,u32 index,u32 value,u32 caller)
@@ -1252,27 +1192,24 @@ static void input_trace(u32 kind,u32 index,u32 value,u32 caller)
     S->lg[S->lgn]=value;S->lgn=(u8)((S->lgn+1)%NLOG);
     S->lg[S->lgn]=caller;S->lgn=(u8)((S->lgn+1)%NLOG);
 }
-#endif
+static void cue_press(u32 pad);
+static void cue_release(u32 pad);
 u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
 {
-#if INPUT_TRACE
     input_trace(1,pad,vel,(u32)__builtin_return_address(0));
-#else
-    pad_log(pad, vel, 1);
-#endif
     if (pad >= 32 || !CIOK())
         return ((hook_fn)FN(PREV_PAD))(c, pad, vel, a3);
-#if NATIVE_EDGES
+    if (S->scr) {
+        cue_press(pad);
+        return 0;                           /* every pad is the scrub's while it is on */
+    }
     /* The native controller consumes only the first down edge. Pressure /
        repeated down reports must not toggle an FX assignment before that
        controller gets a chance to reject them. */
     if (R32(c + 0x9c) >> pad & 1)
         return ((hook_fn)FN(PREV_PAD))(c, pad, vel, a3);
-#endif
     if (pad == PAD_FX && on_cont(MODE_SMP)) {
-#if NATIVE_EDGES
         if (S->taken) return 0;
-#endif
         u32 t = SM_SELTRK(CONT);
         if (t < 8)
             pad8(t);
@@ -1282,7 +1219,6 @@ u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
     if (!fx_view())
         return ((hook_fn)FN(PREV_PAD))(c, pad, vel, a3);
     u32 t = sel_track();
-#if CPAGE
     if (pad >= PAD_SLOT0 && control_page()) {
         u32 bit = 1u << (pad - PAD_SLOT0);
         if (!(p2_down() & bit)) {           /* one action a press: the stock never sees these pads */
@@ -1291,11 +1227,9 @@ u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
         }
         return 0;
     }
-#endif
     if (pad < PAD_SLOT0) {
         u32 st = pad + 16 * step_page(t), had = step_get(t, st), live = S->gdown;
         S->pflip = (u8)step_flip(t, st);
-#if NATIVE_EDGES
         /* Match TPE's select-only press while editing private parameters.
            In particular, selecting an empty step must not arm a note tap. */
         u32 shift = R32(CTRL + O_SHIFT), sf = R32(step_obj(t) + 0x34);
@@ -1306,9 +1240,6 @@ u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
         if (editing && select) *select = 1;
         with_pad(c, pad, vel, a3, 1);
         if (editing && select) *select = previous;
-#else
-        with_pad(c, pad, vel, a3, 1);
-#endif
         S->pstep = (u8)(st + 1);
         S->pedit = 0;
         if (live)
@@ -1336,29 +1267,25 @@ u32 c_gx_pad(u32 c, u32 pad, u32 vel, u32 a3)
 
 u32 c_gx_padrel(u32 c, u32 pad, u32 a2, u32 a3)
 {
-#if INPUT_TRACE
     input_trace(2,pad,0,(u32)__builtin_return_address(0));
-#else
-    pad_log(pad, 0, 0);
-#endif
     if (pad >= 32)
         return ((hook_fn)FN(PREV_PADREL))(c, pad, a2, a3);
+    if (S->scr && CIOK()) {
+        cue_release(pad);
+        return 0;
+    }
     if (pad == PAD_FX && S->taken) {
         S->taken = 0;
         return 0;
     }
-#if CPAGE
     if (pad >= PAD_SLOT0 && p2_down() >> (pad - PAD_SLOT0) & 1) {
         p2_put(p2_down() & ~(1u << (pad - PAD_SLOT0)));
         return 0;
     }
-#endif
-#if NATIVE_EDGES
     /* An up report for a pad the native controller has not accepted cannot
        release a live FX gate, change a held target, or erase its FX code. */
     if (!(R32(c + 0x9c) >> pad & 1))
         return ((hook_fn)FN(PREV_PADREL))(c, pad, a2, a3);
-#endif
     u32 fx = fx_track();
     if (pad >= PAD_SLOT0 && S->gdown >> (pad - PAD_SLOT0) & 1) {
         u32 s = pad - PAD_SLOT0;
@@ -1398,7 +1325,7 @@ u32 c_gx_padrel(u32 c, u32 pad, u32 a2, u32 a3)
 /* ---- buttons (ctrl, id): on the Mixer, the pans' down = the sends; on the sends, up = the stock's page (a held effect's
    settings, or the pans), down nothing; from those settings after that up, down = the sends. The FX track's view: a step held,
    down / up = its random / repeat on or off; a Grid FX pad held, up = its settings on the knobs, down = the sends */
-static int fx_track_view(void) { u32 fx = fx_track(); return fx != NONE && R32(CTRL + O_VIEW) == CONT && sel_track() == fx; }
+__attribute__((noinline)) static int fx_track_view(void) { u32 fx = fx_track(); return fx != NONE && R32(CTRL + O_VIEW) == CONT && sel_track() == fx; }
 static u32 song_len(void)                   /* in pulses, as the stock's locate counts it: each scene its longest track; 0 unknown */
 {
     u32 sc = R32(ENG + ENG_SCENES), ch = R32(ENG + ENG_CHAINS), so = R32(ENG + ENG_SCDATA), total = 0;
@@ -1463,7 +1390,122 @@ static void scrub_audio(void)
     }
     S->saat = R32(HAL_TICK);
 }
-static void scrub(s32 d)                    /* K1 with Shift + Play held: the song position d steps on, inside the song */
+/* Cue scrub, latched by Shift + Play held HOLD_MS: K1 the playhead, K2 K1's speed, K3 a silent scanner, K4 a held cue's loop length,
+   K5 sound; pads 17-24 the jump timing, 25-32 eight cues. Tail block CUE_OFF: "GC", check byte, a spare byte,
+   8 cue song steps (0xFFFF = empty), K1's clicks - 1, the jump timing, the loop length. */
+#define CUE_EMPTY 0xFFFFu
+#define NCUES 8
+#define O_K1T 20
+#define AMBER_CODE 0x76                     /* palette: the probability gradient's first code */
+#define PROB_GREEN 0x7D                     /* its last, Mutate's green: a saved cue */
+#define BAR_MS 2000                         /* K2 or K4 turned: pads 17-24 show its value this long */
+#define P_END 0x100
+#define P_START 0x101
+#define P_MODE 0x103                        /* the pattern's play mode & 3: 0 forward, 1 reverse, 2 ping-pong, 3 random */
+#define CUE_MAGIC 0x4356u
+struct cue_ram {
+    u16 magic, mark; u8 pend, free, bar, hpad, del, tsel, sstep, spage; u32 plen; u32 jto, dist, lq, last, bart, pass;   /* c_gx_trackat's pattern pass: plen its length, pass its start (pulses); lq a held cue's loop */
+    u8 spad, nodel, ppad, pad_;             /* the held step pad + 1; this cue hold never deletes; the playhead's pad, 0xFF off the page */
+    u8 lat, own, stap, lpad_;               /* latched; Shift + Play pressed while latched; Shift pressed alone while latched */
+    u32 stt;                                /* when Shift went down while latched */
+    signed char k2r, k1r, ksr, klr;         /* clicks not yet a step: K3 (scanner), K1, K2 (K1's speed), K4 */
+    u32 bat;                                /* the waiting jump's boundary: the song pulse it replaces */
+    u16 cnt;                                /* clock pulses since it was set */
+    u8 ptap, stk;                           /* ptap: the scanner's own step pressed (a punch-in on a tap); stk: Shift was on with no Shift button held when the latch began (sticky Shift) */
+    u8 hide, bid, lp, arm;                  /* arm: 1 Shift + Play down, not yet latched; 2 latched, Play still down */
+    u32 bt;                                 /* when it went down */
+};
+#define PEEK_MS 333                         /* a button held this long shows its view, then the scrub again */
+#define ID_REC 16
+#define LATCHED() (CR->magic == CUE_MAGIC && CR->lat && S->scr)
+static void latch_off(u32 sh);
+#define CR ((struct cue_ram *)CUE_RAM)          /* ITCM, the UI task's own; random after a cold start until cue_init */
+static const u8 Q_CODE[7] = {0, 1, 2, 3, 4, 5, 7};          /* each timing's gradient code */
+__attribute__((noinline)) static void cue_init(void)
+{
+    if (CR->magic == CUE_MAGIC)
+        return;
+    for (u32 i = 0; i < sizeof(struct cue_ram) / 4; i++)
+        ((u32 *)CUE_RAM)[i] = 0;
+    CR->magic = CUE_MAGIC;
+}
+static u32 pulse(void);
+__attribute__((noinline)) static volatile u8 *cue_blk(void)
+{
+    volatile u8 *b = pk_blk(CUE_OFF, 'C', CUE_LEN);
+    u32 tail = RRT();
+    if (b || !tail)
+        return b;
+    b = (volatile u8 *)(tail + CUE_OFF);
+    b[0] = 'G'; b[1] = 'C';
+    for (u32 i = 3; i < CUE_LEN; i++)
+        b[i] = 0xFF;
+    b[O_K1T] = 1;                           /* K1: 2 clicks for each step */
+    b[2] = pk_sum(b, CUE_LEN);
+    return b;
+}
+__attribute__((noinline)) static u32 cue_get(const volatile u8 *b, u32 i) { return b ? b[4 + 2 * i] | b[5 + 2 * i] << 8 : CUE_EMPTY; }
+__attribute__((noinline)) static void cue_put(volatile u8 *b, u32 i, u32 v) { sum_poke(b, 4 + 2 * i, v & 0xFF); sum_poke(b, 5 + 2 * i, v >> 8); }
+#define K1_SLOWEST 8
+__attribute__((noinline)) static u32 k1_clicks(const volatile u8 *b)   /* K1's clicks for each step, 1-8; byte O_K1T holds it - 1 */
+{
+    u32 v = b ? b[O_K1T] : 1;
+    return (v < K1_SLOWEST ? v : 1) + 1;
+}
+#define O_LAUNCH 21                         /* the jump's timing, 0-7 (L_PULSES); the pads set it */
+#define O_LOOP 22                           /* a held cue's loop length, 1-7 (L_PULSES); K4 sets it */
+#define HOLD_MS 500                         /* Shift + Play held this long: the latch */
+#define KNOB_CLICKS 4                       /* K2 and K4: clicks for each setting */
+#define SPEED_RGB 0x0040FFu
+#define LOOP_RGB 0xA000FFu
+static const u8 L_PULSES[8] = {0, 3, 6, 12, 24, 48, 96, 192};   /* at once, 1/32, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars */
+__attribute__((noinline)) static u32 launch_ix(const volatile u8 *b) { u32 v = b ? b[O_LAUNCH] : 6; return v < 8 ? v : 6; }
+#if CUE_ONE
+#define loop_ix launch_ix                   /* one timing: the jump and a held cue's loop */
+#else
+__attribute__((noinline)) static u32 loop_ix(const volatile u8 *b) { u32 v = b ? b[O_LOOP] : 6; return v - 1u < 7 ? v : 6; }
+#endif
+static u32 shf(void) { return (held() >> ID_SHIFT & 1) | CR->stk; }
+#define SHF() shf()
+static void shift_put(u32 v);
+/* After a jump, each track's automation lanes take their last value at or before the new place in its pattern, as playing
+   there would; the stock player applies only steps that hold a value. */
+__attribute__((noinline)) static void chase(void)
+{
+    for (u32 t = 0; t < 8; t++) {
+        u32 pl = PLAYERS + 0x190 * t, ps = R32(pl + 8), rec = R32(ENGINE + O_RECS + 4 * t);
+        if (!built(ps) || !in_ram(rec) || !in_ram(R32(rec + 4)))
+            continue;
+        u32 pat = *PARAM_GET(ps, 0), step = *PARAM_GET(ps, 1) & 31, mic = *(volatile u32 *)PARAM_GET(ps, 2) % PULSES;
+        const volatile u8 *pt = (const volatile u8 *)(R32(rec + 4) + PAT_SZ * (pat & 7));
+        u32 s0 = pt[P_START] & 31, s1 = pt[P_END] & 31, rev = (pt[P_MODE] & 3) == 1, n = (((s1 - s0) & 31) + 1) * PULSES;
+        u32 on = *(volatile u32 *)PARAM_GET(R32(pl + 0x30), 0), off = *PARAM_GET(R32(pl + 0x38), 0) ? 0 : *(volatile u32 *)PARAM_GET(R32(pl + 0x34), 0);
+        u32 sink = R32(pl + 0x2C), sp = R16(pl + 0x44);
+        volatile u16 *last = (volatile u16 *)R32(pl + 0x4C);
+        for (u32 k = 0; k < R8(pl + 0x3C); k++) {
+            if (!(on >> k & 1) || off >> k & 1)
+                continue;                   /* off, or held by a knob turned by hand */
+            const volatile u8 *ln = ((const volatile u8 *(*)(u32, u32, u32))R32(R32(pl) + 0x14))(pl, pat, k);
+            u32 s_ = step, m = mic, v = 0xFF;
+            for (u32 i = 0; i < n && (v = ln[s_ * PULSES + m]) == 0xFF; i++)
+                if (m)
+                    m--;
+                else {
+                    m = PULSES - 1;             /* back in time: a reverse pattern plays its steps downwards */
+                    s_ = rev ? (s_ == s1 ? s0 : (s_ + 1) & 31) : (s_ == s0 ? s1 : (s_ - 1) & 31);
+                }
+            if (v == 0xFF)
+                continue;
+            u32 id = R16(R32(pl + 0x40) + 2 * k);
+            void (*set)(u32, u32, u32) = (void (*)(u32, u32, u32))R32(R32(sink));
+            set(sink, id, v);
+            if (id - sp - 1 < 2)
+                set(sink, id + 0xD, v == 0x7F ? 0x7F : 0);   /* as the stock player: two lanes also set a switch */
+            last[k] = (u16)v;
+        }
+    }
+}
+static void scrub(s32 d)                    /* K1 in the scrub: the song position d steps on, inside the song */
 {
     u32 st = R32(ENG + ENG_POS);
     if (R32(ENG + 0xC) != ENG_VT || !built(st))
@@ -1486,6 +1528,7 @@ static void scrub(s32 d)                    /* K1 with Shift + Play held: the so
     S->sedge = (u8)(edge && (running || S->sresume));
     S->spos = at * PULSES;
     ((void (*)(u32, u32))FN(LOCATE))(ENG, S->spos);
+    chase();
     if (!running && in_ram(clk) && R32(clk)) {
         ((void (*)(u32, u32))FN(R32(R32(clk))))(clk, at % 32);
         S->spend = 1;
@@ -1502,28 +1545,344 @@ static void scrub(s32 d)                    /* K1 with Shift + Play held: the so
         scrub_audio_end();
     S->smoved = 1;
 }
-static u32 shift_held(void) { u32 st = R32(CTRL + O_SHIFT); return built(st) && *PARAM_GET(st, 0); }
-static int control_page(void)
+__attribute__((noinline)) static u32 song_step(void)                  /* the playhead's step in the song (the scrub's place while it holds an edge) */
 {
-#if CPAGE
-#if CPAGE_MIX
+    u32 st = R32(ENG + ENG_POS), len = song_len() / PULSES;
+    if (R32(ENG + 0xC) != ENG_VT || !built(st))
+        return 0;
+    u32 cur = (S->sedge ? S->spos : *(volatile u32 *)PARAM_GET(st, 0)) / PULSES;
+    return len ? cur % len : cur;
+}
+__attribute__((noinline)) static int running(void) { u32 tr = TRANSPORT; return built(tr) && *PARAM_GET(tr, 0); }
+__attribute__((noinline)) static u32 scan_step(void) { return CR->free ? CR->mark : song_step(); }
+__attribute__((noinline)) static u32 in_song(s32 n)
+{
+    u32 len = song_len() / PULSES;
+    return n < 0 ? 0u : len && (u32)n >= len ? len - 1u : (u32)n;
+}
+/* Track t at song step s: 0x10000 | its pattern << 8 | its step, or 0. Each scene lasts its longest chain, shorter chains loop;
+   patterns play forward from their start step. */
+u32 c_gx_trackat(u32 t, u32 s)
+{
+    u32 sc = R32(ENG + ENG_SCENES), ch = R32(ENG + ENG_CHAINS), so = R32(ENG + ENG_SCDATA), rec = t < 8 ? R32(ENGINE + O_RECS + 4 * t) : 0;
+    if (!built(sc) || !built(ch) || !in_ram(so) || !in_ram(rec) || !in_ram(R32(rec + 4)))
+        return 0;
+    const volatile u8 *c = PARAM_GET(sc, 0);
+    u32 first = c[0], last = c[1], at = s * PULSES, pats = R32(rec + 4);
+    for (u32 n = first; n <= last && n < 16; n++) {
+        u32 m = 0, mine = 0, ml = 0;
+        for (u32 k = 0; k < 8; k++) {
+            u32 info = first == last ? *(volatile u32 *)PARAM_GET(ch, k)
+                                     : (((u32 (*)(u32, u32, u32))FN(SC_START))(so, n, k) & 0xFF)
+                                       | (((u32 (*)(u32, u32, u32))FN(SC_END))(so, n, k) & 0xFF) << 8;
+            u32 l = ((u32 (*)(u32, u32, u32))FN(TRK_LEN))(ENG, k, info);
+            if (k == t) {
+                mine = info;
+                ml = l;
+            }
+            m = l > m ? l : m;
+        }
+        if (at >= m) {
+            at -= m;
+            continue;
+        }
+        if (!ml)
+            return 0;
+        at %= ml;
+        for (u32 q = mine & 7, i = 0; i < 8; i++, q = (q + 1) & 7) {
+            u32 l = ((u32 (*)(u32, u32, u32))FN(TRK_LEN))(ENG, t, q | q << 8);
+            const volatile u8 *pt = (const volatile u8 *)(pats + PAT_SZ * q);
+            if (at < l) {
+#if CUE_PASS
+                CR->pass = s * PULSES - at;
+#endif
+#if CUE_BAR
+                CR->plen = l;
+#endif
+                u32 s0 = pt[P_START] & 31, len = ((pt[P_END] - s0) & 31) + 1;
+                u32 mode = pt[P_MODE] & 3, k = at * (mode == 2 ? 2 * len : len) / l;   /* ping-pong: each step twice a cycle */
+                k = mode == 2 && k >= len ? 2 * len - 1 - k : mode == 1 ? len - 1 - k : k;   /* random: as forward */
+                return 0x10000u | q << 8 | ((s0 + k) & 31);
+            }
+            at -= l;
+            if (q == (mine >> 8 & 7))
+                break;
+        }
+        return 0;
+    }
+    return 0;
+}
+#if CUE_BAR
+__attribute__((noinline)) static u32 cue_q(u32 ix, u32 step)   /* the timing in pulses; 1 and 2 bars: passes of the selected track's pattern there */
+{
+    return ix >= 6 && c_gx_trackat(sel_track(), step) ? CR->plen * (ix - 5) : L_PULSES[ix];
+}
+#endif
+__attribute__((noinline)) static void cue_go(u32 to)                  /* to: a song step */
+{
+    u32 tr = TRANSPORT, clk = R32(ENG + ENG_CLK), len = song_len();
+    const volatile u8 *b = cue_blk();
+    CR->pend = 0;
+    CR->lp = 0;
+    if (!running()) {                       /* stopped: the pause point moves, Shift + Play continues from it */
+        S->sedge = S->sresume = 0;
+        S->spos = to * PULSES;
+        ((void (*)(u32, u32))FN(LOCATE))(ENG, S->spos);
+        chase();
+        if (in_ram(clk) && R32(clk))
+            ((void (*)(u32, u32))FN(R32(R32(clk))))(clk, to % 32);
+        S->spend = 1;
+        return;
+    }
+    u32 q = L_PULSES[launch_ix(b)], st = R32(ENG + ENG_POS);
+    if (!q || !len || !built(st) || !built(tr)) {
+        ((void (*)(u32, u32))FN(LOCATE))(ENG, to * PULSES);
+        chase();
+#if !CUE_ONE
+        if (!q && len && built(st)) {
+            CR->jto = to * PULSES;          /* at once: a held cue still loops; its release ends it */
+            CR->dist = L_PULSES[loop_ix(b)];
+            CR->bat = (CR->jto + CR->dist) % len;
+            CR->cnt = 0;
+            CR->pend = CR->lp = 1;
+        }
+#endif
+        return;
+    }
+    u32 pos = *(volatile u32 *)PARAM_GET(st, 0) % len;
+    CR->jto = to * PULSES;
+#if CUE_BAR
+    u32 ix = launch_ix(b), a = c_gx_trackat(sel_track(), pos / PULSES), rel = a ? pos - CR->pass : pos, nb;   /* the grid starts with the pattern pass */
+    if (a && ix >= 6)
+        q = CR->plen * (ix - 5);
+    nb = (rel / q + 1) * q;
+    if (a && q < CR->plen && nb > CR->plen)
+        nb = CR->plen;                      /* a shorter pattern: its end is a boundary */
+    CR->dist = nb - rel;
+    CR->lq = cue_q(ix, to);
+#else
+    CR->dist = (pos / q + 1) * q - pos;     /* pulses to the next boundary */
+#endif
+#if !CUE_BAR
+    CR->lq = 0;
+    CR->last = pos;
+#endif
+    CR->bat = (pos + CR->dist) % len;
+    CR->cnt = 0;
+    CR->pend = 1;
+}
+__attribute__((noinline)) static void loop_retime(void)   /* the timing changed while a held cue loops: the next end of the new length */
+{
+#if CUE_BAR
+    u32 st = R32(ENG + ENG_POS), len = song_len(), q = CR->lq = cue_q(launch_ix(pk_blk(CUE_OFF, 'C', CUE_LEN)), CR->jto / PULSES);
+    if (!CR->lp || !CR->pend || !len || !built(st))
+        return;
+    if (!q) {
+        CR->pend = CR->lp = 0;              /* at once: no loop */
+        return;
+    }
+#else
+    u32 st = R32(ENG + ENG_POS), len = song_len(), q = L_PULSES[loop_ix(pk_blk(CUE_OFF, 'C', CUE_LEN))];
+    if (!CR->lp || !CR->pend || !len || !built(st))
+        return;
+#endif
+    u32 pos = *(volatile u32 *)PARAM_GET(st, 0) % len, off = (pos + len - CR->jto) % len;
+    CR->bat = (CR->jto + (off / q + 1) * q) % len;
+    CR->dist = (CR->bat + len - pos) % len;
+    CR->cnt = 0;
+}
+__attribute__((noinline)) static void cue_tick(void)                  /* each LED frame: a held cue pad's delete, a pending jump at its boundary */
+{
+    if (CR->arm == 1 && !(held() >> ID_PLAY & 1))
+        CR->arm = 0;
+    if (CR->arm == 1 && R32(HAL_TICK) - S->sdown >= HOLD_MS) {
+        CR->arm = 2;                        /* Shift + Play held long enough: the latch; Play's release is ours */
+        CR->stk = shift_held() && !(held() >> ID_SHIFT & 1);
+        S->scr = 1;
+        S->smoved = S->shup = S->spg = 0;
+        ends_all();
+        types_to(0);
+        shift_put(0);                       /* the views without Shift's pages while it scrubs */
+        CR->lat = 1;
+        CR->stap = CR->own = 0;
+    }
+    if (!CR->pend)
+        return;
+    if (CR->lp && !CR->hpad) {
+        CR->pend = CR->lp = 0;              /* its pad let go: the loop ends, playback goes on */
+        return;
+    }
+    u32 st = R32(ENG + ENG_POS), len = song_len();
+    if (!running() || !len || !built(st)) {
+        CR->pend = 0;
+        return;
+    }
+}
+/* The clock's pulse listener (engine, store, flags), ahead of the stock's: a waiting jump is made just before its boundary pulse
+   plays, so that pulse plays the target. The stock makes its own scene changes from this listener the same way. */
+#define ENG_PULSE 0x0803391Bu
+#define ENG_HELD 0xA4                       /* byte: a locate waits, the next pulse plays the position itself */
+#define ENG_WAIT 0xA8                       /* the stock's pulse countdown: no step plays while it runs */
+u32 c_gx_enl(u32 eng, u32 st, u32 fl)
+{
+    u32 clk = R32(ENG + ENG_CLK), ps = R32(ENG + ENG_POS), len = song_len();
+    if (eng == ENG && CR->magic == CUE_MAGIC && CR->pend && in_ram(clk) && st == ((u32 (*)(u32))R32(R32(clk) + 0x14))(clk)
+        && len && built(ps) && running() && !R32(ENG + ENG_WAIT)) {
+        u32 pos = *(volatile u32 *)PARAM_GET(ps, 0), next = (R8(ENG + ENG_HELD) ? pos : pos + 1) % len, was = CR->pend, to = CR->jto;
+#if CUE_BAR
+        u32 c = ++CR->cnt;
+        if (next != CR->bat || c + len <= CR->dist) {   /* a song shorter than the wait: its point comes round more than once */
+            if (c > CR->dist + 2 * PULSES)
+#else
+        if (next != CR->bat) {
+            if (++CR->cnt > CR->dist + 2 * PULSES)
+#endif
+                CR->pend = CR->lp = 0;      /* the boundary went by (the song moved elsewhere): no jump */
+        } else {
+            CR->pend = 0;
+            ((void (*)(u32, u32))FN(LOCATE))(ENG, to);
+            chase();
+            const volatile u8 *b = pk_blk(CUE_OFF, 'C', CUE_LEN);
+#if CUE_BAR
+            u32 q = CR->lq;
+#else
+            u32 q = L_PULSES[loop_ix(b)];
+#endif
+#if CUE_PUNCH
+            if (to == CR->mark * PULSES)
+                CR->free = 0;               /* a punch-in landed: the scanner follows the playhead again */
+#endif
+            if (was == 1 && q && CR->hpad && in_song((s32)cue_get(b, CR->hpad - 1u)) * PULSES == to) {
+                CR->bat = (to + q) % len;   /* its pad still held: back to the cue at the end of each loop length */
+                CR->dist = q;
+                CR->cnt = 0;
+                CR->pend = CR->lp = 1;
+            }
+        }
+    }
+    return ((hook_fn)FN(ENG_PULSE))(eng, st, fl, 0);
+}
+u32 c_gx_enl4(u32 eng, u32 st, u32 fl) { return c_gx_enl(eng - 4, st, fl); }
+#if CUE_TAP
+__attribute__((noinline)) static u32 tap_step(u32 want)   /* the song step in the scanner's pattern pass where the track plays step want, or the nearest */
+{
+    u32 t = sel_track(), s = scan_step(), a = c_gx_trackat(t, s), best = s, gap = 32;
+    if (!a)
+        return s;
+    u32 pass = CR->pass, p = a >> 8 & 7;
+    for (u32 n = (pass + PULSES - 1) / PULSES, end = n + 256; n < end; n++) {   /* any pattern speed: a step lasts 1/3 to 4 song steps */
+        u32 c = c_gx_trackat(t, n), g = (c & 31) > want ? (c & 31) - want : want - (c & 31);
+        if (!c || CR->pass != pass)
+            break;
+        if ((c >> 8 & 7) == p && g < gap) {
+            gap = g;
+            best = n;
+            if (!g)
+                break;
+        }
+    }
+    return best;
+}
+#endif
+__attribute__((noinline)) static void cue_press(u32 pad)              /* any pad while the scrub is on */
+{
+    volatile u8 *b = cue_blk();
+    S->smoved = 1;
+    CR->stap = 0;
+    if (pad < 16) {                         /* a step: the scanner to it */
+        CR->spad = (u8)(pad + 1);
+#if CUE_PUNCH
+        if (CR->free && pad == (CR->sstep & 15u)) {
+            CR->ptap = 1;                   /* the scanner's own step: a tap punches in (cue_release), a hold only shows its cue */
+            CR->bt = R32(HAL_TICK);
+            return;
+        }
+#endif
+        if (pad == CR->ppad) {
+            CR->free = 0;                   /* the playhead's step: the scanner follows the playhead again */
+            return;
+        }
+#if CUE_TAP
+        CR->mark = (u16)tap_step(CR->spage * 16u + pad);
+#else
+        CR->mark = (u16)in_song((s32)scan_step() + (s32)(CR->spage * 16u + pad) - (s32)CR->sstep);
+#endif
+        CR->free = 1;
+        return;
+    }
+    if (!b)
+        return;
+    if (pad < 24) {                         /* the bar: the jump's timing */
+        sum_poke(b, O_LAUNCH, pad - 16);
+        CR->bar = 0;
+#if CUE_BAR
+        loop_retime();
+#endif
+        return;
+    }
+    u32 i = pad - 24, v = cue_get(b, i);
+    if (held() >> BIT_CLEAR & 1) {          /* Clear + a cue: deleted, and its waiting jump with it */
+        if (CR->pend == 1 && in_song((s32)v) * PULSES == CR->jto)
+            CR->pend = 0;
+        cue_put(b, i, CUE_EMPTY);
+        return;
+    }
+    if (v == CUE_EMPTY) {
+        cue_put(b, i, scan_step());
+        CR->free = 0;                       /* the scanner follows the playhead again */
+        return;
+    }
+    CR->hpad = (u8)(i + 1);
+    v = in_song((s32)v);                    /* a cue past the end of a shorter song: its last step */
+    if (CR->pend == 1 && v * PULSES == CR->jto) {
+        CR->pend = 0;                       /* its jump still waits: a tap cancels it */
+        CR->nodel = 1;
+        return;
+    }
+    cue_go(v);
+    CR->nodel = CR->pend == 1;              /* a hold while its jump waits never deletes */
+}
+#if CUE_PUNCH
+static void shift_play(u32 after);
+#endif
+static void cue_release(u32 pad)
+{
+    if (pad >= 24 && pad - 23u == CR->hpad) {
+        CR->hpad = CR->del = 0;
+        if (CR->lp)
+            CR->pend = CR->lp = 0;          /* its loop ends, playback goes on */
+    }
+    if (pad < 16 && pad + 1u == CR->spad) {
+        CR->spad = 0;
+#if CUE_PUNCH
+        if (CR->ptap && R32(HAL_TICK) - CR->bt < TAP_MS) {
+            u32 run = running();
+            cue_go(CR->mark);               /* playing: a jump on the timing; stopped: playback starts there */
+            if (!run)
+                shift_play(0);
+            if (!CR->pend)
+                CR->free = 0;
+        }
+        CR->ptap = 0;
+#endif
+    }
+}
+static int cue_tsel(void) { return CR->magic == CUE_MAGIC && CR->tsel; }
+__attribute__((noinline)) static u32 shift_held(void) { u32 st = R32(CTRL + O_SHIFT); return built(st) && *PARAM_GET(st, 0); }
+__attribute__((noinline)) static int control_page(void)
+{
     if (!S->scr && on_mixer() && (S->page & SHOWN) && shift_held())
         return 1;                           /* the sends page: Shift + K1-K3 */
-#endif
     return !S->scr && fx_view() && (S->pad3_ & PAGE2);
-#endif
     return !S->scr && shift_held() &&
         ((fx_track_view() && R8(CONT + O_MODE) != MODE_SMP && !SM_SHOWN(R8(SM_SLOT)) && !R8(TM_SLOT + TM_OPEN))
          || (on_mixer() && (S->page & SHOWN)));
 }
-#if CPAGE
 static void send_turn(u32 t, u32 k, s32 d);
-#endif
 static void control_knob(u32 k, s32 d)
 {
     if (k >= 4 || !d)
         return;
-#if PRIVATE_GESTURE
     /* Native step-view +0xb8 is the pending tap-toggle mask. The native
        hold callback (0805ce48) cancels it for held pads at +0xc0. These
        private knobs bypass the native parameter notification, so explicitly
@@ -1533,19 +1892,12 @@ static void control_knob(u32 k, s32 d)
         if (in_ram(so))
             *(volatile u32 *)(so + 0xb8) &= ~R32(so + 0xc0);
     }
-#endif
-#if CPAGE
     if (k >= 3)
         return;                             /* audition is pad 32 */
-#if CPAGE_MIX
     if (lane_of(k) < 8 && fx_track() != NONE) {
-#else
-    if (lane_of(k) < 8) {
-#endif
         send_turn(fx_track(), lane_of(k), d);   /* its lane: record, lock and Clear as the sends */
         return;
     }
-#endif
     u32 clear = held() >> BIT_CLEAR & 1;
     if (!clear)
         for (u32 i = 0; i < 4; i++)
@@ -1563,9 +1915,7 @@ static void control_knob(u32 k, s32 d)
     s32 v = k == 3 ? (d < 0) : clear ? (d > 0 ? FULL : 0) : (s32)control_edit(k) + d;
     v = v < 0 ? 0 : v > FULL ? FULL : v;
     control_store(k, (u32)v);
-#if AUTOMATION3
     if(k<3)c_gx_autotouch(k,(u32)v,clear);
-#endif
     /* These controls must never address native send/level automation lanes.
        Separate persisted automation is not enabled until its storage is proven. */
     if (k == 3 && v) {
@@ -1580,7 +1930,6 @@ static void control_knob(u32 k, s32 d)
     }
 }
 
-#if CPAGE
 static void audition_toggle(void)
 {
     u32 off = !control_get(3);
@@ -1632,44 +1981,93 @@ static void page2_pad(u32 pad)              /* pads 17-24 a lane for the chosen 
 }
 static u32 p2_down(void) { return S->sapad[0] | (u32)S->sapad[1] << 8; }
 static void p2_put(u32 m) { S->sapad[0] = (u8)m; S->sapad[1] = (u8)(m >> 8); }
-#endif
 static void shift_put(u32 v)
 {
     u32 st = R32(CTRL + O_SHIFT);
     *WPTR(st, 0) = (u8)v;
     COMMIT(st);
 }
-static void scrub_end(void)                 /* Play let go: no K1 turn = the stock's Shift + Play, Shift held for it */
+static void shift_play(u32 after)           /* the stock's Shift + Play, press and release, then Shift as after */
 {
-    scrub_audio_end();
-    u32 moved = S->smoved, sh = !S->shup;
-    S->scr = 0;
-    if (moved || R32(HAL_TICK) - S->sdown >= TAP_MS) {
-        shift_put(sh);
-        return;
-    }
     shift_put(1);
     S->spass = 1;
     ((void (*)(u32, u32))FN(BTN_ENTRY_A))(CTRL, ID_PLAY);
     ((hook_fn)FN(PREV_REL))(CTRL, ID_PLAY, 0, 0);
     S->spass = 0;
-    shift_put(sh);
+    shift_put(after);
     u32 tr = TRANSPORT;
     if (S->spend && built(tr) && *PARAM_GET(tr, 0) && R32(ENG + 0xC) == ENG_VT)
         ((void (*)(u32, u32))FN(LOCATE))(ENG, S->spos);   /* it started: from the scrub's place */
-    S->spend = 0;
-    S->sedge = S->sresume = 0;
+    S->spend = S->sedge = S->sresume = 0;
+}
+static void scrub_end(void)                 /* latched, Play let go: a Shift + Play tap is the stock's */
+{
+    scrub_audio_end();
+    CR->own = 0;
+    if (!S->smoved && R32(HAL_TICK) - S->sdown < TAP_MS)
+        shift_play(0);
+}
+static void latch_off(u32 sh)
+{
+    CR->lat = CR->stap = 0;
+    CR->free = CR->hpad = CR->del = CR->bar = 0;
+    CR->spad = CR->nodel = 0;
+    CR->ppad = 0xFF;
+    CR->k2r = 0;
+    CR->k1r = 0;
+    CR->ksr = CR->klr = 0;
+    CR->hide = 0;
+    CR->stk = 0;
+    S->scr = 0;
+    scrub_audio_end();
+    shift_put(sh);
 }
 u32 c_gx_rel(u32 c, u32 id, u32 a2, u32 a3)
 {
     if (id == BIT_CLEAR)
         for (u32 k = 0; k < 4; k++)
             S->cright[k] = S->cleft[k] = 0;
-    if (id == ID_SHIFT && S->scr) {
+    if (CR->magic == CUE_MAGIC && CR->hide && id == CR->bid) {
+        u32 r = ((hook_fn)FN(PREV_REL))(c, id, a2, a3);
+        CR->hide = 0;
+        if (CR->lat && R32(HAL_TICK) - CR->bt >= PEEK_MS) {
+            S->scr = 1;                     /* held: the scrub again */
+            shift_put(0);
+        } else
+            latch_off(SHF());
+        return r;
+    }
+    if (id == ID_PLAY && CR->magic == CUE_MAGIC && CR->arm) {
+        u32 a = CR->arm, sh = shift_held();
+        CR->arm = 0;
+        DOWN(id, 0);
+        if (a != 2)
+            shift_play(sh);                 /* a tap: the stock's Shift + Play, also when Shift was let go first */
+        return 0;                           /* a hold: the press that latched */
+    }
+    if (id == ID_PLAY && CR->own && !S->scr) {
+        CR->own = 0;
+        DOWN(id, 0);
+        return 0;                           /* the scrub ended while Play was down: its release is ours */
+    }
+    if (id == ID_SHIFT && LATCHED()) {
+        DOWN(id, 0);
+        if (CR->stap && R32(HAL_TICK) - CR->stt < TAP_MS)
+            latch_off(0);                   /* Shift tapped alone: the latch off */
+        CR->stap = 0;
         S->shup = 1;
-        return 0;                           /* Shift is already up in the stock */
+        return 0;
+    }
+    if (id == ID_PLAY && LATCHED() && !CR->own && !S->spass && !R8(CI_PASS))
+        return ((hook_fn)FN(PREV_REL))(c, id, a2, a3);   /* Play alone while latched: the stock's */
+    if (id < 8 && S->scr && CIOK()) {
+        CR->tsel = 1;                       /* the editor stays shut: the press only selects the track */
+        u32 r = ((hook_fn)FN(PREV_REL))(c, id, a2, a3);
+        CR->tsel = 0;
+        return r;
     }
     if (id == ID_PLAY && S->scr && !S->spass && !R8(CI_PASS)) {
+        DOWN(id, 0);                        /* before scrub_end's own Play press to the stock */
         scrub_end();
         return 0;                           /* its press never reached the stock */
     }
@@ -1681,15 +2079,41 @@ u32 c_gx_btn(u32 c, u32 id, u32 a2, u32 a3)
         scrub_audio_end();
     if (id == ID_PLAY && !S->spass && !R8(CI_PASS) && !shift_held())
         S->spend = S->sedge = S->sresume = 0; /* a plain Play explicitly leaves the boundary hold */
-    if (id == ID_PLAY && !S->spass && !R8(CI_PASS) && CIOK() && shift_held()) {   /* not the count-in's own press */
-        S->scr = 1;
-        S->smoved = 0;
-        S->shup = 0;
-        S->spg = 0;
+    if (LATCHED() && CIOK() && !S->spass && !R8(CI_PASS)) {
+        if (id == ID_SHIFT) {
+            CR->stap = 1;
+            CR->stt = R32(HAL_TICK);
+            DOWN(id, 1);
+            return 0;                       /* Shift is ours while latched: a tap alone ends the latch */
+        }
+        CR->stap = 0;
+        if (id == ID_PLAY && SHF()) {
+            CR->own = 1;                    /* Shift + Play while latched: its release plays from the playhead */
+            S->smoved = 0;
+            S->shup = 0;
+            S->sdown = R32(HAL_TICK);
+            DOWN(id, 1);
+            return 0;
+        }
+        if (id >= 8 && id != ID_PLAY && id != BIT_CLEAR && id != ID_REC) {
+            CR->hide = 1;                   /* its view (with Shift held: its Shift view); a tap ends the latch, a hold comes back */
+            CR->bid = (u8)id;
+            CR->bt = R32(HAL_TICK);
+            S->scr = 0;
+            scrub_audio_end();
+            shift_put(SHF());
+        }
+    }
+    if (id < 8 && S->scr && CIOK()) {
+        CR->tsel = 1;
+        u32 r = ((hook_fn)FN(PREV_BTN))(c, id, a2, a3);
+        CR->tsel = 0;
+        return r;
+    }
+    if (id == ID_PLAY && !S->spass && !R8(CI_PASS) && CIOK() && shift_held() && CR->magic == CUE_MAGIC) {
+        CR->arm = 1;                        /* held HOLD_MS: the latch (cue_tick); let go sooner: the stock's Shift + Play */
         S->sdown = R32(HAL_TICK);
-        ends_all();
-        types_to(0);
-        shift_put(0);                       /* the views without Shift's pages while it scrubs */
+        DOWN(id, 1);
         return 0;
     }
     if ((id == ID_NOTE || id == ID_VEL) && CIOK() && fx_track_view())
@@ -1703,12 +2127,10 @@ u32 c_gx_btn(u32 c, u32 id, u32 a2, u32 a3)
         } else if (S->gdown) {
             S->set = id == ID_UP;
         }
-#if CPAGE
         else {
             S->pad3_ = (u8)(id == ID_DOWN ? S->pad3_ | PAGE2 : S->pad3_ & ~PAGE2);
             p2_put(0);
         }
-#endif
         return 0;
     }
     if ((id == ID_DOWN || id == ID_UP) && on_mixer()) {
@@ -1734,14 +2156,10 @@ static void send_turn(u32 t, u32 k, s32 d)
     u32 ko = R32(KNOBS + 4 * t);
     if (!ko || k >= 8)
         return;
-#if NATIVE_EDGES
     if (!d) return;
-#endif
     if (!(held() >> BIT_CLEAR & 1)) {
         u32 base=knob_get(t,k);
-#if REC_FEEDBACK
         u32 own=send_own(t,k);if(own!=255)base=own;
-#endif
         s32 v = (s32)base + d;
         u32 lo = k ? 0 : K1_LO, hi = k ? FULL : K1_HI;
         v = v < (s32)lo ? (s32)lo : v > (s32)hi ? (s32)hi : v;
@@ -1770,35 +2188,73 @@ static void send_turn(u32 t, u32 k, s32 d)
 /* ---- the track views' knobs (ctrl, knob, delta): the FX track's view with a Grid FX pad's settings shown, the stock's settings */
 u32 c_gx_tknob(u32 c, u32 knob, u32 delta, u32 a3)
 {
-#if INPUT_TRACE
     input_trace(3,knob,delta,(u32)__builtin_return_address(0));
+    if (S->scr && CIOK()) {                 /* K1 the playhead, K2 its speed, K3 the scanner, K4 the loop length, K5 sound, K6-K8 nothing */
+        s32 d = (s32)delta;
+        CR->stap = 0;
+        volatile u8 *b = knob == 0 || !d ? 0 : cue_blk();
+        if (d)
+            S->smoved = 1;
+        if (knob == 0) {
+            s32 n = (s32)k1_clicks(pk_blk(CUE_OFF, 'C', CUE_LEN));
+            d += CR->k1r;
+            CR->k1r = (signed char)(d % n);   /* one step for each n clicks (K2), at once */
+#if CUE_HOME1
+            if (delta)
+                CR->free = 0;               /* any K1 turn: the scanner follows the playhead again */
 #endif
-    if (S->scr && knob >= 2 && CIOK())
-        return 0;                           /* only K1 and K2 exist in scrub mode */
-    if (S->scr && knob == 1 && CIOK()) {
-        if ((s32)delta) {
-            S->smoved = 1;                   /* changing K2 is not a Shift + Play tap */
-            S->saoff = (s32)delta < 0;
+            scrub(d / n);
+        } else if (knob == 1 && b) {
+            d += CR->ksr;
+            CR->ksr = (signed char)(d % KNOB_CLICKS);
+            s32 v = (s32)k1_clicks(b) - 1 - d / KNOB_CLICKS;   /* right: fewer clicks, faster */
+            sum_poke(b, O_K1T, (u32)(v < 0 ? 0 : v > K1_SLOWEST - 1 ? K1_SLOWEST - 1 : v));
+            CR->k1r = 0;
+            CR->bar = 1;
+            CR->bart = R32(HAL_TICK);
+        } else if (knob == 2 && d) {
+            if (held() >> BIT_CLEAR & 1) {
+                CR->free = 0;               /* Clear + K3: the scanner follows the playhead again */
+                CR->k2r = 0;
+                return 0;
+            }
+            d += CR->k2r;
+            CR->k2r = (signed char)(d % 2);   /* one step for each 2 clicks; a turn back cancels a half step */
+            d /= 2;
+            if (d) {
+                CR->mark = (u16)in_song((s32)scan_step() + d);
+                CR->free = 1;
+            }
+        } else if (knob == 3 && b) {
+            d += CR->klr;
+            CR->klr = (signed char)(d % KNOB_CLICKS);
+            s32 v = (s32)loop_ix(b) + d / KNOB_CLICKS;
+#if CUE_ONE
+            sum_poke(b, O_LAUNCH, (u32)(v < 1 ? 1 : v > 7 ? 7 : v));   /* pads 18-24 only: never at once */
+            loop_retime();
+            CR->bar = 0;
+#else
+            sum_poke(b, O_LOOP, (u32)(v < 1 ? 1 : v > 7 ? 7 : v));
+            loop_retime();
+            CR->bar = 2;
+#endif
+            CR->bart = R32(HAL_TICK);
+        } else if (knob == 4 && d) {
+            S->saoff = d < 0;               /* right: the steps sound while stopped, left: silent */
             if (S->saoff)
                 scrub_audio_end();
         }
-        return 0;
-    }
-    if (S->scr && knob == 0 && CIOK()) {
-        scrub((s32)delta);
         return 0;
     }
     if (CIOK() && control_page()) {
         control_knob(knob, (s32)delta);
         return 0;
     }
-#if CPAGE
     if (CIOK() && fx_view() && !S->set && knob < 8 && owner(knob) != NONE) {
         s32 v = held() >> BIT_CLEAR & 1 ? FULL : (s32)send_of(knob) + (s32)delta;   /* the track's send, not its lane */
         blk_val(O_SENDS + knob, (u32)(v < 0 ? 0 : v > FULL ? FULL : v));
         return 0;
     }
-#endif
     if (CIOK() && fx_view() && !S->set && knob < 8) {
         send_turn(sel_track(), knob, (s32)delta);
         return 0;
@@ -1820,11 +2276,7 @@ u32 c_gx_knob(u32 view, u32 knob, u32 delta, u32 a3)
         return 0;
     }
     u32 clr = held() >> BIT_CLEAR & 1, fx = fx_track();
-#if CPAGE
     if (fx != NONE && owner(knob) == NONE) {
-#else
-    if (fx != NONE) {
-#endif
         send_turn(fx, knob, (s32)delta);
         return 0;
     }
@@ -1833,7 +2285,7 @@ u32 c_gx_knob(u32 view, u32 knob, u32 delta, u32 a3)
     return 0;
 }
 
-static u32 scl(u32 rgb, u32 lvl)
+__attribute__((noinline)) static u32 scl(u32 rgb, u32 lvl)
 {
     u32 o = 0;
     for (u32 sh = 0; sh < 24; sh += 8)
@@ -1912,16 +2364,12 @@ static void send_lights(volatile u32 *o, u32 full)
     u32 fx = fx_track(), ko = fx < 8 ? R32(KNOBS + 4 * fx) : 0;
     for (u32 k = 0; k < 8; k++) {
         u32 color = GX_RGB, level = (LVL_ZERO + send_of(k) * (255 - LVL_ZERO) / FULL) * full >> 8;
-#if REC_FEEDBACK
         u32 own=fx<8?send_own(fx,k):255;
-#if CPAGE
         if(owner(k)!=NONE)own=255;          /* its lane is a control's */
-#endif
         if(own!=255)level=(LVL_ZERO+knob_send(k,own)*(255-LVL_ZERO)/FULL)*full>>8;
         if(ko && (*PARAM_GET(0x200122b0,1)&255) &&
            (R32(PARAM_GET(R32(ko+0x1c),0))>>k&1))color=R32(COLOURS+4*CLR_RED);
         if(own!=255)color=R32(COLOURS+4*CLR_RED);
-#endif
         if (ko && (held() >> BIT_CLEAR & 1) && (R8(ko + 0x51 + k) == 40 || R8(ko + 0x59 + k) == 40)) {
             color = R32(COLOURS + 4 * (R8(ko + 0x59 + k) == 40 ? 0x0E : CLR_RED));
             level = full;
@@ -1930,8 +2378,8 @@ static void send_lights(volatile u32 *o, u32 full)
     }
 }
 
-static u32 pal(u32 code) { return R32(COLOURS + 4 * (code & 0x3FF)); }
-static u32 type_code(u32 s) { return R16(COLT + 2 * slot_type(s)); }  /* the dim one; bright = code - 1 */
+__attribute__((noinline)) static u32 pal(u32 code) { return R32(COLOURS + 4 * (code & 0x3FF)); }
+__attribute__((noinline)) static u32 type_code(u32 s) { return R16(COLT + 2 * slot_type(s)); }  /* the dim one; bright = code - 1 */
 
 static void mark_lights(volatile u32 *o, u32 full)    /* the FX track's button amber, the Mixer button dim amber off its view */
 {
@@ -1945,17 +2393,14 @@ static void mark_lights(volatile u32 *o, u32 full)    /* the FX track's button a
     if (fx_track_view())
         o[LED_NOTE] = o[LED_VEL] = 0;
 }
-static u32 pulse(void) { return 64 + ((255 - (R32(COLOURS + 4 * FRAME_PULSE) & 0xFF)) * 192 >> 8); }
+__attribute__((noinline)) static u32 pulse(void) { return 64 + ((255 - (R32(COLOURS + 4 * FRAME_PULSE) & 0xFF)) * 192 >> 8); }
 static u32 sequence_lights(void)
 {
     u32 lit=S->on;
-#if FX_VISUALS
     for(u32 s=0;s<NSLOTS;s++)if(S->rem[s])lit|=1u<<s;
-#endif
     return lit;
 }
 
-#if CPAGE
 __attribute__((noinline)) static u32 ctl_color(u32 c) { return c == 0 ? R32(COLOURS + 4 * 0x141) : c == 1 ? R32(COLOURS + 4 * 0x139) : GX_RGB; }
 static void control_lights(volatile u32 *o, u32 full)   /* page 2's knobs: K1-K3 at their values, red as the sends on a lane; K4-K8 dark */
 {
@@ -1966,14 +2411,9 @@ static void control_lights(volatile u32 *o, u32 full)   /* page 2's knobs: K1-K3
         o[LED_KNOB0 + k] = 0;
         if (k >= 3)
             continue;
-#if CPAGE_MIX
         u32 l = fx < 8 ? lane_of(k) : NONE, color = ctl_color(k), v = control_get(k);
-#else
-        u32 l = lane_of(k), color = ctl_color(k), v = control_get(k);
-#endif
         u32 right = l < 8 ? ko && R8(ko + 0x59 + l) == 40 : S->cright[k] == 40;
         u32 left = l < 8 ? ko && R8(ko + 0x51 + l) == 40 : S->cleft[k] == 40;
-#if REC_FEEDBACK
         if (l < 8) {
             u32 own = send_own(fx, l);
             if (own != 255) {
@@ -1983,7 +2423,6 @@ static void control_lights(volatile u32 *o, u32 full)   /* page 2's knobs: K1-K3
             if (ko && (*PARAM_GET(0x200122b0, 1) & 255) && (R32(PARAM_GET(R32(ko + 0x1c), 0)) >> l & 1))
                 color = pal(CLR_RED);
         }
-#endif
         o[LED_KNOB0 + k] = scl(color, (LVL_ZERO + v * (255 - LVL_ZERO) / FULL) * full >> 8);
         if (held() >> BIT_CLEAR & 1 && (right || left))
             o[LED_KNOB0 + k] = scl(pal(right ? 0x0E : CLR_RED), full);
@@ -2001,35 +2440,13 @@ static void page2_lights(volatile u32 *o, u32 full)   /* a lane: bright = the ch
     o[PAD_CYCLE] = scl(ctl_color(c), full);
     o[PAD_AUDITION] = scl(control_get(3) ? 0xFF0000u : 0x00FF00u, full);
 }
-#else
-static void control_lights(volatile u32 *o, u32 full)
-{
-    if (!control_page())
-        return;
-    const u32 colors[3] = { R32(COLOURS + 4 * 0x141), R32(COLOURS + 4 * 0x139), GX_RGB };
-    for (u32 k = 0; k < 8; k++) {
-        u32 color=k<3?colors[k]:0;
-#if REC_FEEDBACK
-        if(k<3 && c_gx_autored(k))color=pal(CLR_RED);
-#endif
-        o[LED_KNOB0 + k] = k < 3 ? scl(color, (LVL_ZERO + control_edit(k) * (255 - LVL_ZERO) / FULL) * full >> 8)
-                             : k == 3 ? scl(control_get(3) ? 0xFF0000 : 0x00FF00, full) : 0;
-    }
-    if (held() >> BIT_CLEAR & 1)
-        for (u32 k = 0; k < 4; k++)
-            if (S->cright[k] == 40 || S->cleft[k] == 40)
-                o[LED_KNOB0 + k] = scl(pal(S->cright[k] == 40 ? 0x0E : CLR_RED), full);
-}
-#endif
 
 /* The FX assignments replace sample flips in both step views. Keep native
    held/playhead colors and all Gate controls intact. */
 static void fx_step_lights(volatile u32 *o, u32 full)
 {
     if (!fx_track_view() || !(on_cont(MODE_SAMPLES) || on_cont(MODE_GATE)
-#if FX_VISUALS
         || on_cont(4) || on_cont(5) || on_cont(6)
-#endif
         ) || R8(TM_SLOT + TM_OPEN))
         return;
     u32 t = sel_track();
@@ -2087,16 +2504,12 @@ static void fx_lights(volatile u32 *o, u32 full)
         o[LED_DOWN] = S->set ? scl(GX_RGB, full) : 0;
     } else {
         o[LED_UP] = o[LED_DOWN] = 0;
-#if CPAGE
         u32 two = S->pad3_ & PAGE2;         /* Down: page 2 (lit while it shows); Up: page 1 */
         o[LED_DOWN] = two ? scl(GX_RGB, full) : scl(WHITE, ARROW_DIM * full >> 8);
         o[LED_UP] = two ? scl(WHITE, ARROW_DIM * full >> 8) : 0;
-#endif
     }
-#if CPAGE
     if (control_page())
         page2_lights(o, full);
-#endif
     if (S->set) {
         volatile u16 *lc = SET_LEDS(GFX_SET);
         for (u32 k = 0; k < 8; k++)
@@ -2126,42 +2539,137 @@ static void pk_sweep(void)                  /* 32 codes a frame: a step deleted 
 
 /* ---- the output stage (ctrl, out RGB words, frame) */
 #define SCRUB_RGB 0x00FF00u
-static void scrub_page(u32 frame)           /* reconcile the actual page, then draw that page in this frame */
+/* The selected track's step pads at the playhead's page (u16 palette codes), or 0. */
+static const volatile u16 *scrub_pads(void)
 {
-    if (!S->scr || R32(CTRL + O_VIEW) != CONT)
-        return;
     u32 t = sel_track(), ps = R32(ENG + ENG_TPOS + 4 * t), so = step_obj(t);
     if (!built(ps) || !in_ram(so) || !built(R32(so + O_SVPAGE)))
-        return;
+        return 0;
     u32 pg = (PARAM_GET(ps, 1)[0] & 31) >> 4;
     if (step_page(t) != pg) {
         *WPTR(R32(so + O_SVPAGE), 0) = (u8)pg;
         COMMIT(R32(so + O_SVPAGE));
     }
     S->spg = (u8)(pg + 1u);
-    /* The stock frame was assembled before this output hook. Its step object
-       already holds both pages: use its own page getter to refresh pads 1-16.
-       A cached requested page cannot tell whether a native update restored it. */
-    u32 vt = R32(so);
-    u32 pads = ((u32 (*)(u32))FN(R32(vt + 28)))(so);
-    if (in_ram(pads) && in_ram(frame))
+    u32 pads = ((u32 (*)(u32))FN(R32(R32(so) + 28)))(so);
+    return in_ram(pads) ? (const volatile u16 *)pads : 0;
+}
+static void scrub_page(u32 frame)           /* reconcile the actual page, then draw that page in this frame */
+{
+    if (!S->scr)
+        return;
+    return;                                 /* the cue scrub draws the scanner's page itself */
+    const volatile u16 *pads = scrub_pads();
+    if (pads && in_ram(frame) && R32(CTRL + O_VIEW) == CONT)
         for (u32 i = 0; i < 16; i++)
-            ((volatile u16 *)frame)[i] = ((volatile u16 *)pads)[i];
+            ((volatile u16 *)frame)[i] = pads[i];
+}
+static u32 mix(u32 a, u32 b, u32 w)         /* a to b by w / 256 */
+{
+    u32 r = 0;
+    for (u32 sh = 0; sh < 24; sh += 8) {
+        s32 x = (s32)(a >> sh & 255), y = (s32)(b >> sh & 255);
+        r |= (u32)(x + ((y - x) * (s32)w >> 8)) << sh;
+    }
+    return r;
+}
+static void cue_light(volatile u32 *o, u32 full)
+{
+    const volatile u8 *b = pk_blk(CUE_OFF, 'C', CUE_LEN);
+    u32 amber = pal(AMBER_CODE), green = scl(pal(PROB_GREEN), full), now = R32(HAL_TICK), t = sel_track(), dim = full >> 2;
+    o[LED_KNOB0] = scl(SCRUB_RGB, full);
+    o[LED_KNOB0 + 1] = scl(SPEED_RGB, full);
+    o[LED_KNOB0 + 2] = scl(amber, CR->free ? full : dim);
+#if CUE_ONE
+    u32 ix_ = launch_ix(b);
+    o[LED_KNOB0 + 3] = scl(ix_ ? pal(AMBER_CODE + Q_CODE[ix_ - 1]) : WHITE, full);   /* the timing pad's colour */
+#else
+    o[LED_KNOB0 + 3] = scl(LOOP_RGB, full);
+#endif
+    o[LED_KNOB0 + 4] = scl(S->saoff ? 0xFF0000u : SCRUB_RGB, full);
+    for (u32 k = 5; k < 8; k++)
+        o[LED_KNOB0 + k] = 0;
+    for (u32 i = 0; i < 8; i++)
+        o[LED_TRK0 + i] = scl(SCRUB_RGB, i == t ? full : dim);
+    if (CR->lat)
+        o[LED_TRK0 + ID_SHIFT] = scl(scl(pal(PROB_GREEN), pulse()), full);   /* Play keeps its stock light */
+#if CUE_ONE
+    u32 bar = CR->bar && now - CR->bart < BAR_MS ? CR->bar : 0, sp_ = k1_clicks(b), ix = ix_;
+#else
+    u32 bar = CR->bar && now - CR->bart < BAR_MS ? CR->bar : 0, sp_ = k1_clicks(b), lx = loop_ix(b), ix = launch_ix(b);
+#endif
+    for (u32 i = 0; i < 8; i++)
+        o[16 + i] = bar == 1 ? scl(SPEED_RGB, i < sp_ ? full : dim)   /* K2 turned: 1-8 pads = 1-8 clicks a step */
+#if !CUE_ONE
+                  : bar == 2 ? (i ? scl(LOOP_RGB, i == lx ? full : dim) : 0)
+#endif
+                  : scl(i ? pal(AMBER_CODE + Q_CODE[i - 1]) : WHITE, i == ix ? full : dim);
+    for (u32 i = 0; i < NCUES; i++) {
+        u32 v = cue_get(b, i);
+        o[24 + i] = CR->hpad == i + 1u && CR->del ? scl(0xFF0000u, full) : v == CUE_EMPTY ? scl(amber, dim)
+                  : CR->pend == 1 && v * PULSES == CR->jto && (now >> 6 & 1) ? 0 : green;
+        if (v != CUE_EMPTY && held() >> BIT_CLEAR & 1)
+            o[24 + i] = scl(0xFF0000u, full);   /* Clear held: a tap deletes it */
+    }
+    u32 ps = R32(ENG + ENG_TPOS + 4 * t), rec = R32(ENGINE + O_RECS + 4 * t);
+    for (u32 i = 0; i < 16; i++)
+        o[i] = 0;
+    if (!built(ps) || !in_ram(rec) || !in_ram(R32(rec + 4)))
+        return;
+    u32 pp = PARAM_GET(ps, 0)[0] & 7, pst = PARAM_GET(ps, 1)[0] & 31, sp = pp, ss = pst, a = CR->free ? c_gx_trackat(t, CR->mark) : 0;
+    if (a) {
+        sp = a >> 8 & 7;
+        ss = a & 31;
+    }
+    u32 pg = ss >> 4, so = step_obj(t), vp = built(R32(rec + 0x28)) ? *PARAM_GET(R32(rec + 0x28), 0) & 7 : 8;
+    CR->sstep = (u8)ss;
+    CR->spage = (u8)pg;
+    CR->ppad = (u8)(pp == sp && pst >> 4 == pg ? pst & 15 : 0xFF);
+    const volatile u8 *pat = (const volatile u8 *)(R32(rec + 4) + PAT_SZ * sp);
+    if (sp == vp && in_ram(so) && built(R32(so + O_SVPAGE)) && step_page(t) != pg) {
+        *WPTR(R32(so + O_SVPAGE), 0) = (u8)pg;   /* the stock draws the scanner's page */
+        COMMIT(R32(so + O_SVPAGE));
+    }
+    u32 sv = in_ram(so) ? ((u32 (*)(u32))FN(R32(R32(so) + 28)))(so) : 0, end = pat[P_END] & 31, start = pat[P_START] & 31;
+    const volatile u16 *pads = in_ram(sv) ? (const volatile u16 *)sv : 0;
+    S->spg = (u8)(pg + 1u);
+    for (u32 i = 0; i < 16; i++) {          /* another pattern than the stock shows: its step view's codes for each step */
+        u32 s = pg * 16 + i, n = (pat[8 * s + 2] & 63) && pat[8 * s + 3];
+        u32 out = end < start ? s > end && s < start : s < start || s > end;
+        o[i] = sp == vp ? (pads ? scl(pal(pads[i]), full) : 0)
+             : out ? (n ? scl(pal(STEP_OUT_NOTE), full) : 0) : scl(pal(n ? pat[8 * s + 5] != 0xFF ? STEP_FLIP : STEP_NOTE : STEP_EMPTY), full);
+    }
+#if CUE_PASS
+    u32 pass = c_gx_trackat(t, scan_step()) ? CR->pass : ~0u;
+#endif
+    for (u32 i = 0; i < NCUES; i++) {       /* saved cues on this page pulse green */
+        u32 v = cue_get(b, i), c = v == CUE_EMPTY ? 0 : c_gx_trackat(t, v);
+#if CUE_PASS
+        if (c && CR->pass == pass && (c >> 8 & 7) == sp && (c & 31) >> 4 == pg) {   /* only on the pattern's pass that holds the cue */
+#else
+        if (c && (c >> 8 & 7) == sp && (c & 31) >> 4 == pg) {
+#endif
+            o[c & 15] = mix(o[c & 15], green, pulse());
+            if (CR->spad == (c & 15) + 1u)
+                o[24 + i] = now >> 7 & 1 ? green : 0;   /* its step held: its slot flashes */
+        }
+    }
+#if CUE_PUNCH
+    if (CR->free)
+        o[ss & 15] = CR->pend == 1 && CR->jto == CR->mark * PULSES && (now >> 6 & 1) ? 0 : scl(amber, full);   /* blinks while its punch-in waits */
+#else
+    if (CR->free)
+        o[ss & 15] = scl(amber, full);
+#endif
+    if (pp == sp && pst >> 4 == pg)
+        o[pst & 15] = scl(WHITE, full);
 }
 static void scrub_light(volatile u32 *o, u32 full)
 {
     if (!S->scr)
         return;
-    o[LED_KNOB0] = scl(SCRUB_RGB, full);
-    o[LED_KNOB0 + 1] = scl(S->saoff ? 0xFF0000u : SCRUB_RGB, full);
-    for (u32 k = 2; k < 8; k++)
-        o[LED_KNOB0 + k] = 0;
-    u32 t = sel_track(), ps = R32(ENG + ENG_TPOS + 4 * t);
-    if (R32(CTRL + O_VIEW) != CONT || !built(ps))
-        return;
-    u32 st = PARAM_GET(ps, 1)[0] & 31;
-    if (step_page(t) == st >> 4)
-        o[st & 15] = scl(WHITE, full);
+    cue_light(o, full);
+    return;
 }
 u32 c_gx_out(u32 c, u32 out, u32 frame, u32 a3)
 {
@@ -2171,6 +2679,9 @@ u32 c_gx_out(u32 c, u32 out, u32 frame, u32 a3)
         scrub_audio_end();
     if (CIOK())
         scrub_page(frame);
+    cue_init();
+    if (CIOK())
+        cue_tick();
     u32 ret = ((hook_fn)FN(PREV_OUT))(c, out, frame, a3);
     if (!CIOK())
         return ret;
@@ -2180,10 +2691,8 @@ u32 c_gx_out(u32 c, u32 out, u32 frame, u32 a3)
         if (v != 0xFFFFFFFFu)
             VIEW_SET(CTRL, v, ID_SAMPLES, 0);
     }
-#if CPAGE
     if (!fx_view())
         S->pad3_ &= (u8)~PAGE2;             /* the FX view again: page 1, the Grid FX pads */
-#endif
     apply();
     pk_check();
     pk_sweep();

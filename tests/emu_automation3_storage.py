@@ -51,7 +51,7 @@ def main():
     if gran:
         kernel=report['granular']['arm_kernel']['labels'];gslot=int(report['granular']['bridge']['slot'],16)
         lifecycle={k:int(v,16) for k,v in report['granular']['lifecycle']['labels'].items()}
-    disk={};saved={};directory=[False];handle=[None];position=[0];events=[];fault={};incoming=[None]
+    disk={};saved={};nocard=[False];directory=[False];handle=[None];position=[0];events=[];fault={};incoming=[None]
     pv=2 if rep.get('pack_files')==2 else 1 if rep.get('pack_files') else 0;plus=bool(pv)
     NAMES={}                                            # (pack, slot) -> the project file's name part
     PACKS={8:'1:/Rhythm/07_Beats',27:'1:/Rhythm/26_Other Pack'};STORE=0x20009f00;dirs=set(PACKS.values());listing={}
@@ -102,15 +102,19 @@ def main():
                 key=struct.unpack_from('<I',image,META+4)[0]
                 slot,pack=struct.unpack('<3I',uc.mem_read(x,12))[1:]
                 if plus and pack in PACKS:assert zlib.crc32(disk[companion(key,slot,pack)])==key
+                elif pack==0 and rep.get('internal_pack'):
+                    assert any(k.startswith(f'1:/RP_INTERNAL/RP_{slot:02d}_') and zlib.crc32(v)==key for k,v in disk.items())
                 elif cow:assert zlib.crc32(disk[f'1:/RP_AUTO/{key:08X}.RPS'])==key
                 else:assert disk[f'1:/RP_AUTO/{key:08X}.RPS']==bytes(u.mem_read(0x2720,4736))
-                assert 'sync' in events or 'read' in events
+                assert 'sync' in events or 'read' in events or (nocard[0] and rep.get('internal_keep')),'a claimed save writes its file first'
             code=fault.get('native-write',0)
             w(word(sp),7 if code else RECORD)
             if not code:saved[tuple(struct.unpack('<3I',uc.mem_read(x,12)))]=image
             ret(code);return
         if a==0x08022788:
             name=bytes(uc.mem_read(x,104)).split(b'\0')[0].decode();events.append(('mkdir',name))
+            if nocard[0]:ret(3);return
+            if name=='1:/RP_INTERNAL':code=8 if name in dirs else 0;dirs.add(name);ret(code);return
             if name=='1:/RP_AUTO':code=8 if directory[0] else 0;directory[0]=True;ret(code);return
             if name in dirs:ret(8);return
             if parent(name) not in dirs:ret(5);return
@@ -118,8 +122,8 @@ def main():
         ours=min(L.values())-0x1000<=uc.reg_read(UC_ARM_REG_LR)<min(L.values())+0x3000
         if a in (0x0802e25a,0x0802e44c,0x0802e7ee,0x0802e83c) and not ours:return
         if a==0x0802e83c:
-            pack=u.mem_read(x,1)[0];assert y==0 and pack in PACKS
-            u.mem_write(0x20009800,f'{sessions(pack)}/{z:02d}_{NAMES.get((pack,z),"SESSION")}.ncs'.encode()+b'\0');ret(0x20009800);return
+            pack=u.mem_read(x,1)[0];assert y==0 and (pack in PACKS or pack==0)
+            u.mem_write(0x20009800,f'{sessions(pack) if pack else "0:/Rhythm/Sessions"}/{z:02d}_{NAMES.get((pack,z),"SESSION")}.ncs'.encode()+b'\0');ret(0x20009800);return
         if a==0x080228c2:
             src,dst=(bytes(uc.mem_read(r,104)).split(b'\0')[0].decode() for r in (x,y));events.append(('rename',src,dst))
             if src not in disk:ret(4);return
@@ -133,6 +137,7 @@ def main():
             assert x==STORE and y==0;u.mem_write(0x20009800,sessions(8).encode()+b'\0');ret(0x20009800);return
         if a==0x08022528:
             name=bytes(uc.mem_read(y,104)).split(b'\0')[0].decode();events.append(('opendir',name))
+            if nocard[0]:ret(3);return
             if name not in dirs:ret(5);return
             listing[x]=sorted(n.rsplit('/',1)[1] for n in disk if parent(n)==name);ret(0);return
         if a==0x080225b6:
@@ -145,6 +150,7 @@ def main():
         if a==0x08021d90:
             assert x==0x400
             name=bytes(uc.mem_read(y,104)).split(b'\0')[0].decode();events.append(('open',name,z))
+            if nocard[0]:ret(3);return
             if any(k.startswith('1:/RP_AUTO/') for k in disk):directory[0]=True
             if (name.startswith('1:/RP_AUTO/') and not directory[0]) or (not name.startswith('1:/RP_AUTO/') and parent(name) not in dirs):ret(5);return
             if z==7 and name in disk:ret(8);return
@@ -227,6 +233,38 @@ def main():
     if gran:
         pointer=invoke('grsettings');assert pointer
         assert bytes(u.mem_read(pointer,gbytes))==granular_settings
+        if rep.get('settings_buffer_itcm_start') and plus:
+            # An A297-A299 Plus file holds 470 settings bytes (GS v11).
+            file0=first_file[1];assert file0.endswith(granular_settings) and zlib.crc32(file0)==struct.unpack_from('<I',first,META+4)[0]
+            v11=bytearray(granular_settings[:406]+bytes(64));v11[2]=11;v11[152+2]=30
+            struct.pack_into('<I',v11,4,zlib.crc32(bytes(v11[8:])))
+            file11=file0[:-len(granular_settings)]+bytes(v11);key11=zlib.crc32(file11)
+            rec11=bytearray(first);struct.pack_into('<2I',rec11,META+4,key11,len(file11))
+            struct.pack_into('<I',rec11,META+16,zlib.crc32(bytes(rec11[META:META+16])))
+            disk[companion(key11)]=bytearray(file11)
+            assert load(bytes(rec11))==0
+            pointer=invoke('grsettings');assert bytes(u.mem_read(pointer,470))==bytes(v11)
+            call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer);assert u.reg_read(UC_ARM_REG_R0)==1
+            assert u.mem_read(gslot+316+2,1)[0]==0
+            del disk[companion(key11)]
+            assert load(first)==0
+            print('PASS an A297-A299 Plus file (GS v11, 470 bytes) loads; its Macro lane is freed')
+            if gbytes==423:
+                # An A296-A300 Plus file holds 406 settings bytes (GS v10).
+                v10=bytearray(granular_settings[:406]);v10[2]=10;v10[385]=33
+                struct.pack_into('<I',v10,4,zlib.crc32(bytes(v10[8:])))
+                file10=file0[:-len(granular_settings)]+bytes(v10);key10=zlib.crc32(file10)
+                rec10=bytearray(first);struct.pack_into('<2I',rec10,META+4,key10,len(file10))
+                struct.pack_into('<I',rec10,META+16,zlib.crc32(bytes(rec10[META:META+16])))
+                disk[companion(key10)]=bytearray(file10)
+                assert load(bytes(rec10))==0
+                pointer=invoke('grsettings');assert bytes(u.mem_read(pointer,406))==bytes(v10)
+                call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer);assert u.reg_read(UC_ARM_REG_R0)==1
+                ring=report['ring_mod_dsp']['settings_itcm_start']
+                assert bytes(u.mem_read(ring,4))==bytes([33,v10[386],0,48]),'Ring Mod kept; Scan at its defaults'
+                del disk[companion(key10)]
+                assert load(first)==0
+                print('PASS an A296-A300 Plus file (GS v10, 406 bytes) loads; Ring Mod kept, Scan at its defaults')
         # Change a real granular knob, save, reload, then apply through the
         # canonical runtime loader. Native application is injected in this test.
         call(u,kernel['c_gr_runtime_pad'],gslot,0,report['granular']['ui']['page_pad'])
@@ -499,31 +537,92 @@ def main():
             put_settings(sm(32));assert save()==0;rkey=struct.unpack_from('<I',saved[(2,5,8)],META+4)[0]
             assert companion(rkey).endswith(f'/RP_05_SD_Experiments_{rkey:08X}.rps') and companion(rkey) in disk and old not in disk
             print(f'PASS the Plus file carries the project name ({companion(rkey).rsplit("/",1)[1]}); a renamed project still loads, and its next save renames the file')
-            # Shift + Save on a project whose Plus file is missing: saved with the default settings.
+            # Clear + Save (Shift + Save before A303) on a project whose Plus file is missing: saved with the default settings.
             named=saved[(2,5,8)];gone_file=disk.pop(companion(rkey))
             assert load(named)==0 and invoke('block')==0 and word(0x1440+12)==3
             assert save()==5 and 'native-write' not in events
-            held=0x200487c8+0xa0;w(held,word(held)|1<<27)
+            key,bit=('Clear',23) if 'Clear + Save' in rep.get('directory','') else ('Shift',27)
+            other=1<<(27 if bit==23 else 23)
+            held=0x200487c8+0xa0;w(held,word(held)|other)
+            assert save()==5 and 'native-write' not in events and word(0x1440+12)==3,'the other modifier does not save defaults'
+            w(held,word(held)&~other|1<<bit)
             assert save()==0 and word(0x1440+12)==2 and invoke('block')==0x1458
             fresh=saved[(2,5,8)];dkey=struct.unpack_from('<I',fresh,META+4)[0]
             assert companion(dkey) in disk and runtime()==defaults_block
-            w(held,word(held)&~(1<<27))
+            w(held,word(held)&~(1<<bit))
             assert load(fresh)==0 and runtime()==defaults_block and invoke('block')==0x1458
-            disk[companion(rkey)]=gone_file;put_settings(sm(33));w(held,word(held)|1<<27)
+            disk[companion(rkey)]=gone_file;put_settings(sm(33));w(held,word(held)|1<<bit)
             assert load(named)==0 and runtime()==sm(32);put_settings(sm(34));assert save()==0 and runtime()==sm(34)
-            w(held,word(held)&~(1<<27))
-            print('PASS Shift + Save saves a project with a missing Plus file with default settings; with the file, Shift + Save saves as usual')
+            w(held,word(held)&~(1<<bit))
+            print(f'PASS {key} + Save saves a project with a missing Plus file with default settings; with the file, {key} + Save saves as usual')
         w(item+4,9);w(item+8,27)
     new_feature=bytearray(empty);new_feature[OLD:OLD+100]=future
     apply(bytes(new_feature));assert save()==0
     assert saved[(2,9,27)][OLD:OLD+100]==future
     print('PASS new/cleared/reused project defaults and first save preserve reclaimed future fields')
-    # Internal pack retains embedded storage, without SD filesystem calls.
+    # Internal pack with no card: nothing is written; the project keeps its 100-byte block only.
+    nocard[0]=True
     put_settings(sm(11));w(item+8,0);before_files=dict(disk)
     assert save()==0 and disk==before_files
     internal=saved[(2,9,0)];assert internal[OLD:OLD+100]==sm(11) and internal[META:META+20]==bytes(20)
     assert invoke('autobank')==0
-    print('PASS internal pack settings remain embedded with no companion dependency')
+    nocard[0]=False
+    print('PASS internal pack without a card: settings remain embedded with no companion dependency')
+    if rep.get('internal_pack'):
+        # With a card, the internal project's Plus file goes to 1:/RP_INTERNAL; nothing is written to the internal memory.
+        held=0x200487c8+0xa0;dbit=23 if 'Clear + Save' in rep.get('directory','') else 27
+        def lanes():return bytes(u.mem_read(gslot+316,8)) if gran else b''
+        def set_lanes(b):
+            if gran:u.mem_write(gslot+316,b);call(u,kernel['c_gr_runtime_settings_store'],gslot,out)
+        put_settings(sm(13));set_lanes(bytes(range(1,9)));before_files=dict(disk)
+        assert save()==0
+        new=sorted(set(disk)-set(before_files));image=saved[(2,9,0)]
+        assert len(new)==1 and new[0].startswith('1:/RP_INTERNAL/RP_09_') and not any(k.startswith('0:') for k in disk),new
+        assert image[META:META+2]==b'SO' and image[META+3]==1 and struct.unpack_from('<I',image,META+4)[0]==zlib.crc32(disk[new[0]])
+        put_settings(sm(14));set_lanes(bytes([9]*8))
+        assert load(image)==0 and runtime()==sm(13)
+        if gran:
+            pointer=invoke('grsettings');call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
+            assert lanes()==bytes(range(1,9)),'the internal project did not get its Granular settings back'
+        put_settings(sm(15));assert save()==0
+        files=[k for k in disk if k.startswith('1:/RP_INTERNAL/RP_09_')]
+        assert len(files)==1 and files[0]!=new[0],'the older file of the slot is deleted after a save'
+        print('PASS internal pack with a card: its Plus file on the card in RP_INTERNAL, its settings back after a load, one file a slot')
+        claimed_image=saved[(2,9,0)];nocard[0]=True
+        if rep.get('internal_keep'):
+            # No card: the project loads with default editor settings and its link; Save saves it, the link stays, no file is written.
+            files_before=dict(disk)
+            assert load(claimed_image)==0 and word(0x1440+12)==2 and runtime()==defaults_block
+            if gran:
+                pointer=invoke('grsettings');call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
+                assert lanes()==bytes(8),'no card: the editor settings load as defaults'
+            put_settings(sm(16));set_lanes(bytes([7]*8))
+            assert save()==0 and disk==files_before
+            kept=saved[(2,9,0)]
+            assert kept[META:META+20]==claimed_image[META:META+20],'the link stays'
+            assert kept[OLD:OLD+100]==claimed_image[OLD:OLD+100],'a no-card load: the block is not embedded'
+            nocard[0]=False
+            assert load(kept)==0 and runtime()==sm(15),'with the card: the Step Mutate block of the last save with a card'
+            if gran:
+                pointer=invoke('grsettings');call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
+                assert lanes()==bytes(range(1,9)),'with the card: the editor settings of the last save with a card'
+            # Loaded with the card, saved after the card is out: its Step Mutate block rides in the project and wins at the next load.
+            put_settings(sm(17));nocard[0]=True
+            assert save()==0 and saved[(2,9,0)][OLD:OLD+100]==sm(17) and saved[(2,9,0)][META:META+20]==claimed_image[META:META+20]
+            nocard[0]=False
+            assert load(saved[(2,9,0)])==0 and runtime()==sm(17)
+            if gran:
+                pointer=invoke('grsettings');call(u,kernel['c_gr_runtime_settings_load'],gslot,pointer)
+                assert lanes()==bytes(range(1,9))
+            print('PASS a linked internal project with no card: it saves, the link stays, no file; with the card again its editor settings come back')
+        else:
+            # A claimed internal project loaded with no card: Save is refused; Clear + Save saves it with the defaults.
+            load(claimed_image);assert word(0x1440+12)==3
+            assert save()==5 and 'native-write' not in events
+            w(held,word(held)|1<<dbit);r=save();w(held,word(held)&~(1<<dbit))
+            assert r==0 and saved[(2,9,0)][META:META+20]==bytes(20) and runtime()==defaults_block
+            nocard[0]=False
+            print('PASS a claimed internal project with no card: Save refused, Clear + Save saves it with the defaults and writes no file')
     # Installed media wrappers stage direct full-sector bundle/FIL transfers.
     media_calls=[];media_data=bytes((i*13)&255 for i in range(8192))
     def media_hook(uc,a,n,data):

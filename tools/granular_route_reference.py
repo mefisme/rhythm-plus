@@ -22,14 +22,14 @@ STATE,INPUT,OUTPUT=0x3a000,0x40000,0x60000
 WRAPPER,READER,STOP=0x7000,0x7400,0x7ff0
 
 
-def segments():
-    folder=ROOT/'firmware/a0122'
+def segments(build='a0122'):
+    folder=ROOT/'firmware'/build
     report=json.loads((folder/'manifest.json').read_text())['report']
-    image=bytearray((folder/'rhythmplus-A0122.bin').read_bytes())
+    image=bytearray((folder/f'rhythmplus-{build.upper()}.bin').read_bytes())
     return rhdsp1.parse(rhdsp1.sent(image,report,'pitchmod'))[0]
 
 
-def render(samples,*,enabled=(),candidate=True,configs=None,faults=(),reader_gaps=(),changes=(),near_end=False,modes=None,in_place=False,bank=0,inactive=()):
+def render(samples,*,enabled=(),candidate=True,configs=None,faults=(),reader_gaps=(),changes=(),near_end=False,modes=None,in_place=False,bank=0,inactive=(),program=None,initial_memory=()):
     if not samples or len(samples)%32 or len(samples)>12800:raise ValueError('bounded whole source blocks required')
     if bank not in (0,1):raise ValueError('invalid native bank')
     if in_place:
@@ -45,7 +45,7 @@ def render(samples,*,enabled=(),candidate=True,configs=None,faults=(),reader_gap
     fields=dict(slope=9,distortion=10,hp=11,lp=12,resonance=13)
     faults=tuple(faults);reader_gaps=tuple(reader_gaps);changes=tuple(changes)
     if len(faults)>8 or len(reader_gaps)>8 or len(changes)>8:raise ValueError('reference schedule limit')
-    segs=segments();metadata={}
+    segs=segments() if program is None else program;metadata={}
     if candidate:segs,metadata=(IPC if in_place else ROUTE).patched(segs)
     # Only sample-reader input is a fixture; stock shaping and mixing remain live.
     reader=['move y:>$1405,a',f'add #>${STATE+4:x},a','move a1,r2','move y:(r2),a',
@@ -105,6 +105,7 @@ def render(samples,*,enabled=(),candidate=True,configs=None,faults=(),reader_gap
     bus_guard=[0x180000+i for i in range(512)]
     if in_place:memory += [('y',0x304f0,bus_guard)]
     memory += [('y',INPUT+i,samples[i:i+64]) for i in range(0,len(samples),64)]
+    memory.extend(initial_memory)
     result,ran=rhdspemu.run(1,pc=WRAPPER,stop=STOP,
         segs=segs+[('p',0x1e5,reader_jump),('p',READER,reader_code),('p',WRAPPER,wrapper)],
         mem=memory,dumps=[('y',OUTPUT,len(samples)*8),('y',STATE,12)]+([('y',0x304f0,512)] if in_place else []),maxins=120_000_000)

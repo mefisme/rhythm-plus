@@ -109,6 +109,7 @@ def whiteish(c): return all((c >> s) & 255 for s in (0, 8, 16)) and c != 0x0A0B0
 def greenish(c): return (c >> 8) & 255 > 0 and c & 0xFF00FF == 0
 def source(uc, c): return greenish(c) if HOLD else whiteish(c)
 FT = int(REP["slot"], 16)
+SMP_OK = 11 if REP.get("gap") else 5                                    # the sample source's "chosen" byte in the state
 
 
 def again(uc, fn, view, slot, off):
@@ -215,20 +216,20 @@ def samples(uc):
     tap(uc, "c_ft_smppad", SR, 4)
     check("samples: Duplicate + an empty slot (page 2, pad 5 = slot 20) copies it", disk.get((4, 20, 3)) == disk[(4, 3, 3)])
     check("samples: the stock's routines take the new slot into the sound chip", ("refresh", 20) in log and ("reload", 20) in log and not any(e[0] == "delete" for e in log), log[-4:])
-    if HOLD and not uc.mem_read(FT + 5, 1)[0]:
+    if HOLD and not uc.mem_read(FT + SMP_OK, 1)[0]:
         uc.mem_write(SR + 0xC, b"\x00"); call(uc, L["c_ft_smppad"], SR, 3, 100, 0); uc.mem_write(SR + 0xC, b"\x01")
     tap(uc, "c_ft_smppad", SR, 5)
     check("samples: a slot with a sample is asked first", disk[(4, 21, 3)][0] == 0x21 and reddish(frame(uc, SR)[5]))
     tap(uc, "c_ft_smppad", SR, 5)
     check("samples: the same pad again: the old file deleted, the sample copied", disk[(4, 21, 3)] == disk[(4, 3, 3)] and ("delete", (4, 21, 3)) in log)
     dsp_free[0] = 0xE00000 - 0x400 - 100
-    if HOLD and not uc.mem_read(FT + 5, 1)[0]:
+    if HOLD and not uc.mem_read(FT + SMP_OK, 1)[0]:
         uc.mem_write(SR + 0xC, b"\x00"); call(uc, L["c_ft_smppad"], SR, 3, 100, 0); uc.mem_write(SR + 0xC, b"\x01")
     tap(uc, "c_ft_smppad", SR, 6)
     check("samples: no room in the sound chip's memory: nothing written", (4, 22, 3) not in disk and reddish(frame(uc, SR)[6]))
     dsp_free[0] = 0x100000
     setb(uc, smstate, 1, 1)
-    if HOLD and not uc.mem_read(FT + 5, 1)[0]:
+    if HOLD and not uc.mem_read(FT + SMP_OK, 1)[0]:
         uc.mem_write(SR + 0xC, b"\x00"); call(uc, L["c_ft_smppad"], SR, 3, 100, 0); uc.mem_write(SR + 0xC, b"\x01")
     tap(uc, "c_ft_smppad", SR, 7)
     check("samples: while the stock saves or deletes a sample: nothing written", (4, 23, 3) not in disk)
